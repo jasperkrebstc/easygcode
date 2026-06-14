@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no"
+    />
+    <meta name="theme-color" content="#0f1115" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="EasyGCode" />
+    <link rel="manifest" href="manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="icon-192.png" />
+    <link rel="stylesheet" href="styles.css" />
+    <title>EasyGCode — Vase G-code</title>
+  </head>
+  <body>
+    <header>
+      <h1>EasyGCode</h1>
+      <p class="sub">Vase-mode G-code · Klipper · volumetric</p>
+    </header>
+
+    <main>
+      <section class="card">
+        <h2>Shape</h2>
+        <div class="field">
+          <label for="shape">Cross-section</label>
+          <select id="shape">
+            <option value="circle">Circle</option>
+            <option value="roundedRect">Rounded rectangle</option>
+            <option value="ellipse">Ellipse</option>
+            <option value="polygon">Polygon</option>
+            <option value="star">Star</option>
+            <option value="squircle">Squircle</option>
+          </select>
+        </div>
+
+        <div class="shape-params" data-shape="circle">
+          <div class="field"><label>Radius (mm)</label><input type="number" id="circle_radius" value="30" min="0.1" step="0.5" /></div>
+        </div>
+
+        <div class="shape-params" data-shape="roundedRect" hidden>
+          <div class="field"><label>Width X (mm)</label><input type="number" id="rect_width" value="60" min="0.1" step="0.5" /></div>
+          <div class="field"><label>Length Y (mm)</label><input type="number" id="rect_length" value="40" min="0.1" step="0.5" /></div>
+          <div class="field"><label>Corner fillet (mm)</label><input type="number" id="rect_fillet" value="8" min="0" step="0.5" /></div>
+        </div>
+
+        <div class="shape-params" data-shape="ellipse" hidden>
+          <div class="field"><label>Radius X (mm)</label><input type="number" id="ellipse_rx" value="40" min="0.1" step="0.5" /></div>
+          <div class="field"><label>Radius Y (mm)</label><input type="number" id="ellipse_ry" value="25" min="0.1" step="0.5" /></div>
+        </div>
+
+        <div class="shape-params" data-shape="polygon" hidden>
+          <div class="field"><label>Radius (mm)</label><input type="number" id="poly_radius" value="30" min="0.1" step="0.5" /></div>
+          <div class="field"><label>Sides</label><input type="number" id="poly_sides" value="6" min="3" step="1" /></div>
+        </div>
+
+        <div class="shape-params" data-shape="star" hidden>
+          <div class="field"><label>Outer radius (mm)</label><input type="number" id="star_outer" value="35" min="0.1" step="0.5" /></div>
+          <div class="field"><label>Inner radius (mm)</label><input type="number" id="star_inner" value="18" min="0.1" step="0.5" /></div>
+          <div class="field"><label>Points</label><input type="number" id="star_points" value="5" min="2" step="1" /></div>
+        </div>
+
+        <div class="shape-params" data-shape="squircle" hidden>
+          <div class="field"><label>Size (mm)</label><input type="number" id="sq_size" value="30" min="0.1" step="0.5" /></div>
+          <div class="field"><label>Exponent n</label><input type="number" id="sq_n" value="4" min="0.2" step="0.1" /></div>
+        </div>
+
+        <canvas id="preview" width="600" height="600"></canvas>
+      </section>
+
+      <section class="card">
+        <h2>Print settings</h2>
+        <div class="grid">
+          <div class="field"><label>Layer height (mm)</label><input type="number" id="layerHeight" value="0.6" min="0.05" step="0.05" /></div>
+          <div class="field"><label>Line width (mm)</label><input type="number" id="lineWidth" value="2.0" min="0.1" step="0.1" /></div>
+          <div class="field"><label>Total height (mm)</label><input type="number" id="totalHeight" value="60" min="0.5" step="1" /></div>
+          <div class="field"><label>Print feed (mm/min)</label><input type="number" id="printFeed" value="1800" min="1" step="50" /></div>
+          <div class="field"><label>Travel feed (mm/min)</label><input type="number" id="travelFeed" value="6000" min="1" step="100" /></div>
+          <div class="field"><label>Points per loop</label><input type="number" id="points" value="200" min="8" step="1" /></div>
+          <div class="field"><label>Bed center X (mm)</label><input type="number" id="centerX" value="125" step="1" /></div>
+          <div class="field"><label>Bed center Y (mm)</label><input type="number" id="centerY" value="125" step="1" /></div>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>
+          Brim
+          <label class="toggle"><input type="checkbox" id="brimEnabled" /> enable</label>
+        </h2>
+        <div id="brimFields" class="grid" hidden>
+          <div class="field">
+            <label>Direction</label>
+            <select id="brimOuter">
+              <option value="outer">Outer</option>
+              <option value="inner">Inner</option>
+            </select>
+          </div>
+          <div class="field"><label>Number of lines</label><input type="number" id="brimLines" value="4" min="1" step="1" /></div>
+          <div class="field"><label>Brim line width (mm)</label><input type="number" id="brimLineWidth" value="2.0" min="0.1" step="0.1" /></div>
+          <div class="field"><label>Brim layer height (mm)</label><input type="number" id="brimLayerHeight" value="0.6" min="0.05" step="0.05" /></div>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Output</h2>
+        <p id="stats" class="stats"></p>
+        <div id="warnings" class="warnings"></div>
+        <div class="buttons">
+          <button id="copyBtn">Copy</button>
+          <button id="downloadBtn">Download .gcode</button>
+          <button id="shareBtn">Share</button>
+        </div>
+        <textarea id="output" readonly spellcheck="false"></textarea>
+      </section>
+    </main>
+
+    <footer><p>Vase-mode · relative volumetric extrusion · no start/end G-code (yet)</p></footer>
+
+    <script src="geometry.js"></script>
+    <script src="gcode.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>
