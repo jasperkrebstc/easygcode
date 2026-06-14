@@ -78,7 +78,7 @@
           <div class="field"><label>Total height (mm)</label><input type="number" id="totalHeight" value="60" min="0.5" step="1" /></div>
           <div class="field"><label>Print feed (mm/min)</label><input type="number" id="printFeed" value="1800" min="1" step="50" /></div>
           <div class="field"><label>Travel feed (mm/min)</label><input type="number" id="travelFeed" value="6000" min="1" step="100" /></div>
-          <div class="field"><label>Points per loop</label><input type="number" id="points" value="200" min="8" step="1" /></div>
+          <div class="field"><label>Resolution (points/rev)</label><input type="number" id="resolution" value="200" min="8" step="1" /></div>
           <div class="field"><label>Bed center X (mm)</label><input type="number" id="centerX" value="125" step="1" /></div>
           <div class="field"><label>Bed center Y (mm)</label><input type="number" id="centerY" value="125" step="1" /></div>
         </div>
@@ -104,6 +104,12 @@
       </section>
 
       <section class="card">
+        <h2>3D preview</h2>
+        <canvas id="preview3d" width="600" height="600"></canvas>
+        <p class="hint">Drag to rotate · updates when you regenerate</p>
+      </section>
+
+      <section class="card">
         <h2>Output</h2>
         <p id="stats" class="stats"></p>
         <div id="warnings" class="warnings"></div>
@@ -115,6 +121,10 @@
         <textarea id="output" readonly spellcheck="false"></textarea>
       </section>
     </main>
+
+    <div class="actionbar">
+      <button id="regenBtn">Regenerate G-code</button>
+    </div>
 
     <footer><p>Vase-mode · relative volumetric extrusion · no start/end G-code (yet)</p></footer>
 

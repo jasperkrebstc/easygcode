@@ -34,6 +34,7 @@
   function generate(cfg) {
     const warnings = [];
     const lines = [];
+    const path = []; // {x, y, z, travel} move endpoints for the 3D preview
     let totalVolume = 0; // mm^3
     let pathLength = 0; // mm of extruding moves
     let moveCount = 0;
@@ -96,6 +97,7 @@
           f3(z) +
           (feedTag ? ' F' + Math.round(cfg.travelFeed) : '')
       );
+      path.push({ x: p.x + cx, y: p.y + cy, z: z, travel: true });
       moveCount++;
     }
 
@@ -120,6 +122,7 @@
             f5(dE) +
             (firstMove ? ' F' + Math.round(cfg.printFeed) : '')
         );
+        path.push({ x: b.x + cx, y: b.y + cy, z: z, travel: false });
         firstMove = false;
         moveCount++;
       }
@@ -193,6 +196,7 @@
           f5(dE) +
           (firstExtrude ? ' F' + Math.round(cfg.printFeed) : '')
       );
+      path.push({ x: next.x + cx, y: next.y + cy, z: zEnd, travel: false });
       firstExtrude = false;
       moveCount++;
 
@@ -210,7 +214,7 @@
       loops: cfg.totalHeight / cfg.layerHeight,
     };
 
-    return { gcode: lines.join('\n') + '\n', warnings, stats };
+    return { gcode: lines.join('\n') + '\n', warnings, stats, path };
   }
 
   window.GcodeGen = { generate, beadArea };
