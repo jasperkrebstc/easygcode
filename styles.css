@@ -126,7 +126,8 @@ select {
   padding-right: 30px;
 }
 
-canvas#preview {
+canvas#preview,
+canvas#preview3d {
   width: 100%;
   height: auto;
   aspect-ratio: 1 / 1;
@@ -135,6 +136,47 @@ canvas#preview {
   border-radius: 12px;
   margin-top: 12px;
   display: block;
+}
+
+canvas#preview3d {
+  touch-action: none; /* let drag rotate instead of scrolling the page */
+  cursor: grab;
+}
+
+canvas#preview3d:active {
+  cursor: grabbing;
+}
+
+.hint {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 0.75rem;
+  text-align: center;
+}
+
+.actionbar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
+  background: rgba(15, 17, 21, 0.92);
+  backdrop-filter: blur(8px);
+  border-top: 1px solid var(--border);
+  z-index: 10;
+}
+
+.actionbar button {
+  width: 100%;
+  background: var(--accent2);
+  color: #06121f;
+  font-size: 1.05rem;
+  padding: 15px;
+  border-radius: 12px;
+}
+
+main {
+  padding-bottom: 84px; /* clear the fixed action bar */
 }
 
 .buttons {
