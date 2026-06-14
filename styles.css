@@ -1,0 +1,206 @@
+:root {
+  --bg: #0f1115;
+  --card: #181b22;
+  --card2: #1f232c;
+  --text: #e7eaf0;
+  --muted: #9aa3b2;
+  --accent: #4f9dff;
+  --accent2: #2bd9a0;
+  --warn: #ffb454;
+  --border: #2a2f3a;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-size: 16px;
+  line-height: 1.4;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom)
+    env(safe-area-inset-left);
+}
+
+header {
+  padding: 18px 16px 6px;
+  text-align: center;
+}
+
+header h1 {
+  margin: 0;
+  font-size: 1.5rem;
+  letter-spacing: 0.5px;
+}
+
+header .sub {
+  margin: 2px 0 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+main {
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 8px 12px 24px;
+}
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 14px 14px 16px;
+  margin: 12px 0;
+}
+
+.card h2 {
+  margin: 0 0 10px;
+  font-size: 1.05rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.toggle {
+  font-size: 0.85rem;
+  font-weight: 400;
+  color: var(--muted);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.grid .field {
+  margin-bottom: 0;
+}
+
+label {
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+input[type="number"],
+select {
+  background: var(--card2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 10px;
+  padding: 12px 10px;
+  font-size: 1rem;
+  width: 100%;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+input[type="checkbox"] {
+  width: 20px;
+  height: 20px;
+  accent-color: var(--accent2);
+}
+
+select {
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='8'><path d='M1 1l5 5 5-5' stroke='%239aa3b2' stroke-width='1.5' fill='none'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  padding-right: 30px;
+}
+
+canvas#preview {
+  width: 100%;
+  height: auto;
+  aspect-ratio: 1 / 1;
+  background: var(--card2);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  margin-top: 12px;
+  display: block;
+}
+
+.buttons {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 10px 0;
+}
+
+button {
+  flex: 1 1 30%;
+  min-width: 90px;
+  background: var(--accent);
+  color: #06121f;
+  border: none;
+  border-radius: 10px;
+  padding: 13px 10px;
+  font-size: 0.95rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+button:active {
+  filter: brightness(0.9);
+}
+
+#downloadBtn {
+  background: var(--accent2);
+}
+
+#shareBtn {
+  background: #c8d0dc;
+}
+
+.stats {
+  margin: 0 0 8px;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.warnings {
+  color: var(--warn);
+  font-size: 0.82rem;
+}
+
+.warnings div {
+  margin-bottom: 4px;
+}
+
+textarea#output {
+  width: 100%;
+  height: 220px;
+  background: #0b0d12;
+  color: #b9c6da;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.72rem;
+  white-space: pre;
+  resize: vertical;
+}
+
+footer {
+  text-align: center;
+  color: var(--muted);
+  font-size: 0.72rem;
+  padding: 8px 16px 24px;
+}
