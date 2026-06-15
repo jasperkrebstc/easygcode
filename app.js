@@ -37,7 +37,8 @@
       totalHeight: num('totalHeight'),
       printFeed: num('printFeed'),
       travelFeed: num('travelFeed'),
-      points: Math.max(8, Math.round(num('resolution'))),
+      tolerance: num('tolerance'),
+      seamSide: $('seamSide').value,
       centerX: num('centerX'),
       centerY: num('centerY'),
       brim: {
@@ -46,6 +47,14 @@
         lines: Math.max(0, Math.round(num('brimLines'))),
         lineWidth: num('brimLineWidth'),
         layerHeight: num('brimLayerHeight'),
+      },
+      pattern: {
+        enabled: $('patternEnabled').checked,
+        amplitude: num('patAmplitude'),
+        bumps: Math.max(1, Math.round(num('patBumps'))),
+        coverage: num('patCoverage'),
+        plBottom: Math.max(0, Math.round(num('patPlBottom'))),
+        plTop: Math.max(0, Math.round(num('patPlTop'))),
       },
     };
   }
@@ -64,8 +73,7 @@
     }
     if (!Number.isFinite(cfg.centerX) || !Number.isFinite(cfg.centerY))
       return 'Enter valid bed center X/Y.';
-    if (!Number.isFinite(num('resolution')) || num('resolution') < 8)
-      return 'Resolution must be at least 8 points.';
+    if (!isPos(cfg.tolerance)) return 'Chord tolerance must be greater than 0.';
     for (const k in cfg.shapeParams) {
       const v = cfg.shapeParams[k];
       if (!Number.isFinite(v)) return 'Enter a valid value for ' + k + '.';
@@ -75,6 +83,11 @@
       if (cfg.brim.lines < 1) return 'Brim needs at least 1 line.';
       if (!isPos(cfg.brim.lineWidth)) return 'Enter a valid brim line width.';
       if (!isPos(cfg.brim.layerHeight)) return 'Enter a valid brim layer height.';
+    }
+    if (cfg.pattern.enabled) {
+      if (!Number.isFinite(cfg.pattern.amplitude)) return 'Enter a valid pattern amplitude.';
+      if (cfg.pattern.bumps < 1) return 'Pattern needs at least 1 bump per revolution.';
+      if (!Number.isFinite(cfg.pattern.coverage)) return 'Enter a valid pattern coverage %.';
     }
     return null;
   }
@@ -95,7 +108,10 @@
 
     let base;
     try {
-      base = window.Geo.resampleClosed(window.Geo.makeShape(cfg.shape, cfg.shapeParams), cfg.points);
+      base = window.Geo.rotateToSeam(
+        window.Geo.adaptiveShape(cfg.shape, cfg.shapeParams, isPos(cfg.tolerance) ? cfg.tolerance : 0.05),
+        cfg.seamSide
+      );
     } catch (e) {
       return;
     }
@@ -344,6 +360,11 @@
 
   $('brimEnabled').addEventListener('change', () => {
     $('brimFields').hidden = !$('brimEnabled').checked;
+    updateShapeUI();
+  });
+
+  $('patternEnabled').addEventListener('change', () => {
+    $('patternFields').hidden = !$('patternEnabled').checked;
     updateShapeUI();
   });
 

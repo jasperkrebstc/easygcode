@@ -190,7 +190,129 @@
     return out;
   }
 
+  // Distance from point p to the segment a-b.
+  function segDist(p, a, b) {
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const L2 = dx * dx + dy * dy;
+    if (L2 < 1e-12) return Math.hypot(p.x - a.x, p.y - a.y);
+    let t = ((p.x - a.x) * dx + (p.y - a.y) * dy) / L2;
+    t = Math.max(0, Math.min(1, t));
+    return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
+  }
+
+  // Ramer–Douglas–Peucker simplification of an OPEN polyline (keeps endpoints).
+  function rdp(points, eps) {
+    if (points.length < 3) return points.slice();
+    const a = points[0];
+    const b = points[points.length - 1];
+    let idx = -1;
+    let maxd = 0;
+    for (let i = 1; i < points.length - 1; i++) {
+      const d = segDist(points[i], a, b);
+      if (d > maxd) {
+        maxd = d;
+        idx = i;
+      }
+    }
+    if (maxd > eps) {
+      const left = rdp(points.slice(0, idx + 1), eps);
+      const right = rdp(points.slice(idx), eps);
+      return left.slice(0, -1).concat(right);
+    }
+    return [a, b];
+  }
+
+  // Simplify a CLOSED polyline to within `eps` (chord tolerance). Returns a
+  // closed CCW point list (no duplicated closing point).
+  function rdpClosed(closed, eps) {
+    if (closed.length < 4) return closed.slice();
+    const start = closed[0];
+    let idx = 0;
+    let maxd = -1;
+    for (let i = 1; i < closed.length; i++) {
+      const d = dist(closed[i], start);
+      if (d > maxd) {
+        maxd = d;
+        idx = i;
+      }
+    }
+    const arc1 = closed.slice(0, idx + 1);
+    const arc2 = closed.slice(idx).concat([start]);
+    const r1 = rdp(arc1, eps);
+    const r2 = rdp(arc2, eps);
+    return r1.slice(0, -1).concat(r2.slice(0, -1));
+  }
+
+  // Build a shape and simplify it to the given chord tolerance (mm).
+  function adaptiveShape(shape, params, tol) {
+    return rdpClosed(makeShape(shape, params), Math.max(1e-4, tol));
+  }
+
+  // Rotate a closed CCW polyline so it starts where the Y axis crosses it,
+  // on the chosen side ('back' = +Y, 'front' = -Y). Falls back to the extreme
+  // Y vertex if no crossing is found.
+  function rotateToSeam(base, side) {
+    const wantPos = side !== 'front';
+    let best = -1;
+    let bestX = Infinity;
+    for (let i = 0; i < base.length; i++) {
+      const p = base[i];
+      if (wantPos ? p.y > 0 : p.y < 0) {
+        if (Math.abs(p.x) < bestX) {
+          bestX = Math.abs(p.x);
+          best = i;
+        }
+      }
+    }
+    if (best < 0) {
+      // no crossing: pick the most extreme Y point on the wanted side
+      let bestY = wantPos ? -Infinity : Infinity;
+      for (let i = 0; i < base.length; i++) {
+        const y = base[i].y;
+        if (wantPos ? y > bestY : y < bestY) {
+          bestY = y;
+          best = i;
+        }
+      }
+    }
+    if (best <= 0) return base.slice();
+    return base.slice(best).concat(base.slice(0, best));
+  }
+
+  // Cumulative arc-length sampler for a closed polyline. Returns a function
+  // u -> { pos, tan } where u in [0,1) is the fraction of total perimeter, and
+  // tan is the unit tangent direction at that point.
+  function makeSampler(base) {
+    const n = base.length;
+    const cum = [0];
+    for (let i = 0; i < n; i++) cum.push(cum[i] + dist(base[i], base[(i + 1) % n]));
+    const total = cum[n];
+    return {
+      perimeter: total,
+      uOf: (i) => cum[i] / total, // u of base vertex i
+      at: (u) => {
+        let uu = u - Math.floor(u);
+        const target = uu * total;
+        let seg = 0;
+        while (seg < n - 1 && cum[seg + 1] <= target) seg++;
+        const a = base[seg];
+        const b = base[(seg + 1) % n];
+        const segLen = cum[seg + 1] - cum[seg] || 1e-9;
+        const t = (target - cum[seg]) / segLen;
+        const dx = b.x - a.x;
+        const dy = b.y - a.y;
+        const L = Math.hypot(dx, dy) || 1e-9;
+        return { pos: { x: a.x + dx * t, y: a.y + dy * t }, tan: { x: dx / L, y: dy / L } };
+      },
+    };
+  }
+
   window.Geo = {
+    rdpClosed,
+    adaptiveShape,
+    rotateToSeam,
+    makeSampler,
     makeShape,
     ensureCCW,
     signedArea,
