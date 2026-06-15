@@ -78,10 +78,32 @@
           <div class="field"><label>Total height (mm)</label><input type="number" id="totalHeight" value="60" min="0.5" step="1" /></div>
           <div class="field"><label>Print feed (mm/min)</label><input type="number" id="printFeed" value="1800" min="1" step="50" /></div>
           <div class="field"><label>Travel feed (mm/min)</label><input type="number" id="travelFeed" value="6000" min="1" step="100" /></div>
-          <div class="field"><label>Resolution (points/rev)</label><input type="number" id="resolution" value="200" min="8" step="1" /></div>
+          <div class="field"><label>Chord tolerance (mm)</label><input type="number" id="tolerance" value="0.05" min="0.001" step="0.01" /></div>
+          <div class="field">
+            <label>Seam side</label>
+            <select id="seamSide">
+              <option value="back">Back (+Y)</option>
+              <option value="front">Front (−Y)</option>
+            </select>
+          </div>
           <div class="field"><label>Bed center X (mm)</label><input type="number" id="centerX" value="125" step="1" /></div>
           <div class="field"><label>Bed center Y (mm)</label><input type="number" id="centerY" value="125" step="1" /></div>
         </div>
+      </section>
+
+      <section class="card">
+        <h2>
+          Pattern (weave)
+          <label class="toggle"><input type="checkbox" id="patternEnabled" /> enable</label>
+        </h2>
+        <div id="patternFields" class="grid" hidden>
+          <div class="field"><label>Amplitude (mm)</label><input type="number" id="patAmplitude" value="2" min="0" step="0.1" /></div>
+          <div class="field"><label>Bumps / revolution</label><input type="number" id="patBumps" value="40" min="1" step="1" /></div>
+          <div class="field"><label>Coverage (% patterned)</label><input type="number" id="patCoverage" value="100" min="0" max="100" step="1" /></div>
+          <div class="field"><label>Patternless layers bottom</label><input type="number" id="patPlBottom" value="0" min="0" step="1" /></div>
+          <div class="field"><label>Patternless layers top</label><input type="number" id="patPlTop" value="0" min="0" step="1" /></div>
+        </div>
+        <p class="hint">Even bumps/rev = vertical flutes · odd = woven (bumps shift each layer)</p>
       </section>
 
       <section class="card">

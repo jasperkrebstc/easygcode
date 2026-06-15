@@ -38,19 +38,44 @@ Z rises by `layerHeight` per full loop with no seam and no retractions. The **fi
 turn ramps up**: it starts at `Z = 0` with 0% extrusion and linearly climbs to
 `layerHeight` at 100% extrusion over one loop, so the wall builds off the bed cleanly.
 
+### Adaptive resolution
+
+The base curve is built to a **chord tolerance** (mm): the shape is densely sampled then
+simplified (Douglas–Peucker) so flat sections use few points and tight curves use more.
+This is geometry only — it's never emitted directly when a pattern is active.
+
+### Seam
+
+The loop is rotated so its start (the seam) sits where the Y-axis crosses the curve —
+**Back (+Y)** by default, or **Front (−Y)**.
+
+### Weave pattern
+
+Each toolpath point is displaced sideways (along tangent × Z) by
+`amplitude · cos(π · (L + u) · bumps)`, where `L` = completed loops and `u` = fraction
+around the loop. Emitted points are the union of the base-curve vertices (shape fidelity)
+and the bump positions (`j / bumps` of a revolution), so the weave stays smooth and the
+shape stays accurate. Because `cos` shifts by `(-1)^bumps` each layer, **even bumps/rev =
+vertical flutes, odd = woven** (bumps interlock diagonally). Confinement: **coverage %**
+leaves a plain band centered on the seam; **patternless layers top/bottom** keep the ends
+plain.
+
 ### Brim
 
 An optional brim prints first as flat offset loops of the base shape (at the brim layer
 height). The first brim line sits `brimWidth/2 + lineWidth/2` from the base wall
 (gap-free); each additional line is one brim width further out (**outer**) or in
-(**inner**). A travel move (at the travel feedrate) connects each loop.
+(**inner**). A travel move (at the travel feedrate) connects each loop. Inner brim lines
+that would exceed the shape's size are skipped with a warning, so over-specifying is safe.
 
 ## Inputs
 
 - **Shape:** circle (radius); rounded rectangle (width, length, fillet); ellipse;
   polygon; star; squircle.
 - **Print:** layer height, line width, total height, print feed, travel feed,
-  points-per-loop, bed center X/Y.
+  chord tolerance, seam side, bed center X/Y.
+- **Pattern:** enable, amplitude, bumps/revolution, coverage %, patternless layers
+  top/bottom.
 - **Brim:** enable, outer/inner, number of lines, brim line width, brim layer height.
 
 ## Files
@@ -62,5 +87,5 @@ icons (PWA).
 ## Roadmap
 
 Freehand draw + auto-close → Notes-style shape snapping → AI text-to-shape → vertical
-taper/twist → surface patterns → speed variation → nonplanar → start/end G-code presets
-+ bottom layers.
+taper/twist → more surface patterns → speed variation → nonplanar → start/end G-code
+presets + bottom layers.
