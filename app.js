@@ -174,13 +174,9 @@
     }
 
     function setPath(path) {
-      // Downsample for a smooth, lightweight orbit.
-      const max = 4000;
-      const step = Math.max(1, Math.ceil(path.length / max));
-      pts = [];
-      for (let i = 0; i < path.length; i += step) pts.push(path[i]);
-      if (path.length && pts[pts.length - 1] !== path[path.length - 1])
-        pts.push(path[path.length - 1]);
+      // Show the full toolpath (no simplification). If this ever gets slow on
+      // very tall prints we can reintroduce downsampling here.
+      pts = path.slice();
       render();
     }
 
