@@ -80,10 +80,12 @@
           <div class="field"><label>Travel feed (mm/min)</label><input type="number" id="travelFeed" value="6000" min="1" step="100" /></div>
           <div class="field"><label>Chord tolerance (mm)</label><input type="number" id="tolerance" value="0.05" min="0.001" step="0.01" /></div>
           <div class="field">
-            <label>Seam side</label>
+            <label>Seam / pattern position</label>
             <select id="seamSide">
               <option value="back">Back (+Y)</option>
               <option value="front">Front (−Y)</option>
+              <option value="right">Right (+X)</option>
+              <option value="left">Left (−X)</option>
             </select>
           </div>
           <div class="field"><label>Bed center X (mm)</label><input type="number" id="centerX" value="125" step="1" /></div>

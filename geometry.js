@@ -249,29 +249,31 @@
     return rdpClosed(makeShape(shape, params), Math.max(1e-4, tol));
   }
 
-  // Rotate a closed CCW polyline so it starts where the Y axis crosses it,
-  // on the chosen side ('back' = +Y, 'front' = -Y). Falls back to the extreme
-  // Y vertex if no crossing is found.
+  // Rotate a closed CCW polyline so it starts where a chosen axis crosses it.
+  // side: 'back' (+Y), 'front' (-Y), 'right' (+X), 'left' (-X). Falls back to the
+  // extreme vertex in the wanted direction if no crossing is found.
   function rotateToSeam(base, side) {
-    const wantPos = side !== 'front';
+    const horiz = side === 'right' || side === 'left'; // cross the X axis (vary along Y)
+    const wantPos = side === 'back' || side === 'right';
     let best = -1;
-    let bestX = Infinity;
+    let bestScore = Infinity;
     for (let i = 0; i < base.length; i++) {
-      const p = base[i];
-      if (wantPos ? p.y > 0 : p.y < 0) {
-        if (Math.abs(p.x) < bestX) {
-          bestX = Math.abs(p.x);
+      const main = horiz ? base[i].x : base[i].y; // coordinate that defines the side
+      const other = horiz ? base[i].y : base[i].x; // minimize |other| -> on the axis
+      if (wantPos ? main > 0 : main < 0) {
+        const score = Math.abs(other);
+        if (score < bestScore) {
+          bestScore = score;
           best = i;
         }
       }
     }
     if (best < 0) {
-      // no crossing: pick the most extreme Y point on the wanted side
-      let bestY = wantPos ? -Infinity : Infinity;
+      let bestMain = wantPos ? -Infinity : Infinity;
       for (let i = 0; i < base.length; i++) {
-        const y = base[i].y;
-        if (wantPos ? y > bestY : y < bestY) {
-          bestY = y;
+        const main = horiz ? base[i].x : base[i].y;
+        if (wantPos ? main > bestMain : main < bestMain) {
+          bestMain = main;
           best = i;
         }
       }
