@@ -139,6 +139,7 @@
           <div class="field"><label>Number of lines</label><input type="number" id="brimLines" value="4" min="1" step="1" /></div>
           <div class="field"><label>Brim line width (mm)</label><input type="number" id="brimLineWidth" value="2.0" min="0.1" step="0.1" /></div>
           <div class="field"><label>Brim layer height (mm)</label><input type="number" id="brimLayerHeight" value="0.6" min="0.05" step="0.05" /></div>
+          <div class="field"><label>Brim feedrate (mm/min)</label><input type="number" id="brimFeed" value="1800" min="1" step="50" /></div>
         </div>
       </section>
 
@@ -146,6 +147,7 @@
         <h2>3D preview</h2>
         <canvas id="preview3d" width="600" height="600"></canvas>
         <p class="hint">Drag to rotate · updates when you regenerate</p>
+        <p class="hint"><span class="legend"></span> feedrate: blue = fast → red = slow</p>
       </section>
 
       <section class="card">
