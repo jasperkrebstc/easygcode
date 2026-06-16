@@ -50,11 +50,16 @@
       },
       pattern: {
         enabled: $('patternEnabled').checked,
+        type: $('patternType').value,
         amplitude: num('patAmplitude'),
-        bumps: Math.max(1, Math.round(num('patBumps'))),
+        zAngle: num('patZAngle'),
         coverage: num('patCoverage'),
+        bumpFeed: num('patBumpFeed'),
         plBottom: Math.max(0, Math.round(num('patPlBottom'))),
         plTop: Math.max(0, Math.round(num('patPlTop'))),
+        bumps: Math.max(1, Math.round(num('patBumps'))),
+        count: Math.max(1, Math.round(num('patCount'))),
+        seed: Math.max(0, Math.round(num('patSeed'))),
       },
     };
   }
@@ -86,8 +91,13 @@
     }
     if (cfg.pattern.enabled) {
       if (!Number.isFinite(cfg.pattern.amplitude)) return 'Enter a valid pattern amplitude.';
-      if (cfg.pattern.bumps < 1) return 'Pattern needs at least 1 bump per revolution.';
+      if (!Number.isFinite(cfg.pattern.zAngle)) return 'Enter a valid Z-angle.';
       if (!Number.isFinite(cfg.pattern.coverage)) return 'Enter a valid pattern coverage %.';
+      if (!isPos(cfg.pattern.bumpFeed)) return 'Enter a valid bump feedrate.';
+      if (cfg.pattern.type === 'weave' && cfg.pattern.bumps < 1)
+        return 'Weave needs at least 1 bump per revolution.';
+      if (cfg.pattern.type === 'spikes' && cfg.pattern.count < 1)
+        return 'Spikes need at least 1 point.';
     }
     return null;
   }
@@ -96,6 +106,16 @@
     document.querySelectorAll('.shape-params').forEach((el) => {
       el.hidden = el.getAttribute('data-shape') !== shape;
     });
+  }
+
+  function showPatternParams(type) {
+    document.querySelectorAll('.pattern-params').forEach((el) => {
+      el.hidden = el.getAttribute('data-pattern') !== type;
+    });
+    $('patternHint').textContent =
+      type === 'spikes'
+        ? 'Spikes: blue-noise outward pokes, base width = line width. Change seed to re-roll.'
+        : 'Weave: even bumps/rev = flutes · odd = woven';
   }
 
   // --- Live 2D cross-section preview ---
@@ -255,6 +275,7 @@
   function updateShapeUI() {
     const cfg = readConfig();
     showShapeParams(cfg.shape);
+    showPatternParams(cfg.pattern.type);
     drawPreview(cfg);
   }
 
@@ -262,6 +283,7 @@
   function regenerate() {
     const cfg = readConfig();
     showShapeParams(cfg.shape);
+    showPatternParams(cfg.pattern.type);
     drawPreview(cfg);
 
     const err = validate(cfg);

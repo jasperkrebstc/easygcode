@@ -49,16 +49,27 @@ This is geometry only — it's never emitted directly when a pattern is active.
 The loop is rotated so its start (the seam) sits where the Y-axis crosses the curve —
 **Back (+Y)** by default, or **Front (−Y)**.
 
-### Weave pattern
+### Patterns
 
-Each toolpath point is displaced sideways (along tangent × Z) by
-`amplitude · cos(π · (L + u) · bumps)`, where `L` = completed loops and `u` = fraction
-around the loop. Emitted points are the union of the base-curve vertices (shape fidelity)
-and the bump positions (`j / bumps` of a revolution), so the weave stays smooth and the
-shape stays accurate. Because `cos` shifts by `(-1)^bumps` each layer, **even bumps/rev =
-vertical flutes, odd = woven** (bumps interlock diagonally). Confinement: **coverage %**
-leaves a plain band centered on the seam; **patternless layers top/bottom** keep the ends
-plain.
+Choose a pattern **type**; each displaces the toolpath sideways along the horizontal
+normal (tangent × Z). Settings are split into **general** (shared by all pattern types,
+present and future) and **type-specific**:
+
+- **General:** enable, type, amplitude, **Z-angle** (−90…90°; rotates the displacement
+  vector in the vertical plane so bumps rise/fall on the way out and reverse on the way
+  back — 0° = flat, ±90° = straight up/down), **coverage %** (plain band centered on the
+  seam), **patternless layers top/bottom**, and **bump feedrate** (used on bump moves;
+  plain wall moves keep the print feed).
+- **Weave (type-specific: bumps/revolution):** continuous displacement
+  `amplitude · cos(π · (L + u) · bumps)`. Emitted points are the union of base-curve
+  vertices (shape fidelity) and bump positions, so the weave is smooth and accurate.
+  Because the phase shifts by `(-1)^bumps` per layer, **even bumps/rev = vertical flutes,
+  odd = woven**.
+- **Random spikes (type-specific: number of spikes, seed):** blue-noise (Mitchell
+  best-candidate) outward pokes distributed evenly-but-random across the confined area.
+  Each spike is a triangle whose base width equals the line width (so the inner wall reads
+  as continuous), with the tip at full amplitude. Deterministic per **seed** — change the
+  seed to re-roll.
 
 ### Brim
 
