@@ -57,9 +57,10 @@ present and future) and **type-specific**:
 
 - **General:** enable, type, amplitude, **Z-angle** (−90…90°; rotates the displacement
   vector in the vertical plane so bumps rise/fall on the way out and reverse on the way
-  back — 0° = flat, ±90° = straight up/down), **coverage %** (plain band centered on the
-  seam), **patternless layers top/bottom**, and **bump feedrate** (used on bump moves;
-  plain wall moves keep the print feed).
+  back — 0° = flat, ±90° = straight up/down), **coverage %** (the patterned band is
+  centered on the seam and grows both directions — 100% = whole loop), **patternless
+  layers top/bottom**, and **bump feedrate** (used on bump moves; plain wall moves keep
+  the print feed).
 - **Weave (type-specific: bumps/revolution):** continuous displacement
   `amplitude · cos(π · (L + u) · bumps)`. Emitted points are the union of base-curve
   vertices (shape fidelity) and bump positions, so the weave is smooth and accurate.
@@ -87,7 +88,12 @@ that would exceed the shape's size are skipped with a warning, so over-specifyin
   chord tolerance, seam side, bed center X/Y.
 - **Pattern:** enable, amplitude, bumps/revolution, coverage %, patternless layers
   top/bottom.
-- **Brim:** enable, outer/inner, number of lines, brim line width, brim layer height.
+- **Brim:** enable, outer/inner, number of lines, brim line width, brim layer height,
+  brim feedrate.
+
+The **3D preview** orbits at a fixed zoom (drag to rotate, Z-up), and colors the toolpath
+by feedrate — blue = fastest, red = slowest — so brim / wall / bump feed differences are
+visible at a glance.
 
 ## Files
 

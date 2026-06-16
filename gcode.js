@@ -117,9 +117,6 @@
       pat.amplitude !== 0 &&
       ((type === 'weave' && pat.bumps >= 1) || (type === 'spikes' && pat.count >= 1));
     const cov = patternOn ? Math.max(0, Math.min(100, pat.coverage)) / 100 : 0;
-    const gap = 1 - cov;
-    const bandLo = gap / 2;
-    const bandHi = 1 - gap / 2;
     const zAng = ((pat.zAngle || 0) * Math.PI) / 180;
     const cosA = Math.cos(zAng);
     const sinA = Math.sin(zAng);
@@ -130,10 +127,12 @@
     function layerPatterned(L) {
       return !(L < plBottom || L >= T - plTop);
     }
+    // Patterned region is centered on the seam (u=0), growing both directions.
     function uInBand(u) {
       if (cov >= 1) return true;
       const uu = u >= 1 ? 0 : u;
-      return uu >= bandLo && uu <= bandHi;
+      const half = cov / 2;
+      return uu <= half || uu >= 1 - half;
     }
 
     // ---- Header ----
@@ -163,7 +162,7 @@
       let line = 'G0 X' + f3(cur.x) + ' Y' + f3(cur.y) + ' Z' + f3(cur.z) + ' F' + Math.round(cfg.travelFeed);
       lines.push(line);
       lastFeed = cfg.travelFeed;
-      path.push({ x: cur.x, y: cur.y, z: cur.z, travel: true });
+      path.push({ x: cur.x, y: cur.y, z: cur.z, travel: true, feed: cfg.travelFeed });
       prev = cur;
       moveCount++;
     }
@@ -185,7 +184,7 @@
         lastFeed = feed;
       }
       lines.push(line);
-      path.push({ x: cur.x, y: cur.y, z: cur.z, travel: false });
+      path.push({ x: cur.x, y: cur.y, z: cur.z, travel: false, feed: feed });
       firstExtrude = false;
       moveCount++;
       prev = cur;
@@ -200,8 +199,7 @@
     }
 
     // Brim helpers reuse the simple per-loop emit.
-    function extrudeLoop(pts, z, a) {
-      let firstMove = true;
+    function extrudeLoop(pts, z, a, feed) {
       for (let i = 0; i < pts.length; i++) {
         const A = pts[i];
         const B = pts[(i + 1) % pts.length];
@@ -210,13 +208,12 @@
         totalVolume += dE;
         pathLength += segLen;
         let line = 'G1 X' + f3(B.x + cx) + ' Y' + f3(B.y + cy) + ' Z' + f3(z) + ' E' + f5(dE);
-        if (firstMove || lastFeed !== cfg.printFeed) {
-          line += ' F' + Math.round(cfg.printFeed);
-          lastFeed = cfg.printFeed;
+        if (feed !== lastFeed) {
+          line += ' F' + Math.round(feed);
+          lastFeed = feed;
         }
         lines.push(line);
-        path.push({ x: B.x + cx, y: B.y + cy, z: z, travel: false });
-        firstMove = false;
+        path.push({ x: B.x + cx, y: B.y + cy, z: z, travel: false, feed: feed });
         moveCount++;
       }
     }
@@ -225,6 +222,7 @@
     const brim = cfg.brim;
     if (brim && brim.enabled && brim.lines > 0) {
       const bArea = beadArea(brim.lineWidth, brim.layerHeight);
+      const brimFeed = brim.feed > 0 ? brim.feed : cfg.printFeed;
       const dir = brim.outer ? 1 : -1;
       const centroid = base.reduce((s, p) => ({ x: s.x + p.x, y: s.y + p.y }), { x: 0, y: 0 });
       centroid.x /= base.length;
@@ -244,7 +242,7 @@
         }
         const startAbs = { x: loop[0].x + cx, y: loop[0].y + cy, z: brim.layerHeight };
         travelAbs(startAbs);
-        extrudeLoop(loop, brim.layerHeight, bArea);
+        extrudeLoop(loop, brim.layerHeight, bArea, brimFeed);
       }
     }
 
@@ -300,16 +298,16 @@
       const hwU = cfg.lineWidth / 2 / perim; // half spike base width, in u
       const zMin = plBottom * lh;
       const zMax = (T - plTop) * lh;
-      // Keep spikes clear of the seam/edges so the entry/exit stay in-loop.
-      const sLo = Math.max(bandLo, hwU * 1.5) * perim;
-      const sHi = Math.min(bandHi, 1 - hwU * 1.5) * perim;
+      // Distribute spikes symmetrically around the seam (signed arc length from
+      // the seam, in mm), so the patterned area grows from the seam both ways.
+      const oMax = (cov / 2) * perim;
       const byLoop = {};
       let placed = 0;
-      if (zMax > zMin && sHi > sLo) {
-        const spikes = bestCandidate(pat.count, sLo, sHi, zMin, zMax, (pat.seed | 0) || 1);
+      if (zMax > zMin && oMax > hwU * perim) {
+        const spikes = bestCandidate(pat.count, -oMax, oMax, zMin, zMax, (pat.seed | 0) || 1);
         spikes.forEach((sp) => {
-          const u = sp.s / perim;
-          let L = Math.round(sp.z / lh - u);
+          const u = (sp.s / perim + 1) % 1;
+          let L = Math.round(sp.z / lh);
           if (L < plBottom) L = plBottom;
           if (L > Lmax - 1) L = Lmax - 1;
           (byLoop[L] = byLoop[L] || []).push(u);
@@ -334,7 +332,7 @@
           if (u >= uEnd - 1e-9) continue;
           events.push({ u, tip: false });
         }
-        const spk = (byLoop[L] || []).filter((u) => u > 1e-6 && u < uEnd - 1e-6);
+        const spk = (byLoop[L] || []).filter((u) => u > hwU * 1.2 && u < uEnd - hwU * 1.2);
         spk.forEach((uc) => {
           events.push({ u: uc - hwU, tip: false });
           events.push({ u: uc, tip: true });

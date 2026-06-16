@@ -47,6 +47,7 @@
         lines: Math.max(0, Math.round(num('brimLines'))),
         lineWidth: num('brimLineWidth'),
         layerHeight: num('brimLayerHeight'),
+        feed: num('brimFeed'),
       },
       pattern: {
         enabled: $('patternEnabled').checked,
@@ -88,6 +89,7 @@
       if (cfg.brim.lines < 1) return 'Brim needs at least 1 line.';
       if (!isPos(cfg.brim.lineWidth)) return 'Enter a valid brim line width.';
       if (!isPos(cfg.brim.layerHeight)) return 'Enter a valid brim layer height.';
+      if (!isPos(cfg.brim.feed)) return 'Enter a valid brim feedrate.';
     }
     if (cfg.pattern.enabled) {
       if (!Number.isFinite(cfg.pattern.amplitude)) return 'Enter a valid pattern amplitude.';
@@ -176,14 +178,18 @@
     stroke(base, '#4f9dff', 2.5);
   }
 
-  // --- Simple 3D toolpath viewer (orbit by drag, orthographic) ---
+  // --- 3D toolpath viewer: orbit by drag, fixed zoom, Z-up, colored by feed ---
   const View3D = (function () {
     let canvas, ctx;
     let pts = [];
-    let az = -0.7;
-    let el = 1.15;
+    let az = -0.6;
+    let el = 0.5; // 0 = side view, PI/2 = top view
     let dragging = false;
     let lastX = 0, lastY = 0;
+    let center = { x: 0, y: 0, z: 0 };
+    let scale = 1; // fixed, computed once per path (zoom-to-fit, then orbit)
+    let feedMin = 0, feedMax = 1;
+    const NB = 18; // color buckets for batched stroking
 
     function init() {
       canvas = $('preview3d');
@@ -198,7 +204,7 @@
         if (!dragging) return;
         az += (e.clientX - lastX) * 0.01;
         el += (e.clientY - lastY) * 0.01;
-        el = Math.max(0.05, Math.min(Math.PI - 0.05, el));
+        el = Math.max(0, Math.min(Math.PI / 2, el));
         lastX = e.clientX;
         lastY = e.clientY;
         e.preventDefault();
@@ -210,19 +216,59 @@
     }
 
     function setPath(path) {
-      // Show the full toolpath (no simplification). If this ever gets slow on
-      // very tall prints we can reintroduce downsampling here.
       pts = path.slice();
+      if (pts.length < 2) {
+        render();
+        return;
+      }
+      // Bounding box center + radius -> fixed scale (rotation-invariant).
+      let mnx = Infinity, mny = Infinity, mnz = Infinity, mxx = -Infinity, mxy = -Infinity, mxz = -Infinity;
+      let fMin = Infinity, fMax = -Infinity;
+      for (const p of pts) {
+        if (p.x < mnx) mnx = p.x; if (p.x > mxx) mxx = p.x;
+        if (p.y < mny) mny = p.y; if (p.y > mxy) mxy = p.y;
+        if (p.z < mnz) mnz = p.z; if (p.z > mxz) mxz = p.z;
+        if (!p.travel && p.feed != null) {
+          if (p.feed < fMin) fMin = p.feed;
+          if (p.feed > fMax) fMax = p.feed;
+        }
+      }
+      center = { x: (mnx + mxx) / 2, y: (mny + mxy) / 2, z: (mnz + mxz) / 2 };
+      let R = 0;
+      for (const p of pts) {
+        const d = Math.hypot(p.x - center.x, p.y - center.y, p.z - center.z);
+        if (d > R) R = d;
+      }
+      const pad = 18;
+      scale = (Math.min(canvas.width, canvas.height) / 2 - pad) / (R || 1);
+      feedMin = Number.isFinite(fMin) ? fMin : 0;
+      feedMax = Number.isFinite(fMax) ? fMax : 1;
       render();
     }
 
-    function project(p, c) {
-      const x = p.x - c.x, y = p.y - c.y, z = p.z - c.z;
+    // Z-up orthographic projection. Returns screen pixel coords.
+    function project(p) {
+      const X = p.x - center.x, Y = p.y - center.y, Z = p.z - center.z;
       const ca = Math.cos(az), sa = Math.sin(az);
-      const rx = x * ca - y * sa;
-      const ry = x * sa + y * ca;
+      const x1 = X * ca - Y * sa;
+      const y1 = X * sa + Y * ca; // depth toward camera
       const ce = Math.cos(el), se = Math.sin(el);
-      return { x: rx, y: ry * ce - z * se };
+      const sxp = x1;
+      const syp = Z * ce - y1 * se; // +Z up; tilt mixes in depth
+      return { x: canvas.width / 2 + sxp * scale, y: canvas.height / 2 - syp * scale };
+    }
+
+    // Blue (fast) -> red (slow). bucket 0 = fastest.
+    function bucketColor(b) {
+      const t = NB <= 1 ? 0 : b / (NB - 1);
+      const hue = 240 * (1 - t); // 240 blue -> 0 red
+      return 'hsl(' + hue.toFixed(0) + ',85%,55%)';
+    }
+    function feedBucket(f) {
+      if (feedMax <= feedMin) return 0;
+      let t = (f - feedMin) / (feedMax - feedMin);
+      t = Math.max(0, Math.min(1, t));
+      return Math.round((1 - t) * (NB - 1)); // fast(high feed) -> bucket 0
     }
 
     function render() {
@@ -230,42 +276,37 @@
       const W = canvas.width, H = canvas.height;
       ctx.clearRect(0, 0, W, H);
       if (pts.length < 2) return;
+      const proj = pts.map(project);
 
-      let mnx = Infinity, mny = Infinity, mnz = Infinity, mxx = -Infinity, mxy = -Infinity, mxz = -Infinity;
-      for (const p of pts) {
-        if (p.x < mnx) mnx = p.x; if (p.x > mxx) mxx = p.x;
-        if (p.y < mny) mny = p.y; if (p.y > mxy) mxy = p.y;
-        if (p.z < mnz) mnz = p.z; if (p.z > mxz) mxz = p.z;
+      // Travels first, faint.
+      ctx.beginPath();
+      for (let i = 1; i < pts.length; i++) {
+        if (!pts[i].travel) continue;
+        ctx.moveTo(proj[i - 1].x, proj[i - 1].y);
+        ctx.lineTo(proj[i].x, proj[i].y);
       }
-      const c = { x: (mnx + mxx) / 2, y: (mny + mxy) / 2, z: (mnz + mxz) / 2 };
-      const proj = pts.map((p) => project(p, c));
+      ctx.strokeStyle = 'rgba(154,163,178,0.22)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
 
-      let p2mnx = Infinity, p2mny = Infinity, p2mxx = -Infinity, p2mxy = -Infinity;
-      for (const q of proj) {
-        if (q.x < p2mnx) p2mnx = q.x; if (q.x > p2mxx) p2mxx = q.x;
-        if (q.y < p2mny) p2mny = q.y; if (q.y > p2mxy) p2mxy = q.y;
+      // Extrusions, batched by feed-color bucket.
+      const buckets = [];
+      for (let b = 0; b < NB; b++) buckets.push([]);
+      for (let i = 1; i < pts.length; i++) {
+        if (pts[i].travel) continue;
+        buckets[feedBucket(pts[i].feed != null ? pts[i].feed : feedMax)].push(i);
       }
-      const pad = 24;
-      const s = Math.min((W - 2 * pad) / ((p2mxx - p2mnx) || 1), (H - 2 * pad) / ((p2mxy - p2mny) || 1));
-      const ox = W / 2 - ((p2mnx + p2mxx) / 2) * s;
-      const oy = H / 2 + ((p2mny + p2mxy) / 2) * s;
-      const sx = (q) => ox + q.x * s;
-      const sy = (q) => oy - q.y * s;
-
-      // Two batched passes: travels faint, extrusions accent.
-      function pass(travel, color) {
+      for (let b = 0; b < NB; b++) {
+        if (!buckets[b].length) continue;
         ctx.beginPath();
-        for (let i = 1; i < pts.length; i++) {
-          if (!!pts[i].travel !== travel) continue;
-          ctx.moveTo(sx(proj[i - 1]), sy(proj[i - 1]));
-          ctx.lineTo(sx(proj[i]), sy(proj[i]));
+        for (const i of buckets[b]) {
+          ctx.moveTo(proj[i - 1].x, proj[i - 1].y);
+          ctx.lineTo(proj[i].x, proj[i].y);
         }
-        ctx.strokeStyle = color;
-        ctx.lineWidth = 1;
+        ctx.strokeStyle = bucketColor(b);
+        ctx.lineWidth = 1.2;
         ctx.stroke();
       }
-      pass(true, 'rgba(154,163,178,0.25)');
-      pass(false, '#4f9dff');
     }
 
     return { init, setPath, render };
