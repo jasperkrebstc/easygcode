@@ -249,37 +249,50 @@
     return rdpClosed(makeShape(shape, params), Math.max(1e-4, tol));
   }
 
-  // Rotate a closed CCW polyline so it starts where a chosen axis crosses it.
-  // side: 'back' (+Y), 'front' (-Y), 'right' (+X), 'left' (-X). Falls back to the
-  // extreme vertex in the wanted direction if no crossing is found.
+  // Rotate a closed CCW polyline so it starts exactly where a chosen axis
+  // crosses it. side: 'back' (+Y), 'front' (-Y), 'right' (+X), 'left' (-X).
+  // The exact crossing point is inserted (so the seam lands mid-edge, not at a
+  // vertex), making the seam world-fixed regardless of the shape's points.
   function rotateToSeam(base, side) {
-    const horiz = side === 'right' || side === 'left'; // cross the X axis (vary along Y)
+    const horiz = side === 'right' || side === 'left'; // cross the X axis (y = 0)
     const wantPos = side === 'back' || side === 'right';
-    let best = -1;
-    let bestScore = Infinity;
-    for (let i = 0; i < base.length; i++) {
-      const main = horiz ? base[i].x : base[i].y; // coordinate that defines the side
-      const other = horiz ? base[i].y : base[i].x; // minimize |other| -> on the axis
-      if (wantPos ? main > 0 : main < 0) {
-        const score = Math.abs(other);
-        if (score < bestScore) {
-          bestScore = score;
-          best = i;
+    const n = base.length;
+    let bestPt = null;
+    let bestIdx = -1;
+    let bestSide = wantPos ? -Infinity : Infinity;
+    for (let i = 0; i < n; i++) {
+      const a = base[i];
+      const b = base[(i + 1) % n];
+      const ca = horiz ? a.y : a.x; // coordinate that must reach 0 at the crossing
+      const cb = horiz ? b.y : b.x;
+      if ((ca <= 0 && cb > 0) || (ca >= 0 && cb < 0)) {
+        const t = ca / (ca - cb);
+        const pt = { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
+        const sideVal = horiz ? pt.x : pt.y; // which side of the axis this crossing is on
+        const onWanted = wantPos ? sideVal > 0 : sideVal < 0;
+        if (onWanted && (wantPos ? sideVal > bestSide : sideVal < bestSide)) {
+          bestSide = sideVal;
+          bestPt = pt;
+          bestIdx = i;
         }
       }
     }
-    if (best < 0) {
+    if (!bestPt) {
+      // Fallback: most extreme vertex in the wanted direction.
+      let best = 0;
       let bestMain = wantPos ? -Infinity : Infinity;
-      for (let i = 0; i < base.length; i++) {
+      for (let i = 0; i < n; i++) {
         const main = horiz ? base[i].x : base[i].y;
         if (wantPos ? main > bestMain : main < bestMain) {
           bestMain = main;
           best = i;
         }
       }
+      return base.slice(best).concat(base.slice(0, best));
     }
-    if (best <= 0) return base.slice();
-    return base.slice(best).concat(base.slice(0, best));
+    const rotated = [bestPt];
+    for (let k = 1; k <= n; k++) rotated.push(base[(bestIdx + k) % n]);
+    return rotated;
   }
 
   // Cumulative arc-length sampler for a closed polyline. Returns a function
