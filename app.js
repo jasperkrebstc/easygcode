@@ -176,6 +176,16 @@
     }
     for (let k = 1; k < loops.length; k++) stroke(loops[k], '#2bd9a0', 1.5);
     stroke(base, '#4f9dff', 2.5);
+
+    // Seam marker (also the pattern center) as a dot.
+    const seam = base[0];
+    ctx.beginPath();
+    ctx.arc(tx(seam), ty(seam), 7, 0, 2 * Math.PI);
+    ctx.fillStyle = '#ff5252';
+    ctx.fill();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = '#fff';
+    ctx.stroke();
   }
 
   // --- 3D toolpath viewer: orbit by drag, fixed zoom, Z-up, colored by feed ---
