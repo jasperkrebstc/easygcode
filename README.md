@@ -15,6 +15,11 @@ install it like an app; it then works offline.
 Export options: **Copy**, **Download .gcode** (saves to Files), or **Share** (AirDrop /
 send to another app via the iOS share sheet).
 
+**Settings presets:** "Save settings" downloads all inputs as a JSON file; "Load settings"
+reads one back. The latest settings are also remembered automatically (localStorage), so
+reopening the app keeps them — the JSON file is the durable backup (iOS may clear local
+storage after ~7 days of not opening the app).
+
 ## How it works
 
 ### Bead cross-section (volume)

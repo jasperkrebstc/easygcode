@@ -328,6 +328,7 @@
     showShapeParams(cfg.shape);
     showPatternParams(cfg.pattern.type);
     drawPreview(cfg);
+    saveLocal();
   }
 
   // --- Generate (button / Enter) ---
@@ -416,6 +417,70 @@
     setTimeout(() => (btn.textContent = old), 1200);
   }
 
+  // --- Settings preset: save/load JSON + auto-persist to localStorage ---
+  const STORAGE_KEY = 'easygcode-settings';
+
+  function collectSettings() {
+    const out = {};
+    document.querySelectorAll('input, select').forEach((el) => {
+      if (!el.id || el.type === 'file') return;
+      out[el.id] = el.type === 'checkbox' ? el.checked : el.value;
+    });
+    return out;
+  }
+
+  function applySettings(s) {
+    if (!s || typeof s !== 'object') return;
+    Object.keys(s).forEach((id) => {
+      const el = document.getElementById(id);
+      if (!el || el.type === 'file') return;
+      if (el.type === 'checkbox') el.checked = !!s[id];
+      else el.value = s[id];
+    });
+    // Sync groups whose checkboxes were set programmatically (no change event).
+    $('brimFields').hidden = !$('brimEnabled').checked;
+    $('patternFields').hidden = !$('patternEnabled').checked;
+  }
+
+  function saveLocal() {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(collectSettings()));
+    } catch (e) {
+      /* storage unavailable/full — ignore */
+    }
+  }
+
+  function exportSettings() {
+    const data = JSON.stringify({ app: 'easygcode', version: 1, settings: collectSettings() }, null, 2);
+    const blob = new Blob([data], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'easygcode-settings-' + Date.now() + '.json';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+    flash($('saveSettingsBtn'), 'Saved!');
+  }
+
+  function importSettings(file) {
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const parsed = JSON.parse(reader.result);
+        applySettings(parsed && parsed.settings ? parsed.settings : parsed);
+        saveLocal();
+        updateShapeUI();
+        regenerate();
+        flash($('loadSettingsBtn'), 'Loaded!');
+      } catch (e) {
+        flash($('loadSettingsBtn'), 'Bad file');
+      }
+    };
+    reader.readAsText(file);
+  }
+
   // --- Wire up ---
   View3D.init();
 
@@ -446,11 +511,24 @@
   $('downloadBtn').addEventListener('click', download);
   $('shareBtn').addEventListener('click', share);
 
+  $('saveSettingsBtn').addEventListener('click', exportSettings);
+  $('loadSettingsBtn').addEventListener('click', () => $('settingsFile').click());
+  $('settingsFile').addEventListener('change', (e) => {
+    if (e.target.files && e.target.files[0]) importSettings(e.target.files[0]);
+    e.target.value = '';
+  });
+
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
   }
 
-  // Initial render.
+  // Restore last-used settings, then initial render.
+  try {
+    const stored = localStorage.getItem(STORAGE_KEY);
+    if (stored) applySettings(JSON.parse(stored));
+  } catch (e) {
+    /* ignore */
+  }
   updateShapeUI();
   regenerate();
 })();

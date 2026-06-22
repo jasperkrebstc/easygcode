@@ -23,6 +23,16 @@
 
     <main>
       <section class="card">
+        <h2>Settings preset</h2>
+        <div class="buttons">
+          <button id="saveSettingsBtn">Save settings</button>
+          <button id="loadSettingsBtn">Load settings</button>
+        </div>
+        <input type="file" id="settingsFile" accept=".json,application/json" hidden />
+        <p class="hint">Save all inputs to a file, or load them back. Your latest settings are also remembered automatically.</p>
+      </section>
+
+      <section class="card">
         <h2>Shape</h2>
         <div class="field">
           <label for="shape">Cross-section</label>
