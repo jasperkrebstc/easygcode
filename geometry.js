@@ -323,7 +323,89 @@
     };
   }
 
+  // Tessellate a cubic bezier defined Hermite-style: endpoints + unit tangents.
+  // Control length = 1/3 of the endpoint distance. Returns `steps` points
+  // excluding p0, including p3.
+  function bezierPts(p0, t0, p3, t3, steps) {
+    const d = Math.hypot(p3.x - p0.x, p3.y - p0.y);
+    const k = d / 3;
+    const c1 = { x: p0.x + t0.x * k, y: p0.y + t0.y * k };
+    const c2 = { x: p3.x - t3.x * k, y: p3.y - t3.y * k };
+    const out = [];
+    for (let i = 1; i <= steps; i++) {
+      const t = i / steps;
+      const m = 1 - t;
+      out.push({
+        x: m * m * m * p0.x + 3 * m * m * t * c1.x + 3 * m * t * t * c2.x + t * t * t * p3.x,
+        y: m * m * m * p0.y + 3 * m * m * t * c1.y + 3 * m * t * t * c2.y + t * t * t * p3.y,
+      });
+    }
+    return out;
+  }
+
+  // Build the wall-hanger loop from a seam-rotated CCW base curve.
+  // frac = hanger size as a fraction of the perimeter (drives both the removed
+  // back gap, centered opposite the seam, and the pocket arc, centered on the
+  // seam and offset inward by lineWidth). Returns a closed point list starting
+  // and ending at the seam; points on the beziers/pocket carry isNew=true
+  // (the sections that bridge on the first hanger loop).
+  function buildHangerLoop(base, frac, lineWidth) {
+    const s = makeSampler(base);
+    const n = base.length;
+    const half = frac / 2;
+    const uA = 0.5 - half; // gap edge reached first (CCW)
+    const uB = 0.5 + half; // gap edge where the outer wall resumes
+    const uE1 = half; // pocket end on the first-traveled side
+    const uE2 = 1 - half; // pocket end on the return side
+    const A = s.at(uA);
+    const B = s.at(uB);
+    const E1 = s.at(uE1);
+    const E2 = s.at(uE2);
+    // Inward normal for a CCW curve is (-tan.y, +tan.x).
+    const inw = (q) => ({ x: q.pos.x - lineWidth * q.tan.y, y: q.pos.y + lineWidth * q.tan.x });
+    const E1o = inw(E1);
+    const E2o = inw(E2);
+
+    const pts = [{ x: base[0].x, y: base[0].y, isNew: false }];
+
+    // Outer wall: seam -> A.
+    for (let i = 1; i < n; i++) {
+      const u = s.uOf(i);
+      if (u >= uA) break;
+      pts.push({ x: base[i].x, y: base[i].y, isNew: false });
+    }
+    pts.push({ x: A.pos.x, y: A.pos.y, isNew: false });
+
+    // Bezier: A -> pocket start (arriving in the pocket's travel direction, -tan).
+    bezierPts(A.pos, A.tan, E1o, { x: -E1.tan.x, y: -E1.tan.y }, 32).forEach((p) =>
+      pts.push({ x: p.x, y: p.y, isNew: true })
+    );
+
+    // Pocket arc traced in reverse (uE1 -> seam -> uE2), offset inward.
+    const steps = Math.max(8, Math.ceil((frac * s.perimeter) / 1.0));
+    for (let i = 1; i < steps; i++) {
+      const q = s.at(uE1 - (i / steps) * frac);
+      const o = inw(q);
+      pts.push({ x: o.x, y: o.y, isNew: true });
+    }
+    pts.push({ x: E2o.x, y: E2o.y, isNew: true });
+
+    // Bezier: pocket end -> B (departing along the pocket's travel direction).
+    const bz2 = bezierPts(E2o, { x: -E2.tan.x, y: -E2.tan.y }, B.pos, B.tan, 32);
+    bz2.forEach((p, i) => pts.push({ x: p.x, y: p.y, isNew: i !== bz2.length - 1 }));
+
+    // Outer wall: B -> back to the seam.
+    for (let i = 0; i < n; i++) {
+      const u = s.uOf(i);
+      if (u > uB) pts.push({ x: base[i].x, y: base[i].y, isNew: false });
+    }
+    pts.push({ x: base[0].x, y: base[0].y, isNew: false });
+    return pts;
+  }
+
   window.Geo = {
+    bezierPts,
+    buildHangerLoop,
     rdpClosed,
     adaptiveShape,
     rotateToSeam,

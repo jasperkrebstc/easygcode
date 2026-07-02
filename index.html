@@ -137,6 +137,20 @@
 
       <section class="card">
         <h2>
+          Wall hanger
+          <label class="toggle"><input type="checkbox" id="hangEnabled" /> enable</label>
+        </h2>
+        <div id="hangFields" class="grid" hidden>
+          <div class="field"><label>Size (% of outline)</label><input type="number" id="hangSize" value="15" min="1" max="45" step="1" /></div>
+          <div class="field"><label>Bottom normal loops</label><input type="number" id="hangBottom" value="5" min="1" step="1" /></div>
+          <div class="field"><label>Transition loops</label><input type="number" id="hangTransition" value="10" min="1" step="1" /></div>
+          <div class="field"><label>Bridge feedrate (mm/min)</label><input type="number" id="hangBridgeFeed" value="300" min="1" step="10" /></div>
+        </div>
+        <p class="hint">Keyhole hanger opposite the seam: back gap + inward pocket at the seam, joined by tangent beziers. The first hanger loop bridges — its new sections print at the bridge feedrate, then it tweens back to the normal curve.</p>
+      </section>
+
+      <section class="card">
+        <h2>
           Brim
           <label class="toggle"><input type="checkbox" id="brimEnabled" /> enable</label>
         </h2>

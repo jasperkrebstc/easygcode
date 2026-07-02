@@ -49,6 +49,13 @@
         layerHeight: num('brimLayerHeight'),
         feed: num('brimFeed'),
       },
+      hanger: {
+        enabled: $('hangEnabled').checked,
+        size: num('hangSize'),
+        bottom: Math.max(1, Math.round(num('hangBottom'))),
+        transition: Math.max(1, Math.round(num('hangTransition'))),
+        bridgeFeed: num('hangBridgeFeed'),
+      },
       pattern: {
         enabled: $('patternEnabled').checked,
         type: $('patternType').value,
@@ -91,6 +98,11 @@
       if (!isPos(cfg.brim.layerHeight)) return 'Enter a valid brim layer height.';
       if (!isPos(cfg.brim.feed)) return 'Enter a valid brim feedrate.';
     }
+    if (cfg.hanger.enabled) {
+      if (!isPos(cfg.hanger.size) || cfg.hanger.size > 45)
+        return 'Hanger size must be between 1 and 45% of the outline.';
+      if (!isPos(cfg.hanger.bridgeFeed)) return 'Enter a valid hanger bridge feedrate.';
+    }
     if (cfg.pattern.enabled) {
       if (!Number.isFinite(cfg.pattern.amplitude)) return 'Enter a valid pattern amplitude.';
       if (!Number.isFinite(cfg.pattern.zAngle)) return 'Enter a valid Z-angle.';
@@ -128,6 +140,8 @@
     const H = canvas.height;
     ctx.clearRect(0, 0, W, H);
 
+    const sf = W / 600; // stroke scale so lines look the same at any backing resolution
+
     let base;
     try {
       base = window.Geo.rotateToSeam(
@@ -148,8 +162,22 @@
       }
     }
 
+    // Hanger loop overlay (dashed) — computed here so it's part of the bounds.
+    let hangerLoop = null;
+    if (
+      cfg.hanger && cfg.hanger.enabled &&
+      isPos(cfg.hanger.size) && cfg.hanger.size <= 45 && isPos(cfg.lineWidth)
+    ) {
+      try {
+        hangerLoop = window.Geo.buildHangerLoop(base, cfg.hanger.size / 100, cfg.lineWidth);
+      } catch (e) {
+        hangerLoop = null;
+      }
+    }
+
     let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-    loops.forEach((loop) =>
+    const boundLoops = hangerLoop ? loops.concat([hangerLoop]) : loops;
+    boundLoops.forEach((loop) =>
       loop.forEach((p) => {
         if (p.x < minX) minX = p.x;
         if (p.x > maxX) maxX = p.x;
@@ -159,31 +187,37 @@
     );
     if (!Number.isFinite(minX)) return;
 
-    const pad = 30;
+    const pad = 30 * sf;
     const scale = Math.min((W - 2 * pad) / (maxX - minX || 1), (H - 2 * pad) / (maxY - minY || 1));
     const ox = (minX + maxX) / 2;
     const oy = (minY + maxY) / 2;
     const tx = (p) => W / 2 + (p.x - ox) * scale;
     const ty = (p) => H / 2 - (p.y - oy) * scale;
 
-    function stroke(loop, color, width) {
+    function stroke(loop, color, width, close) {
       ctx.beginPath();
       loop.forEach((p, i) => (i === 0 ? ctx.moveTo(tx(p), ty(p)) : ctx.lineTo(tx(p), ty(p))));
-      ctx.closePath();
+      if (close) ctx.closePath();
       ctx.strokeStyle = color;
       ctx.lineWidth = width;
       ctx.stroke();
     }
-    for (let k = 1; k < loops.length; k++) stroke(loops[k], '#2bd9a0', 1.5);
-    stroke(base, '#4f9dff', 2.5);
+    for (let k = 1; k < loops.length; k++) stroke(loops[k], '#2bd9a0', 1.5 * sf, true);
+    stroke(base, '#4f9dff', 2.5 * sf, true);
+
+    if (hangerLoop) {
+      ctx.setLineDash([6 * sf, 4 * sf]);
+      stroke(hangerLoop, '#ffb454', 1.8 * sf, false);
+      ctx.setLineDash([]);
+    }
 
     // Seam marker (also the pattern center) as a dot.
     const seam = base[0];
     ctx.beginPath();
-    ctx.arc(tx(seam), ty(seam), 7, 0, 2 * Math.PI);
+    ctx.arc(tx(seam), ty(seam), 7 * sf, 0, 2 * Math.PI);
     ctx.fillStyle = '#ff5252';
     ctx.fill();
-    ctx.lineWidth = 2;
+    ctx.lineWidth = 2 * sf;
     ctx.strokeStyle = '#fff';
     ctx.stroke();
   }
@@ -197,7 +231,7 @@
     let dragging = false;
     let lastX = 0, lastY = 0;
     let center = { x: 0, y: 0, z: 0 };
-    let scale = 1; // fixed, computed once per path (zoom-to-fit, then orbit)
+    let radius = 1; // bounding radius; zoom-to-fit is derived from it per render
     let feedMin = 0, feedMax = 1;
     const NB = 18; // color buckets for batched stroking
 
@@ -244,20 +278,18 @@
         }
       }
       center = { x: (mnx + mxx) / 2, y: (mny + mxy) / 2, z: (mnz + mxz) / 2 };
-      let R = 0;
+      radius = 0;
       for (const p of pts) {
         const d = Math.hypot(p.x - center.x, p.y - center.y, p.z - center.z);
-        if (d > R) R = d;
+        if (d > radius) radius = d;
       }
-      const pad = 18;
-      scale = (Math.min(canvas.width, canvas.height) / 2 - pad) / (R || 1);
       feedMin = Number.isFinite(fMin) ? fMin : 0;
       feedMax = Number.isFinite(fMax) ? fMax : 1;
       render();
     }
 
-    // Z-up orthographic projection. Returns screen pixel coords.
-    function project(p) {
+    // Z-up orthographic projection at a fixed zoom-to-fit scale.
+    function project(p, scale) {
       const X = p.x - center.x, Y = p.y - center.y, Z = p.z - center.z;
       const ca = Math.cos(az), sa = Math.sin(az);
       const x1 = X * ca - Y * sa;
@@ -284,9 +316,11 @@
     function render() {
       if (!ctx) return;
       const W = canvas.width, H = canvas.height;
+      const sf = W / 600;
       ctx.clearRect(0, 0, W, H);
       if (pts.length < 2) return;
-      const proj = pts.map(project);
+      const scale = (Math.min(W, H) / 2 - 18 * sf) / (radius || 1);
+      const proj = pts.map((p) => project(p, scale));
 
       // Travels first, faint.
       ctx.beginPath();
@@ -296,7 +330,7 @@
         ctx.lineTo(proj[i].x, proj[i].y);
       }
       ctx.strokeStyle = 'rgba(154,163,178,0.22)';
-      ctx.lineWidth = 1;
+      ctx.lineWidth = 1 * sf;
       ctx.stroke();
 
       // Extrusions, batched by feed-color bucket.
@@ -314,7 +348,7 @@
           ctx.lineTo(proj[i].x, proj[i].y);
         }
         ctx.strokeStyle = bucketColor(b);
-        ctx.lineWidth = 1.2;
+        ctx.lineWidth = 1.2 * sf;
         ctx.stroke();
       }
     }
@@ -360,7 +394,8 @@
     const s = result.stats;
     $('stats').textContent =
       Math.round(s.loops) + ' loops · ' + s.moves + ' moves · ' +
-      s.volume.toFixed(0) + ' mm³ · ' + (s.pathLength / 1000).toFixed(1) + ' m path';
+      s.volume.toFixed(0) + ' mm³ · ' + (s.pathLength / 1000).toFixed(1) + ' m path' +
+      (s.timeMin > 0 ? ' · ~' + fmtTime(s.timeMin) : '');
 
     showWarnings(result.warnings, false);
   }
@@ -417,6 +452,27 @@
     setTimeout(() => (btn.textContent = old), 1200);
   }
 
+  function fmtTime(min) {
+    if (min < 60) return Math.max(1, Math.round(min)) + ' min';
+    const h = Math.floor(min / 60);
+    return h + 'h ' + Math.round(min - h * 60) + 'm';
+  }
+
+  // Size canvas backing stores to the displayed size × devicePixelRatio so
+  // lines are crisp on retina screens (drawing code scales strokes via W/600).
+  function fitCanvases() {
+    ['preview', 'preview3d'].forEach((id) => {
+      const c = $(id);
+      const dpr = Math.min(window.devicePixelRatio || 1, 2.5);
+      const w = c.clientWidth || 600;
+      const px = Math.round(w * dpr);
+      if (px > 0 && c.width !== px) {
+        c.width = px;
+        c.height = px;
+      }
+    });
+  }
+
   // --- Settings preset: save/load JSON + auto-persist to localStorage ---
   const STORAGE_KEY = 'easygcode-settings';
 
@@ -440,6 +496,7 @@
     // Sync groups whose checkboxes were set programmatically (no change event).
     $('brimFields').hidden = !$('brimEnabled').checked;
     $('patternFields').hidden = !$('patternEnabled').checked;
+    $('hangFields').hidden = !$('hangEnabled').checked;
   }
 
   function saveLocal() {
@@ -506,6 +563,11 @@
     updateShapeUI();
   });
 
+  $('hangEnabled').addEventListener('change', () => {
+    $('hangFields').hidden = !$('hangEnabled').checked;
+    updateShapeUI();
+  });
+
   $('regenBtn').addEventListener('click', regenerate);
   $('copyBtn').addEventListener('click', copy);
   $('downloadBtn').addEventListener('click', download);
@@ -522,6 +584,22 @@
     window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
   }
 
+  // iOS shows the numeric keypad for inputmode=decimal.
+  document.querySelectorAll('input[type="number"]').forEach((el) => {
+    el.setAttribute('inputmode', 'decimal');
+    el.setAttribute('autocomplete', 'off');
+  });
+
+  let resizeTimer = null;
+  window.addEventListener('resize', () => {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => {
+      fitCanvases();
+      updateShapeUI();
+      View3D.render();
+    }, 150);
+  });
+
   // Restore last-used settings, then initial render.
   try {
     const stored = localStorage.getItem(STORAGE_KEY);
@@ -529,6 +607,7 @@
   } catch (e) {
     /* ignore */
   }
+  fitCanvases();
   updateShapeUI();
   regenerate();
 })();

@@ -8,17 +8,13 @@
  *
  * Bead cross-section ("stadium"): beadArea(w,h) = (w-h)*h + PI*(h/2)^2
  *
- * Pipeline: adaptive base curve (chord tolerance) -> seam at Y crossing ->
- * continuous spiral with an optional surface pattern.
- *
- * Patterns share: amplitude, zAngle (deg), coverage %, patternless layers
- * top/bottom, bump feedrate. Each point's displacement vector is rotated by
- * zAngle in the vertical plane: lateral = m*cos(zAngle), vertical = m*sin(zAngle).
- *   - 'weave': continuous m = amplitude*cos(PI*(L+u)*bumps). Even bumps = flutes,
- *     odd = woven (phase flips each layer).
- *   - 'spikes': blue-noise (best-candidate) outward pokes; each spike is a
- *     triangle of base width = lineWidth (entry, tip, exit), tip at full
- *     amplitude. Deterministic via seed.
+ * Pipeline: adaptive base curve (chord tolerance) -> seam at the chosen axis
+ * crossing -> continuous spiral, where each revolution is one of:
+ *   - normal loop (optional weave/spikes pattern, seam-centered coverage)
+ *   - the wall-hanger loop: back gap + inward pocket at the seam joined by
+ *     tangent beziers (new sections print at the bridge feedrate)
+ *   - tween loops that morph the hanger loop back into the base curve
+ * Pattern displacement is suppressed on hanger + tween loops.
  *
  * Exposed on window.GcodeGen.
  */
@@ -100,7 +96,7 @@
       return {
         gcode: '; ERROR: shape has zero size',
         warnings: ['Shape has zero size — check your dimensions.'],
-        stats: { volume: 0, pathLength: 0, moves: 0, loops: 0 },
+        stats: { volume: 0, pathLength: 0, moves: 0, loops: 0, timeMin: 0 },
         path: [],
       };
     }
@@ -135,16 +131,62 @@
       return uu <= half || uu >= 1 - half;
     }
 
+    // ---- Hanger setup ----
+    const hang = cfg.hanger || {};
+    const hangFrac = Math.max(0, Math.min(45, hang.size || 0)) / 100;
+    let hangOn = !!hang.enabled && hangFrac > 0.005;
+    const hStart = Math.max(1, Math.round(hang.bottom || 1));
+    const hTween = Math.max(1, Math.round(hang.transition || 1));
+    const hBridgeFeed = hang.bridgeFeed > 0 ? hang.bridgeFeed : cfg.printFeed;
+    if (hangOn && hStart >= Lmax) {
+      warnings.push('Hanger disabled: not enough loops below the top (bottom loops >= total loops).');
+      hangOn = false;
+    }
+    if (hangOn && hStart + hTween >= Lmax) {
+      warnings.push('Hanger transition reaches the top of the print — consider more total height.');
+    }
+    const inBand = (L) => hangOn && L >= hStart && L <= hStart + hTween;
+
+    let hangerPts = null;
+    let baseRes = null;
+    let hangRes = null;
+    const TWEEN_N = 400;
+    if (hangOn) {
+      hangerPts = Geo.buildHangerLoop(base, hangFrac, cfg.lineWidth);
+      hangRes = Geo.resampleClosed(hangerPts.slice(0, -1), TWEEN_N);
+      baseRes = Geo.resampleClosed(base, TWEEN_N);
+    }
+
+    function tweenLoopPts(t) {
+      const w = 1 - t / hTween; // 1 = hanger shape, 0 = base shape
+      const out = [];
+      for (let i = 0; i < TWEEN_N; i++) {
+        out.push({
+          x: baseRes[i].x + (hangRes[i].x - baseRes[i].x) * w,
+          y: baseRes[i].y + (hangRes[i].y - baseRes[i].y) * w,
+          isNew: false,
+        });
+      }
+      out.push({ x: out[0].x, y: out[0].y, isNew: false });
+      return out;
+    }
+
     // ---- Header ----
     lines.push('; EasyGCode — vase-mode generator');
     lines.push('; ' + new Date().toISOString());
-    lines.push('; shape=' + cfg.shape + ' tolerance=' + cfg.tolerance + 'mm');
+    lines.push('; shape=' + cfg.shape + ' tolerance=' + cfg.tolerance + 'mm seam=' + (cfg.seamSide || 'back'));
     lines.push('; layerHeight=' + lh + ' lineWidth=' + cfg.lineWidth + ' totalHeight=' + cfg.totalHeight);
     if (patternOn) {
       let ln = '; pattern=' + type + ' amplitude=' + pat.amplitude + ' zAngle=' + (pat.zAngle || 0) +
         ' coverage=' + pat.coverage + '% plBottom=' + plBottom + ' plTop=' + plTop + ' bumpFeed=' + Math.round(bumpFeed);
       ln += type === 'weave' ? ' bumps=' + pat.bumps : ' count=' + pat.count + ' seed=' + pat.seed;
       lines.push(ln);
+    }
+    if (hangOn) {
+      lines.push(
+        '; hanger: size=' + hang.size + '% bottomLoops=' + hStart + ' transition=' + hTween +
+          ' bridgeFeed=' + Math.round(hBridgeFeed)
+      );
     }
     lines.push('; printFeed=' + cfg.printFeed + ' travelFeed=' + cfg.travelFeed + ' (mm/min)');
     lines.push('; extrusion = relative, volumetric (E in mm^3)');
@@ -159,22 +201,20 @@
     let firstExtrude = true;
 
     function travelAbs(cur) {
-      let line = 'G0 X' + f3(cur.x) + ' Y' + f3(cur.y) + ' Z' + f3(cur.z) + ' F' + Math.round(cfg.travelFeed);
-      lines.push(line);
+      lines.push('G0 X' + f3(cur.x) + ' Y' + f3(cur.y) + ' Z' + f3(cur.z) + ' F' + Math.round(cfg.travelFeed));
       lastFeed = cfg.travelFeed;
       path.push({ x: cur.x, y: cur.y, z: cur.z, travel: true, feed: cfg.travelFeed });
       prev = cur;
       moveCount++;
     }
 
-    function emit(cur, curBump, ramp) {
+    // Core extruding move at an explicit feedrate.
+    function emitSeg(cur, feed, ramp) {
       const segLen = dist3(prev, cur);
       if (segLen < 1e-7) {
         prev = cur;
-        prevBump = curBump;
         return;
       }
-      const feed = curBump || prevBump ? bumpFeed : cfg.printFeed;
       const dE = area * segLen * ramp;
       totalVolume += dE;
       pathLength += segLen;
@@ -188,6 +228,11 @@
       firstExtrude = false;
       moveCount++;
       prev = cur;
+    }
+
+    // Pattern-aware move (bump segments use the bump feedrate).
+    function emit(cur, curBump, ramp) {
+      emitSeg(cur, curBump || prevBump ? bumpFeed : cfg.printFeed, ramp);
       prevBump = curBump;
     }
 
@@ -198,7 +243,7 @@
       return { x: sp.pos.x + cx, y: sp.pos.y + cy, z: baseZ };
     }
 
-    // Brim helpers reuse the simple per-loop emit.
+    // Brim: one closed loop at a fixed Z.
     function extrudeLoop(pts, z, a, feed) {
       for (let i = 0; i < pts.length; i++) {
         const A = pts[i];
@@ -240,8 +285,7 @@
           warnings.push('Inner brim line ' + k + ' skipped (collapsed).');
           continue;
         }
-        const startAbs = { x: loop[0].x + cx, y: loop[0].y + cy, z: brim.layerHeight };
-        travelAbs(startAbs);
+        travelAbs({ x: loop[0].x + cx, y: loop[0].y + cy, z: brim.layerHeight });
         extrudeLoop(loop, brim.layerHeight, bArea, brimFeed);
       }
     }
@@ -253,56 +297,16 @@
     uSet = Array.from(new Set(uSet.map((u) => +u.toFixed(9)))).sort((a, b) => a - b);
     if (uSet.length === 0 || uSet[0] > 1e-9) uSet.unshift(0);
 
-    lines.push('; --- vase spiral' + (patternOn ? ' + ' + type : '') + ' ---');
-
-    // ===================== WEAVE / PLAIN =====================
-    if (!(patternOn && type === 'spikes')) {
-      function weaveMag(L, u) {
-        if (!patternOn || type !== 'weave') return 0;
-        if (!layerPatterned(L) || !uInBand(u)) return 0;
-        return pat.amplitude * Math.cos(Math.PI * (L + u) * pat.bumps);
-      }
-      function wpoint(L, u) {
-        const sp = sampler.at(u);
-        const nx = sp.tan.y;
-        const ny = -sp.tan.x;
-        const m = weaveMag(L, u);
-        const lat = m * cosA;
-        const baseZ = Math.min(lh * (L + u), cfg.totalHeight);
-        return { p: { x: sp.pos.x + nx * lat + cx, y: sp.pos.y + ny * lat + cy, z: baseZ + m * sinA }, bump: m !== 0 };
-      }
-
-      const startW = wpoint(0, 0);
-      travelAbs({ x: startW.p.x, y: startW.p.y, z: 0 });
-      prevBump = startW.bump;
-      prevU = 0;
-
-      for (let L = 0; L < Lmax; L++) {
-        const uEnd = Math.min(1, T - L);
-        const step = (u) => {
-          const w = wpoint(L, u);
-          const ramp = L === 0 ? Math.max(0, Math.min(1, (prevU + u) / 2)) : 1;
-          emit(w.p, w.bump, ramp);
-          prevU = u;
-        };
-        for (let i = 0; i < uSet.length; i++) {
-          const u = uSet[i];
-          if (L > 0 && u <= 1e-9) continue;
-          if (u >= uEnd - 1e-9) continue;
-          step(u);
-        }
-        step(uEnd);
-      }
-    } else {
-      // ===================== RANDOM SPIKES =====================
-      const hwU = cfg.lineWidth / 2 / perim; // half spike base width, in u
+    // ---- Spike placement (blue-noise, seam-centered) ----
+    const spikesMode = patternOn && type === 'spikes';
+    const hwU = cfg.lineWidth / 2 / perim;
+    let byLoop = {};
+    if (spikesMode) {
       const zMin = plBottom * lh;
       const zMax = (T - plTop) * lh;
-      // Distribute spikes symmetrically around the seam (signed arc length from
-      // the seam, in mm), so the patterned area grows from the seam both ways.
       const oMax = (cov / 2) * perim;
-      const byLoop = {};
       let placed = 0;
+      let inBandSkipped = 0;
       if (zMax > zMin && oMax > hwU * perim) {
         const spikes = bestCandidate(pat.count, -oMax, oMax, zMin, zMax, (pat.seed | 0) || 1);
         spikes.forEach((sp) => {
@@ -310,60 +314,159 @@
           let L = Math.round(sp.z / lh);
           if (L < plBottom) L = plBottom;
           if (L > Lmax - 1) L = Lmax - 1;
+          if (inBand(L)) {
+            inBandSkipped++;
+            return;
+          }
           (byLoop[L] = byLoop[L] || []).push(u);
           placed++;
         });
       }
-      if (placed < pat.count) {
+      if (inBandSkipped > 0) {
+        warnings.push(inBandSkipped + ' spike(s) fell in the hanger band and were skipped.');
+      } else if (placed < pat.count) {
         warnings.push('Some spikes could not be placed (pattern area too small for the count).');
-      }
-
-      const startP = wallPoint(0, 0);
-      travelAbs({ x: startP.x, y: startP.y, z: 0 });
-      prevBump = false;
-      prevU = 0;
-
-      for (let L = 0; L < Lmax; L++) {
-        const uEnd = Math.min(1, T - L);
-        const events = [];
-        for (let i = 0; i < uSet.length; i++) {
-          const u = uSet[i];
-          if (L > 0 && u <= 1e-9) continue;
-          if (u >= uEnd - 1e-9) continue;
-          events.push({ u, tip: false });
-        }
-        const spk = (byLoop[L] || []).filter((u) => u > hwU * 1.2 && u < uEnd - hwU * 1.2);
-        spk.forEach((uc) => {
-          events.push({ u: uc - hwU, tip: false });
-          events.push({ u: uc, tip: true });
-          events.push({ u: uc + hwU, tip: false });
-        });
-        events.sort((a, b) => a.u - b.u);
-        events.push({ u: uEnd, tip: false });
-
-        for (let i = 0; i < events.length; i++) {
-          const e = events[i];
-          let cur;
-          let bump = false;
-          if (e.tip) {
-            const sp = sampler.at(e.u);
-            const nx = sp.tan.y;
-            const ny = -sp.tan.x;
-            const lat = pat.amplitude * cosA;
-            const baseZ = Math.min(lh * (L + e.u), cfg.totalHeight);
-            cur = { x: sp.pos.x + nx * lat + cx, y: sp.pos.y + ny * lat + cy, z: baseZ + pat.amplitude * sinA };
-            bump = true;
-          } else {
-            cur = wallPoint(L, e.u);
-          }
-          const ramp = L === 0 ? Math.max(0, Math.min(1, (prevU + e.u) / 2)) : 1;
-          emit(cur, bump, ramp);
-          prevU = e.u;
-        }
       }
     }
 
-    const stats = { volume: totalVolume, pathLength: pathLength, moves: moveCount, loops: T };
+    // ---- Per-loop emitters ----
+    function weaveMag(L, u) {
+      if (!patternOn || type !== 'weave') return 0;
+      if (!layerPatterned(L) || !uInBand(u)) return 0;
+      return pat.amplitude * Math.cos(Math.PI * (L + u) * pat.bumps);
+    }
+    function wpoint(L, u) {
+      const sp = sampler.at(u);
+      const nx = sp.tan.y;
+      const ny = -sp.tan.x;
+      const m = weaveMag(L, u);
+      const lat = m * cosA;
+      const baseZ = Math.min(lh * (L + u), cfg.totalHeight);
+      return { p: { x: sp.pos.x + nx * lat + cx, y: sp.pos.y + ny * lat + cy, z: baseZ + m * sinA }, bump: m !== 0 };
+    }
+
+    function weaveLoop(L, uEnd) {
+      const step = (u) => {
+        const w = wpoint(L, u);
+        const ramp = L === 0 ? Math.max(0, Math.min(1, (prevU + u) / 2)) : 1;
+        emit(w.p, w.bump, ramp);
+        prevU = u;
+      };
+      for (let i = 0; i < uSet.length; i++) {
+        const u = uSet[i];
+        if (L > 0 && u <= 1e-9) continue;
+        if (u >= uEnd - 1e-9) continue;
+        step(u);
+      }
+      step(uEnd);
+    }
+
+    function spikesLoop(L, uEnd) {
+      const events = [];
+      for (let i = 0; i < uSet.length; i++) {
+        const u = uSet[i];
+        if (L > 0 && u <= 1e-9) continue;
+        if (u >= uEnd - 1e-9) continue;
+        events.push({ u, tip: false });
+      }
+      const spk = (byLoop[L] || []).filter((u) => u > hwU * 1.2 && u < uEnd - hwU * 1.2);
+      spk.forEach((uc) => {
+        events.push({ u: uc - hwU, tip: false });
+        events.push({ u: uc, tip: true });
+        events.push({ u: uc + hwU, tip: false });
+      });
+      events.sort((a, b) => a.u - b.u);
+      events.push({ u: uEnd, tip: false });
+      for (let i = 0; i < events.length; i++) {
+        const e = events[i];
+        let cur;
+        let bump = false;
+        if (e.tip) {
+          const sp = sampler.at(e.u);
+          const lat = pat.amplitude * cosA;
+          const baseZ = Math.min(lh * (L + e.u), cfg.totalHeight);
+          cur = {
+            x: sp.pos.x + sp.tan.y * lat + cx,
+            y: sp.pos.y - sp.tan.x * lat + cy,
+            z: baseZ + pat.amplitude * sinA,
+          };
+          bump = true;
+        } else {
+          cur = wallPoint(L, e.u);
+        }
+        const ramp = L === 0 ? Math.max(0, Math.min(1, (prevU + e.u) / 2)) : 1;
+        emit(cur, bump, ramp);
+        prevU = e.u;
+      }
+    }
+
+    // Hanger / tween loops: emit a polyline (fractions by arc length of THIS
+    // loop, so Z stays continuous). bridge=true applies the bridge feedrate to
+    // the new (bezier + pocket) sections.
+    function polyLoop(L, pts, bridge, uEnd) {
+      const cum = [0];
+      let total = 0;
+      for (let i = 1; i < pts.length; i++) {
+        total += Geo.dist(pts[i - 1], pts[i]);
+        cum.push(total);
+      }
+      if (total < 1e-9) return;
+      prevBump = false;
+      for (let i = 1; i < pts.length; i++) {
+        const fPrev = cum[i - 1] / total;
+        let f = cum[i] / total;
+        let px = pts[i].x;
+        let py = pts[i].y;
+        let last = false;
+        if (f >= uEnd - 1e-12) {
+          const span = f - fPrev || 1e-12;
+          const tt = Math.max(0, Math.min(1, (uEnd - fPrev) / span));
+          px = pts[i - 1].x + (pts[i].x - pts[i - 1].x) * tt;
+          py = pts[i - 1].y + (pts[i].y - pts[i - 1].y) * tt;
+          f = uEnd;
+          last = true;
+        }
+        const z = Math.min(lh * (L + f), cfg.totalHeight);
+        const feed = bridge && (pts[i].isNew || pts[i - 1].isNew) ? hBridgeFeed : cfg.printFeed;
+        emitSeg({ x: px + cx, y: py + cy, z: z }, feed, 1);
+        if (last) break;
+      }
+    }
+
+    // ---- Spiral ----
+    lines.push(
+      '; --- vase spiral' + (patternOn ? ' + ' + type : '') + (hangOn ? ' + hanger' : '') + ' ---'
+    );
+
+    const start = spikesMode ? wallPoint(0, 0) : wpoint(0, 0).p;
+    travelAbs({ x: start.x, y: start.y, z: 0 });
+    prevBump = false;
+    prevU = 0;
+
+    for (let L = 0; L < Lmax; L++) {
+      const uEnd = Math.min(1, T - L);
+      if (inBand(L)) {
+        if (L === hStart) {
+          lines.push('; hanger loop (bridging sections at F' + Math.round(hBridgeFeed) + ')');
+          polyLoop(L, hangerPts, true, uEnd);
+        } else {
+          polyLoop(L, tweenLoopPts(L - hStart), false, uEnd);
+        }
+      } else if (spikesMode) {
+        spikesLoop(L, uEnd);
+      } else {
+        weaveLoop(L, uEnd);
+      }
+    }
+
+    // Estimated print time from the actual path and feeds.
+    let timeMin = 0;
+    for (let i = 1; i < path.length; i++) {
+      const d = dist3(path[i - 1], path[i]);
+      if (path[i].feed > 0) timeMin += d / path[i].feed;
+    }
+
+    const stats = { volume: totalVolume, pathLength: pathLength, moves: moveCount, loops: T, timeMin: timeMin };
     return { gcode: lines.join('\n') + '\n', warnings, stats, path };
   }
 
