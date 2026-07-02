@@ -80,14 +80,15 @@ present and future) and **type-specific**:
 ### Wall hanger
 
 An optional keyhole-style hanger, always placed **opposite the seam**. On the hanger
-loop, a gap of **size %** is removed from the back of the outline; an arc of the same %
-centered on the seam is offset inward by one line width (the pocket); tangent-matched
-beziers join the gap edges to the pocket through the interior, forming a funnel. Inputs:
-**size %**, **bottom normal loops** (plain revolutions below), **transition loops** (the
-hanger shape tweens back into the base curve over this many revolutions), and **bridge
-feedrate** — the first hanger loop bridges over air, so only its new sections (beziers +
-pocket) print at this slow feed. Pattern displacement is suppressed on hanger + transition
-loops. The 2D preview shows the hanger loop dashed.
+loop, a **gap cutout %** is removed from the back of the outline; an **insert pocket %**
+arc centered on the seam is offset inward by one line width; tangent-matched beziers join
+the gap edges to the pocket through the interior, forming a funnel. Keep the pocket %
+smaller than the gap % so the beziers have room. Other inputs: **bottom normal loops**
+(plain revolutions below), **transition loops** (the hanger shape tweens back into the
+base curve over this many revolutions), and **bridge feedrate** — the first hanger loop
+bridges over air, so only its new sections (beziers + pocket) print at this slow feed.
+Patterns (weave/spikes) stay active through the hanger and transition loops. The 2D
+preview shows the hanger loop dashed.
 
 ### Brim
 
