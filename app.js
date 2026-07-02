@@ -52,6 +52,7 @@
       hanger: {
         enabled: $('hangEnabled').checked,
         size: num('hangSize'),
+        pocket: num('hangPocket'),
         bottom: Math.max(1, Math.round(num('hangBottom'))),
         transition: Math.max(1, Math.round(num('hangTransition'))),
         bridgeFeed: num('hangBridgeFeed'),
@@ -100,7 +101,9 @@
     }
     if (cfg.hanger.enabled) {
       if (!isPos(cfg.hanger.size) || cfg.hanger.size > 45)
-        return 'Hanger size must be between 1 and 45% of the outline.';
+        return 'Hanger gap must be between 1 and 45% of the outline.';
+      if (!isPos(cfg.hanger.pocket) || cfg.hanger.pocket > 45)
+        return 'Hanger pocket must be between 1 and 45% of the outline.';
       if (!isPos(cfg.hanger.bridgeFeed)) return 'Enter a valid hanger bridge feedrate.';
     }
     if (cfg.pattern.enabled) {
@@ -166,10 +169,13 @@
     let hangerLoop = null;
     if (
       cfg.hanger && cfg.hanger.enabled &&
-      isPos(cfg.hanger.size) && cfg.hanger.size <= 45 && isPos(cfg.lineWidth)
+      isPos(cfg.hanger.size) && cfg.hanger.size <= 45 &&
+      isPos(cfg.hanger.pocket) && cfg.hanger.pocket <= 45 && isPos(cfg.lineWidth)
     ) {
       try {
-        hangerLoop = window.Geo.buildHangerLoop(base, cfg.hanger.size / 100, cfg.lineWidth);
+        hangerLoop = window.Geo.buildHangerLoop(
+          base, cfg.hanger.size / 100, cfg.hanger.pocket / 100, cfg.lineWidth
+        );
       } catch (e) {
         hangerLoop = null;
       }

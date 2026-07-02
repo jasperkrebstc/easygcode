@@ -134,7 +134,9 @@
     // ---- Hanger setup ----
     const hang = cfg.hanger || {};
     const hangFrac = Math.max(0, Math.min(45, hang.size || 0)) / 100;
-    let hangOn = !!hang.enabled && hangFrac > 0.005;
+    const pocketFrac =
+      Math.max(0, Math.min(45, hang.pocket != null && hang.pocket > 0 ? hang.pocket : hang.size || 0)) / 100;
+    let hangOn = !!hang.enabled && hangFrac > 0.005 && pocketFrac > 0.005;
     const hStart = Math.max(1, Math.round(hang.bottom || 1));
     const hTween = Math.max(1, Math.round(hang.transition || 1));
     const hBridgeFeed = hang.bridgeFeed > 0 ? hang.bridgeFeed : cfg.printFeed;
@@ -145,6 +147,9 @@
     if (hangOn && hStart + hTween >= Lmax) {
       warnings.push('Hanger transition reaches the top of the print — consider more total height.');
     }
+    if (hangOn && pocketFrac >= hangFrac) {
+      warnings.push('Insert pocket % is not smaller than the gap % — the beziers get no room. Consider a smaller pocket.');
+    }
     const inBand = (L) => hangOn && L >= hStart && L <= hStart + hTween;
 
     let hangerPts = null;
@@ -152,7 +157,7 @@
     let hangRes = null;
     const TWEEN_N = 400;
     if (hangOn) {
-      hangerPts = Geo.buildHangerLoop(base, hangFrac, cfg.lineWidth);
+      hangerPts = Geo.buildHangerLoop(base, hangFrac, pocketFrac, cfg.lineWidth);
       hangRes = Geo.resampleClosed(hangerPts.slice(0, -1), TWEEN_N);
       baseRes = Geo.resampleClosed(base, TWEEN_N);
     }
@@ -184,8 +189,8 @@
     }
     if (hangOn) {
       lines.push(
-        '; hanger: size=' + hang.size + '% bottomLoops=' + hStart + ' transition=' + hTween +
-          ' bridgeFeed=' + Math.round(hBridgeFeed)
+        '; hanger: gap=' + hang.size + '% pocket=' + Math.round(pocketFrac * 100) + '% bottomLoops=' +
+          hStart + ' transition=' + hTween + ' bridgeFeed=' + Math.round(hBridgeFeed)
       );
     }
     lines.push('; printFeed=' + cfg.printFeed + ' travelFeed=' + cfg.travelFeed + ' (mm/min)');
@@ -306,7 +311,6 @@
       const zMax = (T - plTop) * lh;
       const oMax = (cov / 2) * perim;
       let placed = 0;
-      let inBandSkipped = 0;
       if (zMax > zMin && oMax > hwU * perim) {
         const spikes = bestCandidate(pat.count, -oMax, oMax, zMin, zMax, (pat.seed | 0) || 1);
         spikes.forEach((sp) => {
@@ -314,17 +318,11 @@
           let L = Math.round(sp.z / lh);
           if (L < plBottom) L = plBottom;
           if (L > Lmax - 1) L = Lmax - 1;
-          if (inBand(L)) {
-            inBandSkipped++;
-            return;
-          }
           (byLoop[L] = byLoop[L] || []).push(u);
           placed++;
         });
       }
-      if (inBandSkipped > 0) {
-        warnings.push(inBandSkipped + ' spike(s) fell in the hanger band and were skipped.');
-      } else if (placed < pat.count) {
+      if (placed < pat.count) {
         warnings.push('Some spikes could not be placed (pattern area too small for the count).');
       }
     }
@@ -401,35 +399,77 @@
     }
 
     // Hanger / tween loops: emit a polyline (fractions by arc length of THIS
-    // loop, so Z stays continuous). bridge=true applies the bridge feedrate to
-    // the new (bezier + pocket) sections.
+    // loop, so Z stays continuous). The pattern stays active, parameterized by
+    // the loop fraction (which matches base-u away from the morph region):
+    // spikes are inserted as events, weave displaces along the local normal.
+    // bridge=true applies the bridge feedrate to the new (bezier + pocket)
+    // sections of the hanger loop.
     function polyLoop(L, pts, bridge, uEnd) {
+      const n1 = pts.length;
       const cum = [0];
       let total = 0;
-      for (let i = 1; i < pts.length; i++) {
+      for (let i = 1; i < n1; i++) {
         total += Geo.dist(pts[i - 1], pts[i]);
         cum.push(total);
       }
       if (total < 1e-9) return;
+
+      const events = [];
+      for (let i = 1; i < n1; i++) events.push({ f: cum[i] / total });
+      if (spikesMode) {
+        const hwF = cfg.lineWidth / 2 / total;
+        const spk = (byLoop[L] || []).filter((u) => u > hwF * 1.2 && u < uEnd - hwF * 1.2);
+        spk.forEach((uc) => {
+          events.push({ f: uc - hwF });
+          events.push({ f: uc, tip: true });
+          events.push({ f: uc + hwF });
+        });
+        events.sort((a, b) => a.f - b.f);
+      }
+
+      // Rolling-cursor point lookup (events are sorted by f, so this is O(n)).
+      let seg = 1;
+      function atF(f) {
+        const target = Math.max(0, Math.min(1, f)) * total;
+        while (seg < n1 - 1 && cum[seg] < target) seg++;
+        const a = pts[seg - 1];
+        const b = pts[seg];
+        const sl = cum[seg] - cum[seg - 1] || 1e-9;
+        const t = Math.max(0, Math.min(1, (target - cum[seg - 1]) / sl));
+        const dx = b.x - a.x;
+        const dy = b.y - a.y;
+        const len = Math.hypot(dx, dy) || 1e-9;
+        return {
+          x: a.x + dx * t,
+          y: a.y + dy * t,
+          tx: dx / len,
+          ty: dy / len,
+          isNew: !!(a.isNew || b.isNew),
+        };
+      }
+
       prevBump = false;
-      for (let i = 1; i < pts.length; i++) {
-        const fPrev = cum[i - 1] / total;
-        let f = cum[i] / total;
-        let px = pts[i].x;
-        let py = pts[i].y;
-        let last = false;
-        if (f >= uEnd - 1e-12) {
-          const span = f - fPrev || 1e-12;
-          const tt = Math.max(0, Math.min(1, (uEnd - fPrev) / span));
-          px = pts[i - 1].x + (pts[i].x - pts[i - 1].x) * tt;
-          py = pts[i - 1].y + (pts[i].y - pts[i - 1].y) * tt;
-          f = uEnd;
-          last = true;
+      let prevSpecial = false;
+      let prevNew = false;
+      for (let i = 0; i <= events.length; i++) {
+        const endCut = i === events.length || events[i].f >= uEnd - 1e-12;
+        const e = endCut ? { f: uEnd } : events[i];
+        const q = atF(e.f);
+        let m = 0;
+        if (!e.tip && patternOn && type === 'weave' && layerPatterned(L) && uInBand(e.f)) {
+          m = pat.amplitude * Math.cos(Math.PI * (L + e.f) * pat.bumps);
         }
-        const z = Math.min(lh * (L + f), cfg.totalHeight);
-        const feed = bridge && (pts[i].isNew || pts[i - 1].isNew) ? hBridgeFeed : cfg.printFeed;
-        emitSeg({ x: px + cx, y: py + cy, z: z }, feed, 1);
-        if (last) break;
+        const amp = e.tip ? pat.amplitude : m;
+        const lat = amp * cosA;
+        const z = Math.min(lh * (L + e.f), cfg.totalHeight) + amp * sinA;
+        const special = !!e.tip || m !== 0;
+        let feed = cfg.printFeed;
+        if (bridge && (q.isNew || prevNew)) feed = hBridgeFeed;
+        else if (special || prevSpecial) feed = bumpFeed;
+        emitSeg({ x: q.x + q.ty * lat + cx, y: q.y - q.tx * lat + cy, z: z }, feed, 1);
+        prevSpecial = special;
+        prevNew = q.isNew;
+        if (endCut) break;
       }
     }
 

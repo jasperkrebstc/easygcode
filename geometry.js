@@ -344,19 +344,20 @@
   }
 
   // Build the wall-hanger loop from a seam-rotated CCW base curve.
-  // frac = hanger size as a fraction of the perimeter (drives both the removed
-  // back gap, centered opposite the seam, and the pocket arc, centered on the
-  // seam and offset inward by lineWidth). Returns a closed point list starting
-  // and ending at the seam; points on the beziers/pocket carry isNew=true
-  // (the sections that bridge on the first hanger loop).
-  function buildHangerLoop(base, frac, lineWidth) {
+  // gapFrac = fraction of the perimeter removed at the back (opposite the
+  // seam); pocketFrac = fraction of the perimeter grabbed at the seam and
+  // offset inward by lineWidth (usually smaller than gapFrac so the beziers
+  // have room). Returns a closed point list starting and ending at the seam;
+  // points on the beziers/pocket carry isNew=true (the sections that bridge
+  // on the first hanger loop).
+  function buildHangerLoop(base, gapFrac, pocketFrac, lineWidth) {
     const s = makeSampler(base);
     const n = base.length;
-    const half = frac / 2;
-    const uA = 0.5 - half; // gap edge reached first (CCW)
-    const uB = 0.5 + half; // gap edge where the outer wall resumes
-    const uE1 = half; // pocket end on the first-traveled side
-    const uE2 = 1 - half; // pocket end on the return side
+    const frac = pocketFrac; // pocket arc length as a fraction
+    const uA = 0.5 - gapFrac / 2; // gap edge reached first (CCW)
+    const uB = 0.5 + gapFrac / 2; // gap edge where the outer wall resumes
+    const uE1 = pocketFrac / 2; // pocket end on the first-traveled side
+    const uE2 = 1 - pocketFrac / 2; // pocket end on the return side
     const A = s.at(uA);
     const B = s.at(uB);
     const E1 = s.at(uE1);
