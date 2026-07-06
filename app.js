@@ -32,6 +32,26 @@
     return {
       shape,
       shapeParams,
+      printer: {
+        mode: $('printerMode').value === 'filament' ? 'filament' : 'pellet',
+        multiplier: num('extrusionMultiplier'),
+        includeStartEnd: $('startEndEnabled').checked,
+        filament: {
+          diameter: num('filDiameter'),
+          nozzle: num('filNozzleTemp'),
+          bed: num('filBedTemp'),
+          fan: Math.max(0, Math.min(100, num('filFan'))),
+        },
+        pellet: {
+          up: num('pelUpTemp'),
+          mid: num('pelMidTemp'),
+          down: num('pelDownTemp'),
+          bed: num('pelBedTemp'),
+          pa: num('pelPA'),
+          purge: num('pelPurge'),
+          fan: Math.max(0, Math.min(100, num('pelFan'))),
+        },
+      },
       layerHeight: num('layerHeight'),
       lineWidth: num('lineWidth'),
       totalHeight: num('totalHeight'),
@@ -87,6 +107,21 @@
     }
     if (!Number.isFinite(cfg.centerX) || !Number.isFinite(cfg.centerY))
       return 'Enter valid bed center X/Y.';
+    if (!isPos(cfg.printer.multiplier)) return 'Extrusion multiplier must be greater than 0.';
+    if (cfg.printer.mode === 'filament') {
+      if (!isPos(cfg.printer.filament.diameter)) return 'Enter a valid filament diameter.';
+      const f = cfg.printer.filament;
+      if (!Number.isFinite(f.nozzle) || !Number.isFinite(f.bed) || !Number.isFinite(f.fan))
+        return 'Enter valid filament temperatures / fan.';
+    } else {
+      const p = cfg.printer.pellet;
+      if (
+        !Number.isFinite(p.up) || !Number.isFinite(p.mid) || !Number.isFinite(p.down) ||
+        !Number.isFinite(p.bed) || !Number.isFinite(p.pa) || !Number.isFinite(p.purge) ||
+        !Number.isFinite(p.fan)
+      )
+        return 'Enter valid pellet zone/bed temps, pressure advance, purge and fan.';
+    }
     if (!isPos(cfg.tolerance)) return 'Chord tolerance must be greater than 0.';
     for (const k in cfg.shapeParams) {
       const v = cfg.shapeParams[k];
@@ -123,6 +158,16 @@
     document.querySelectorAll('.shape-params').forEach((el) => {
       el.hidden = el.getAttribute('data-shape') !== shape;
     });
+  }
+
+  function showPrinterParams(mode) {
+    document.querySelectorAll('.printer-params').forEach((el) => {
+      el.hidden = el.getAttribute('data-mode') !== mode;
+    });
+    $('printerHint').textContent =
+      mode === 'filament'
+        ? 'E = mm of filament (volume ÷ filament cross-section) · Marlin start/end for the P1P'
+        : 'E = pure volume in mm³ · Klipper start/end with the GINGER pellet macros';
   }
 
   function showPatternParams(type) {
@@ -367,6 +412,7 @@
     const cfg = readConfig();
     showShapeParams(cfg.shape);
     showPatternParams(cfg.pattern.type);
+    showPrinterParams(cfg.printer.mode);
     drawPreview(cfg);
     saveLocal();
   }
@@ -376,6 +422,7 @@
     const cfg = readConfig();
     showShapeParams(cfg.shape);
     showPatternParams(cfg.pattern.type);
+    showPrinterParams(cfg.printer.mode);
     drawPreview(cfg);
 
     const err = validate(cfg);

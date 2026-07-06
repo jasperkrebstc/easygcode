@@ -33,6 +33,39 @@
       </section>
 
       <section class="card">
+        <h2>
+          Printer &amp; material
+          <label class="toggle"><input type="checkbox" id="startEndEnabled" checked /> start/end G-code</label>
+        </h2>
+        <div class="grid">
+          <div class="field">
+            <label>Printer</label>
+            <select id="printerMode">
+              <option value="pellet">Pellet (Klipper)</option>
+              <option value="filament">Filament (Marlin)</option>
+            </select>
+          </div>
+          <div class="field"><label>Extrusion multiplier</label><input type="number" id="extrusionMultiplier" value="1.0" min="0.01" step="0.01" /></div>
+        </div>
+        <div class="printer-params grid" data-mode="pellet">
+          <div class="field"><label>Zone up temp (°C)</label><input type="number" id="pelUpTemp" value="210" min="0" step="5" /></div>
+          <div class="field"><label>Zone mid temp (°C)</label><input type="number" id="pelMidTemp" value="210" min="0" step="5" /></div>
+          <div class="field"><label>Zone down temp (°C)</label><input type="number" id="pelDownTemp" value="210" min="0" step="5" /></div>
+          <div class="field"><label>Bed temp (°C)</label><input type="number" id="pelBedTemp" value="50" min="0" step="5" /></div>
+          <div class="field"><label>Pressure advance</label><input type="number" id="pelPA" value="0.3" min="0" step="0.05" /></div>
+          <div class="field"><label>Purge quantity</label><input type="number" id="pelPurge" value="5000" min="0" step="100" /></div>
+          <div class="field"><label>Fan (%)</label><input type="number" id="pelFan" value="0" min="0" max="100" step="5" /></div>
+        </div>
+        <div class="printer-params grid" data-mode="filament" hidden>
+          <div class="field"><label>Filament diameter (mm)</label><input type="number" id="filDiameter" value="1.75" min="0.1" step="0.05" /></div>
+          <div class="field"><label>Nozzle temp (°C)</label><input type="number" id="filNozzleTemp" value="205" min="0" step="5" /></div>
+          <div class="field"><label>Bed temp (°C)</label><input type="number" id="filBedTemp" value="60" min="0" step="5" /></div>
+          <div class="field"><label>Fan (%)</label><input type="number" id="filFan" value="100" min="0" max="100" step="5" /></div>
+        </div>
+        <p class="hint" id="printerHint"></p>
+      </section>
+
+      <section class="card">
         <h2>Shape</h2>
         <div class="field">
           <label for="shape">Cross-section</label>
