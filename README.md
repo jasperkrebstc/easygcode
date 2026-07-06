@@ -31,10 +31,30 @@ end — where width `w` = line width and height `h` = layer height:
 beadArea(w, h) = (w - h) * h + π * (h/2)²        // mm²  (w clamped to ≥ h)
 ```
 
-Extrusion is **relative** (`M83`) and **volumetric**: every `G1 E` value is that
-segment's volume, `E = beadArea * segmentLength` (mm³). Positioning is **absolute**
-(`G90`). There is **no start/end G-code** yet (no heating/homing) — add your own, or
-it's coming in a later step.
+Extrusion is **relative** (`M83`) with **absolute positioning** (`G90`). The **printer
+mode** decides what `E` means:
+
+- **Pellet (Klipper):** `E` is pure volume in mm³ (`beadArea × segmentLength`) — the
+  Klipper rotation-distance setup converts it downstream.
+- **Filament (Marlin):** `E` is linear mm of filament — segment volume divided by the
+  filament cross-section (`π·(d/2)²`, diameter input, default 1.75 mm).
+
+An **extrusion multiplier** scales all generated `E` values for per-material fine-tuning.
+
+### Start / end G-code
+
+Toggleable per print. Each mode ships a cleaned-up version of the user's proven files:
+
+- **Filament (Marlin / Bambu P1P):** bed + nozzle temps and fan % are inputs; preheat at
+  150 °C, home, prime, primer lines, and the retract/lift/heaters-off end are fixed.
+- **Pellet (Klipper):** the `_GINGER_*` macro sequence — early bed heat, 3 extruder zone
+  temps (up/mid/down inputs), purge parking, purge (quantity input), rotation-distance
+  constants, pressure advance (input), buzzer. The bed wait window derives from the bed
+  temp (min = bed − 10, max = bed + 40). End G-code is a basic explicit block (lift,
+  `TURN_OFF_HEATERS`, fan off, motors off) instead of `END_PRINT`.
+
+The part-cooling fan turns on **after the first (ramp) loop** so it bonds unfanned
+(filament default 100%, pellet default 0%).
 
 ### Vase spiral + ramp-up
 
@@ -100,6 +120,9 @@ that would exceed the shape's size are skipped with a warning, so over-specifyin
 
 ## Inputs
 
+- **Printer & material:** printer mode (pellet/filament), extrusion multiplier,
+  start/end toggle; filament → diameter, nozzle temp, bed temp, fan %; pellet → 3 zone
+  temps, bed temp, pressure advance, purge quantity, fan %.
 - **Shape:** circle (radius); rounded rectangle (width, length, fillet); ellipse;
   polygon; star; squircle.
 - **Print:** layer height, line width, total height, print feed, travel feed,

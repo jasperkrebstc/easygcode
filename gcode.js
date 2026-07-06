@@ -71,6 +71,109 @@
     return pts;
   }
 
+  // ---- Start / end G-code builders ----
+  // Values that change per material are injected; everything else is kept
+  // fixed from the user's proven start/end files (cleaned up).
+
+  function marlinStart(f) {
+    return [
+      '; --- start G-code (filament / Marlin) ---',
+      'M140 S' + f.bed + ' ; set bed temp',
+      'M104 S150 ; preheat hotend (no-ooze)',
+      'M190 S' + f.bed + ' ; wait for bed temp',
+      'M109 S150 ; wait for preheat temp',
+      'G28 ; home all (incl. mesh bed level)',
+      'G90 ; absolute coordinates',
+      'G21 ; millimeter units',
+      'M83 ; relative extrusion',
+      'G0 F3000 X10.0 Y10.0 ; park for final heat',
+      'M109 S' + f.nozzle + ' ; wait for hotend temp',
+      'G1 F250 E20.788 ; load / prime nozzle',
+      'G0 F8000 Z0.3',
+      'M220 S100 ; reset speed factor',
+      'M221 S100 ; reset extrude factor',
+      '; primer lines',
+      'G0 F8000 X50.0 Y14.0 Z0.2',
+      'G1 F500 X110.0 E12',
+      'G1 Y12.0 E0.5',
+      'G1 X50.0 E12',
+      'G1 Y14.0 E0.5',
+      'G1 Y16.0 E0.5',
+      'G1 X80.0 E4',
+      'G1 Y45.2 E3',
+      'M106 S0 ; fan off for the ramp loop',
+      '; --- end of start G-code ---',
+    ];
+  }
+
+  function marlinEnd() {
+    return [
+      '; --- end G-code (filament / Marlin) ---',
+      'M83',
+      'G1 E-0.8 F3000 ; retract',
+      'G91 ; relative coordinates',
+      'G0 Z5 F8000 ; lift nozzle',
+      'G90 ; absolute coordinates',
+      'M106 S0 ; fan off',
+      'M140 S0 ; bed off',
+      'M104 S0 ; hotend off',
+      'M221 S100 ; reset flow',
+      'M900 K0 ; reset linear advance',
+      'M84 ; disable steppers',
+    ];
+  }
+
+  function klipperStart(p) {
+    // Bed wait window derived from the target (reproduces 40/90 at bed 50).
+    const bedMin = Math.max(0, Math.round(p.bed - 10));
+    const bedMax = Math.round(p.bed + 40);
+    return [
+      '; --- start G-code (pellet / Klipper) ---',
+      'SET_PRESSURE_ADVANCE EXTRUDER=extruder SMOOTH_TIME=0.04',
+      'SET_PRESSURE_ADVANCE EXTRUDER=extruder ADVANCE=0.0',
+      '_GINGER_BUZZER_TONE_INITIAL',
+      '_GINGER_BED_HEATING BED_TEMPERATURE=' + p.bed,
+      '_GINGER_EXTRUDER_SET_UP S=' + p.up,
+      '_GINGER_EXTRUDER_SET_MID S=' + p.mid,
+      '_GINGER_EXTRUDER_SET_DOWN S=' + p.down,
+      'G28 ; home',
+      'BED_MESH_PROFILE LOAD=global',
+      '_GINGER_PURGE_PARKING PURGE_LAYER_HEIGHT=2 PURGE_PARKING_SPEED=10000',
+      '_GINGER_EXTRUDER_WAIT_UP S=' + p.up,
+      '_GINGER_EXTRUDER_WAIT_MID S=' + p.mid,
+      '_GINGER_EXTRUDER_WAIT_DOWN S=' + p.down,
+      '_GINGER_BED_WAIT BED_TEMPERATURE_MIN=' + bedMin + ' BED_TEMPERATURE_MAX=' + bedMax,
+      '_GINGER_EXTRUDER_MIXING_MULTIPLIER S=1',
+      'SET_EXTRUDER_ROTATION_DISTANCE EXTRUDER=extruder DISTANCE=456',
+      'SET_EXTRUDER_ROTATION_DISTANCE EXTRUDER=mixing_stepper DISTANCE=8000',
+      // PURGE_LENGHT [sic]: parameter name must match the printer macro.
+      '_GINGER_PURGE PURGE_LENGHT=400 PURGE_SPEED=500 PURGE_MATERIAL_QUANTITY=' + p.purge,
+      'G90 ; absolute coordinates',
+      'G92 E0',
+      'M83 ; relative extrusion',
+      'M220 S100 ; reset speed factor',
+      'M221 S100 ; reset extrude factor',
+      'SET_PRESSURE_ADVANCE EXTRUDER=extruder ADVANCE=' + p.pa,
+      'SET_PRESSURE_ADVANCE EXTRUDER=extruder SMOOTH_TIME=0.5',
+      'M106 S0 ; fan off for the ramp loop',
+      '_GINGER_BUZZER_TONE_INITIAL',
+      '; --- end of start G-code ---',
+    ];
+  }
+
+  function klipperEnd() {
+    return [
+      '; --- end G-code (pellet / Klipper) ---',
+      'M83',
+      'G91 ; relative coordinates',
+      'G0 Z10 F3000 ; lift',
+      'G90 ; absolute coordinates',
+      'TURN_OFF_HEATERS ; zones + bed off',
+      'M106 S0 ; fan off',
+      'M84 ; disable steppers',
+    ];
+  }
+
   function generate(cfg) {
     const warnings = [];
     const lines = [];
@@ -104,6 +207,21 @@
     const area = beadArea(cfg.lineWidth, lh);
     const T = cfg.totalHeight / lh; // total loops (may be fractional)
     const Lmax = Math.ceil(T - 1e-9);
+
+    // ---- Printer / extrusion mode ----
+    // pellet: E is pure volume (mm^3), converted downstream by the Klipper
+    // rotation-distance setup. filament: E is linear mm of filament, so the
+    // segment volume is divided by the filament cross-section area.
+    const printer = cfg.printer || {};
+    const mode = printer.mode === 'filament' ? 'filament' : 'pellet';
+    const mult = printer.multiplier > 0 ? printer.multiplier : 1;
+    const fil = printer.filament || {};
+    const pel = printer.pellet || {};
+    const filDia = fil.diameter > 0 ? fil.diameter : 1.75;
+    const eFactor = mult / (mode === 'filament' ? Math.PI * (filDia / 2) * (filDia / 2) : 1);
+    const includeStartEnd = !!printer.includeStartEnd;
+    const fanPct = mode === 'filament' ? fil.fan || 0 : pel.fan || 0;
+    const fanPWM = Math.round(Math.max(0, Math.min(100, fanPct)) * 2.55);
 
     // ---- Pattern setup ----
     const pat = cfg.pattern || {};
@@ -194,7 +312,15 @@
       );
     }
     lines.push('; printFeed=' + cfg.printFeed + ' travelFeed=' + cfg.travelFeed + ' (mm/min)');
-    lines.push('; extrusion = relative, volumetric (E in mm^3)');
+    lines.push(
+      '; printer=' + mode + ' multiplier=' + mult +
+        (mode === 'filament'
+          ? ' filamentDiameter=' + filDia + ' (E in mm of filament)'
+          : ' (E in mm^3, volumetric)')
+    );
+    if (includeStartEnd) {
+      (mode === 'filament' ? marlinStart(fil) : klipperStart(pel)).forEach((l) => lines.push(l));
+    }
     lines.push('G90 ; absolute positioning');
     lines.push('M83 ; relative extrusion');
 
@@ -213,17 +339,18 @@
       moveCount++;
     }
 
-    // Core extruding move at an explicit feedrate.
+    // Core extruding move at an explicit feedrate. E output is scaled by the
+    // printer mode (volume vs filament mm) and the extrusion multiplier.
     function emitSeg(cur, feed, ramp) {
       const segLen = dist3(prev, cur);
       if (segLen < 1e-7) {
         prev = cur;
         return;
       }
-      const dE = area * segLen * ramp;
-      totalVolume += dE;
+      const dVol = area * segLen * ramp;
+      totalVolume += dVol;
       pathLength += segLen;
-      let line = 'G1 X' + f3(cur.x) + ' Y' + f3(cur.y) + ' Z' + f3(cur.z) + ' E' + f5(dE);
+      let line = 'G1 X' + f3(cur.x) + ' Y' + f3(cur.y) + ' Z' + f3(cur.z) + ' E' + f5(dVol * eFactor);
       if (feed !== lastFeed || firstExtrude) {
         line += ' F' + Math.round(feed);
         lastFeed = feed;
@@ -254,10 +381,10 @@
         const A = pts[i];
         const B = pts[(i + 1) % pts.length];
         const segLen = Geo.dist(A, B);
-        const dE = a * segLen;
-        totalVolume += dE;
+        const dVol = a * segLen;
+        totalVolume += dVol;
         pathLength += segLen;
-        let line = 'G1 X' + f3(B.x + cx) + ' Y' + f3(B.y + cy) + ' Z' + f3(z) + ' E' + f5(dE);
+        let line = 'G1 X' + f3(B.x + cx) + ' Y' + f3(B.y + cy) + ' Z' + f3(z) + ' E' + f5(dVol * eFactor);
         if (feed !== lastFeed) {
           line += ' F' + Math.round(feed);
           lastFeed = feed;
@@ -485,6 +612,9 @@
 
     for (let L = 0; L < Lmax; L++) {
       const uEnd = Math.min(1, T - L);
+      if (L === 1 && includeStartEnd && fanPWM > 0) {
+        lines.push('M106 S' + fanPWM + ' ; part cooling fan on after ramp loop');
+      }
       if (inBand(L)) {
         if (L === hStart) {
           lines.push('; hanger loop (bridging sections at F' + Math.round(hBridgeFeed) + ')');
@@ -497,6 +627,10 @@
       } else {
         weaveLoop(L, uEnd);
       }
+    }
+
+    if (includeStartEnd) {
+      (mode === 'filament' ? marlinEnd() : klipperEnd()).forEach((l) => lines.push(l));
     }
 
     // Estimated print time from the actual path and feeds.
