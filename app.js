@@ -456,9 +456,17 @@
   function showWarnings(list, isError) {
     const warn = $('warnings');
     warn.innerHTML = '';
-    (list || []).forEach((w) => {
+    const all = (list || []).slice();
+    if (!storageOk) {
+      all.unshift(
+        'Settings cannot be auto-saved on this device (browser storage is blocked). ' +
+          'They will reset if the app reloads — use "Save settings" to keep a file, ' +
+          'and check Safari settings (e.g. "Block All Cookies").'
+      );
+    }
+    all.forEach((w) => {
       const d = document.createElement('div');
-      d.textContent = (isError ? '⚠ ' : '⚠ ') + w;
+      d.textContent = '⚠ ' + w;
       warn.appendChild(d);
     });
   }
@@ -528,6 +536,8 @@
 
   // --- Settings preset: save/load JSON + auto-persist to localStorage ---
   const STORAGE_KEY = 'easygcode-settings';
+  const BACKUP_KEY = STORAGE_KEY + '-backup';
+  let storageOk = true; // false when the browser blocks script storage
 
   function collectSettings() {
     const out = {};
@@ -552,11 +562,41 @@
     $('hangFields').hidden = !$('hangEnabled').checked;
   }
 
+  // Double-buffered save: the previous good state is kept under a backup key,
+  // so a save interrupted by an iOS page eviction can't corrupt everything.
   function saveLocal() {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(collectSettings()));
+      const data = JSON.stringify(collectSettings());
+      const prev = localStorage.getItem(STORAGE_KEY);
+      if (prev && prev !== data) localStorage.setItem(BACKUP_KEY, prev);
+      localStorage.setItem(STORAGE_KEY, data);
+      storageOk = true;
     } catch (e) {
-      /* storage unavailable/full — ignore */
+      storageOk = false;
+    }
+  }
+
+  function restoreLocal() {
+    let stored = null;
+    try {
+      stored = localStorage.getItem(STORAGE_KEY);
+    } catch (e) {
+      storageOk = false;
+      return;
+    }
+    try {
+      if (stored) {
+        applySettings(JSON.parse(stored));
+        return;
+      }
+    } catch (e) {
+      /* main copy corrupt — fall through to backup */
+    }
+    try {
+      const backup = localStorage.getItem(BACKUP_KEY);
+      if (backup) applySettings(JSON.parse(backup));
+    } catch (e) {
+      /* backup unusable too — start from defaults */
     }
   }
 
@@ -653,13 +693,15 @@
     }, 150);
   });
 
-  // Restore last-used settings, then initial render.
-  try {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    if (stored) applySettings(JSON.parse(stored));
-  } catch (e) {
-    /* ignore */
-  }
+  // Persist when the app is backgrounded or the page is being torn down —
+  // iOS home-screen web apps reload freely, so never rely on the DOM surviving.
+  window.addEventListener('pagehide', saveLocal);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') saveLocal();
+  });
+
+  // Restore last-used settings (with backup fallback), then initial render.
+  restoreLocal();
   fitCanvases();
   updateShapeUI();
   regenerate();
