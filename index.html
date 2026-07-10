@@ -18,8 +18,14 @@
   <body>
     <header>
       <h1>EasyGCode</h1>
-      <p class="sub">Vase-mode G-code · Klipper · volumetric</p>
+      <p class="sub">Custom G-code · pellet &amp; filament</p>
     </header>
+
+    <nav class="tabs">
+      <button type="button" id="tabCordhanger" class="tab active">Cord hanger</button>
+      <button type="button" id="tabBendstool" class="tab">Bend stool</button>
+    </nav>
+    <input type="hidden" id="activeProject" value="cordhanger" />
 
     <main>
       <section class="card">
@@ -32,7 +38,7 @@
         <p class="hint">Save all inputs to a file, or load them back. Your latest settings are also remembered automatically.</p>
       </section>
 
-      <section class="card">
+      <section class="card" data-project="cordhanger">
         <h2>
           Printer &amp; material
           <label class="toggle"><input type="checkbox" id="startEndEnabled" checked /> start/end G-code</label>
@@ -65,7 +71,7 @@
         <p class="hint" id="printerHint"></p>
       </section>
 
-      <section class="card">
+      <section class="card" data-project="cordhanger">
         <h2>Shape</h2>
         <div class="field">
           <label for="shape">Cross-section</label>
@@ -113,7 +119,7 @@
         <canvas id="preview" width="600" height="600"></canvas>
       </section>
 
-      <section class="card">
+      <section class="card" data-project="cordhanger">
         <h2>Print settings</h2>
         <div class="grid">
           <div class="field"><label>Layer height (mm)</label><input type="number" id="layerHeight" value="0.6" min="0.05" step="0.05" /></div>
@@ -136,7 +142,7 @@
         </div>
       </section>
 
-      <section class="card">
+      <section class="card" data-project="cordhanger">
         <h2>
           Pattern
           <label class="toggle"><input type="checkbox" id="patternEnabled" /> enable</label>
@@ -168,7 +174,7 @@
         <p class="hint" id="patternHint">Weave: even bumps/rev = flutes · odd = woven</p>
       </section>
 
-      <section class="card">
+      <section class="card" data-project="cordhanger">
         <h2>
           Wall hanger
           <label class="toggle"><input type="checkbox" id="hangEnabled" /> enable</label>
@@ -183,7 +189,7 @@
         <p class="hint">Keyhole hanger opposite the seam: gap cutout at the back + inward pocket at the seam, joined by tangent beziers. Keep the pocket % smaller than the gap % so the beziers have room. The first hanger loop bridges — its new sections print at the bridge feedrate, then it tweens back to the normal curve.</p>
       </section>
 
-      <section class="card">
+      <section class="card" data-project="cordhanger">
         <h2>
           Brim
           <label class="toggle"><input type="checkbox" id="brimEnabled" /> enable</label>
@@ -200,6 +206,82 @@
           <div class="field"><label>Brim line width (mm)</label><input type="number" id="brimLineWidth" value="2.0" min="0.1" step="0.1" /></div>
           <div class="field"><label>Brim layer height (mm)</label><input type="number" id="brimLayerHeight" value="0.6" min="0.05" step="0.05" /></div>
           <div class="field"><label>Brim feedrate (mm/min)</label><input type="number" id="brimFeed" value="1800" min="1" step="50" /></div>
+        </div>
+      </section>
+
+      <section class="card" data-project="bendstool" hidden>
+        <h2>
+          Printer &amp; material
+          <label class="toggle"><input type="checkbox" id="bs_startEndEnabled" checked /> start/end G-code</label>
+        </h2>
+        <div class="grid">
+          <div class="field">
+            <label>Printer</label>
+            <select id="bs_printerMode">
+              <option value="pellet">Pellet (Klipper)</option>
+              <option value="filament">Filament (Marlin)</option>
+            </select>
+          </div>
+          <div class="field"><label>Extrusion multiplier</label><input type="number" id="bs_extrusionMultiplier" value="1.0" min="0.01" step="0.01" /></div>
+        </div>
+        <div class="printer-params-bs grid" data-mode="pellet">
+          <div class="field"><label>Zone up temp (°C)</label><input type="number" id="bs_pelUpTemp" value="210" min="0" step="5" /></div>
+          <div class="field"><label>Zone mid temp (°C)</label><input type="number" id="bs_pelMidTemp" value="210" min="0" step="5" /></div>
+          <div class="field"><label>Zone down temp (°C)</label><input type="number" id="bs_pelDownTemp" value="210" min="0" step="5" /></div>
+          <div class="field"><label>Bed temp (°C)</label><input type="number" id="bs_pelBedTemp" value="50" min="0" step="5" /></div>
+          <div class="field"><label>Pressure advance</label><input type="number" id="bs_pelPA" value="0.3" min="0" step="0.05" /></div>
+          <div class="field"><label>Purge quantity</label><input type="number" id="bs_pelPurge" value="5000" min="0" step="100" /></div>
+          <div class="field"><label>Fan (%)</label><input type="number" id="bs_pelFan" value="0" min="0" max="100" step="5" /></div>
+        </div>
+        <div class="printer-params-bs grid" data-mode="filament" hidden>
+          <div class="field"><label>Filament diameter (mm)</label><input type="number" id="bs_filDiameter" value="1.75" min="0.1" step="0.05" /></div>
+          <div class="field"><label>Nozzle temp (°C)</label><input type="number" id="bs_filNozzleTemp" value="205" min="0" step="5" /></div>
+          <div class="field"><label>Bed temp (°C)</label><input type="number" id="bs_filBedTemp" value="60" min="0" step="5" /></div>
+          <div class="field"><label>Fan (%)</label><input type="number" id="bs_filFan" value="100" min="0" max="100" step="5" /></div>
+        </div>
+        <p class="hint" id="bs_printerHint"></p>
+      </section>
+
+      <section class="card" data-project="bendstool" hidden>
+        <h2>Seat disc</h2>
+        <div class="grid">
+          <div class="field"><label>Diameter (mm)</label><input type="number" id="bs_diameter" value="100" min="1" step="1" /></div>
+          <div class="field"><label>Layers</label><input type="number" id="bs_layers" value="1" min="1" step="1" /></div>
+        </div>
+        <p class="hint" id="bs_discHint"></p>
+        <canvas id="previewBS" width="600" height="600"></canvas>
+      </section>
+
+      <section class="card" data-project="bendstool" hidden>
+        <h2>Print settings</h2>
+        <div class="grid">
+          <div class="field"><label>Layer height (mm)</label><input type="number" id="bs_layerHeight" value="0.6" min="0.05" step="0.05" /></div>
+          <div class="field"><label>Line width (mm)</label><input type="number" id="bs_lineWidth" value="2.0" min="0.1" step="0.1" /></div>
+          <div class="field"><label>Print feed (mm/min)</label><input type="number" id="bs_printFeed" value="1800" min="1" step="50" /></div>
+          <div class="field"><label>Travel feed (mm/min)</label><input type="number" id="bs_travelFeed" value="6000" min="1" step="100" /></div>
+          <div class="field"><label>Chord tolerance (mm)</label><input type="number" id="bs_tolerance" value="0.05" min="0.001" step="0.01" /></div>
+          <div class="field"><label>Bed center X (mm)</label><input type="number" id="bs_centerX" value="125" step="1" /></div>
+          <div class="field"><label>Bed center Y (mm)</label><input type="number" id="bs_centerY" value="125" step="1" /></div>
+        </div>
+      </section>
+
+      <section class="card" data-project="bendstool" hidden>
+        <h2>
+          Brim
+          <label class="toggle"><input type="checkbox" id="bs_brimEnabled" /> enable</label>
+        </h2>
+        <div id="bs_brimFields" class="grid" hidden>
+          <div class="field">
+            <label>Direction</label>
+            <select id="bs_brimOuter">
+              <option value="outer">Outer</option>
+              <option value="inner">Inner</option>
+            </select>
+          </div>
+          <div class="field"><label>Number of lines</label><input type="number" id="bs_brimLines" value="4" min="1" step="1" /></div>
+          <div class="field"><label>Brim line width (mm)</label><input type="number" id="bs_brimLineWidth" value="2.0" min="0.1" step="0.1" /></div>
+          <div class="field"><label>Brim layer height (mm)</label><input type="number" id="bs_brimLayerHeight" value="0.6" min="0.05" step="0.05" /></div>
+          <div class="field"><label>Brim feedrate (mm/min)</label><input type="number" id="bs_brimFeed" value="1800" min="1" step="50" /></div>
         </div>
       </section>
 

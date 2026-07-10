@@ -14,7 +14,66 @@
 
   let lastGcode = '';
 
+  function activeProject() {
+    return $('activeProject').value === 'bendstool' ? 'bendstool' : 'cordhanger';
+  }
+
+  // Shared card readers, parameterized by the project's input-id prefix so
+  // each project keeps fully independent settings.
+  function readPrinter(pre) {
+    return {
+      mode: $(pre + 'printerMode').value === 'filament' ? 'filament' : 'pellet',
+      multiplier: num(pre + 'extrusionMultiplier'),
+      includeStartEnd: $(pre + 'startEndEnabled').checked,
+      filament: {
+        diameter: num(pre + 'filDiameter'),
+        nozzle: num(pre + 'filNozzleTemp'),
+        bed: num(pre + 'filBedTemp'),
+        fan: Math.max(0, Math.min(100, num(pre + 'filFan'))),
+      },
+      pellet: {
+        up: num(pre + 'pelUpTemp'),
+        mid: num(pre + 'pelMidTemp'),
+        down: num(pre + 'pelDownTemp'),
+        bed: num(pre + 'pelBedTemp'),
+        pa: num(pre + 'pelPA'),
+        purge: num(pre + 'pelPurge'),
+        fan: Math.max(0, Math.min(100, num(pre + 'pelFan'))),
+      },
+    };
+  }
+
+  function readBrim(pre) {
+    return {
+      enabled: $(pre + 'brimEnabled').checked,
+      outer: $(pre + 'brimOuter').value === 'outer',
+      lines: Math.max(0, Math.round(num(pre + 'brimLines'))),
+      lineWidth: num(pre + 'brimLineWidth'),
+      layerHeight: num(pre + 'brimLayerHeight'),
+      feed: num(pre + 'brimFeed'),
+    };
+  }
+
   function readConfig() {
+    if (activeProject() === 'bendstool') {
+      return {
+        project: 'bendstool',
+        printer: readPrinter('bs_'),
+        layerHeight: num('bs_layerHeight'),
+        lineWidth: num('bs_lineWidth'),
+        printFeed: num('bs_printFeed'),
+        travelFeed: num('bs_travelFeed'),
+        tolerance: num('bs_tolerance'),
+        centerX: num('bs_centerX'),
+        centerY: num('bs_centerY'),
+        disc: {
+          diameter: num('bs_diameter'),
+          layers: Math.max(1, Math.round(num('bs_layers'))),
+        },
+        brim: readBrim('bs_'),
+      };
+    }
+
     const shape = $('shape').value;
     const shapeParams = {
       circle: { radius: num('circle_radius') },
@@ -30,28 +89,10 @@
     }[shape];
 
     return {
+      project: 'cordhanger',
       shape,
       shapeParams,
-      printer: {
-        mode: $('printerMode').value === 'filament' ? 'filament' : 'pellet',
-        multiplier: num('extrusionMultiplier'),
-        includeStartEnd: $('startEndEnabled').checked,
-        filament: {
-          diameter: num('filDiameter'),
-          nozzle: num('filNozzleTemp'),
-          bed: num('filBedTemp'),
-          fan: Math.max(0, Math.min(100, num('filFan'))),
-        },
-        pellet: {
-          up: num('pelUpTemp'),
-          mid: num('pelMidTemp'),
-          down: num('pelDownTemp'),
-          bed: num('pelBedTemp'),
-          pa: num('pelPA'),
-          purge: num('pelPurge'),
-          fan: Math.max(0, Math.min(100, num('pelFan'))),
-        },
-      },
+      printer: readPrinter(''),
       layerHeight: num('layerHeight'),
       lineWidth: num('lineWidth'),
       totalHeight: num('totalHeight'),
@@ -61,14 +102,7 @@
       seamSide: $('seamSide').value,
       centerX: num('centerX'),
       centerY: num('centerY'),
-      brim: {
-        enabled: $('brimEnabled').checked,
-        outer: $('brimOuter').value === 'outer',
-        lines: Math.max(0, Math.round(num('brimLines'))),
-        lineWidth: num('brimLineWidth'),
-        layerHeight: num('brimLayerHeight'),
-        feed: num('brimFeed'),
-      },
+      brim: readBrim(''),
       hanger: {
         enabled: $('hangEnabled').checked,
         size: num('hangSize'),
@@ -93,20 +127,7 @@
     };
   }
 
-  // Returns an error string if the config can't be generated, else null.
-  function validate(cfg) {
-    const checks = {
-      'layer height': cfg.layerHeight,
-      'line width': cfg.lineWidth,
-      'total height': cfg.totalHeight,
-      'print feed': cfg.printFeed,
-      'travel feed': cfg.travelFeed,
-    };
-    for (const name in checks) {
-      if (!isPos(checks[name])) return 'Enter a valid ' + name + ' (must be greater than 0).';
-    }
-    if (!Number.isFinite(cfg.centerX) || !Number.isFinite(cfg.centerY))
-      return 'Enter valid bed center X/Y.';
+  function validatePrinter(cfg) {
     if (!isPos(cfg.printer.multiplier)) return 'Extrusion multiplier must be greater than 0.';
     if (cfg.printer.mode === 'filament') {
       if (!isPos(cfg.printer.filament.diameter)) return 'Enter a valid filament diameter.';
@@ -122,18 +143,60 @@
       )
         return 'Enter valid pellet zone/bed temps, pressure advance, purge and fan.';
     }
+    return null;
+  }
+
+  function validateBrim(brim) {
+    if (!brim.enabled) return null;
+    if (brim.lines < 1) return 'Brim needs at least 1 line.';
+    if (!isPos(brim.lineWidth)) return 'Enter a valid brim line width.';
+    if (!isPos(brim.layerHeight)) return 'Enter a valid brim layer height.';
+    if (!isPos(brim.feed)) return 'Enter a valid brim feedrate.';
+    return null;
+  }
+
+  // Returns an error string if the config can't be generated, else null.
+  function validate(cfg) {
+    if (cfg.project === 'bendstool') {
+      const basics = {
+        'layer height': cfg.layerHeight,
+        'line width': cfg.lineWidth,
+        'print feed': cfg.printFeed,
+        'travel feed': cfg.travelFeed,
+        'chord tolerance': cfg.tolerance,
+        'disc diameter': cfg.disc.diameter,
+      };
+      for (const name in basics) {
+        if (!isPos(basics[name])) return 'Enter a valid ' + name + ' (must be greater than 0).';
+      }
+      if (!Number.isFinite(cfg.centerX) || !Number.isFinite(cfg.centerY))
+        return 'Enter valid bed center X/Y.';
+      if (cfg.disc.layers < 1) return 'Disc needs at least 1 layer.';
+      return validatePrinter(cfg) || validateBrim(cfg.brim);
+    }
+
+    const checks = {
+      'layer height': cfg.layerHeight,
+      'line width': cfg.lineWidth,
+      'total height': cfg.totalHeight,
+      'print feed': cfg.printFeed,
+      'travel feed': cfg.travelFeed,
+    };
+    for (const name in checks) {
+      if (!isPos(checks[name])) return 'Enter a valid ' + name + ' (must be greater than 0).';
+    }
+    if (!Number.isFinite(cfg.centerX) || !Number.isFinite(cfg.centerY))
+      return 'Enter valid bed center X/Y.';
+    const pErr = validatePrinter(cfg);
+    if (pErr) return pErr;
     if (!isPos(cfg.tolerance)) return 'Chord tolerance must be greater than 0.';
     for (const k in cfg.shapeParams) {
       const v = cfg.shapeParams[k];
       if (!Number.isFinite(v)) return 'Enter a valid value for ' + k + '.';
       if (k !== 'fillet' && v <= 0) return 'Shape value "' + k + '" must be greater than 0.';
     }
-    if (cfg.brim.enabled) {
-      if (cfg.brim.lines < 1) return 'Brim needs at least 1 line.';
-      if (!isPos(cfg.brim.lineWidth)) return 'Enter a valid brim line width.';
-      if (!isPos(cfg.brim.layerHeight)) return 'Enter a valid brim layer height.';
-      if (!isPos(cfg.brim.feed)) return 'Enter a valid brim feedrate.';
-    }
+    const bErr = validateBrim(cfg.brim);
+    if (bErr) return bErr;
     if (cfg.hanger.enabled) {
       if (!isPos(cfg.hanger.size) || cfg.hanger.size > 45)
         return 'Hanger gap must be between 1 and 45% of the outline.';
@@ -160,14 +223,37 @@
     });
   }
 
-  function showPrinterParams(mode) {
-    document.querySelectorAll('.printer-params').forEach((el) => {
-      el.hidden = el.getAttribute('data-mode') !== mode;
+  function syncPrinterCards() {
+    [
+      ['printerMode', 'printer-params', 'printerHint'],
+      ['bs_printerMode', 'printer-params-bs', 'bs_printerHint'],
+    ].forEach(([selId, cls, hintId]) => {
+      const sel = $(selId);
+      if (!sel) return;
+      const mode = sel.value === 'filament' ? 'filament' : 'pellet';
+      document.querySelectorAll('.' + cls).forEach((el) => {
+        el.hidden = el.getAttribute('data-mode') !== mode;
+      });
+      $(hintId).textContent =
+        mode === 'filament'
+          ? 'E = mm of filament (volume ÷ filament cross-section) · Marlin start/end for the P1P'
+          : 'E = pure volume in mm³ · Klipper start/end with the GINGER pellet macros';
     });
-    $('printerHint').textContent =
-      mode === 'filament'
-        ? 'E = mm of filament (volume ÷ filament cross-section) · Marlin start/end for the P1P'
-        : 'E = pure volume in mm³ · Klipper start/end with the GINGER pellet macros';
+  }
+
+  function showProject(p) {
+    document.querySelectorAll('.card[data-project]').forEach((el) => {
+      el.hidden = el.getAttribute('data-project') !== p;
+    });
+    $('tabCordhanger').classList.toggle('active', p === 'cordhanger');
+    $('tabBendstool').classList.toggle('active', p === 'bendstool');
+  }
+
+  // Disc math shared with the generator: ring count snaps the diameter to a
+  // multiple of 2*lineWidth (ties round UP per the "one line more" rule).
+  function discRings(diameter, lw) {
+    const n = Math.max(1, Math.round(diameter / (2 * lw)));
+    return { n: n, snapped: 2 * n * lw };
   }
 
   function showPatternParams(type) {
@@ -180,8 +266,12 @@
         : 'Weave: even bumps/rev = flutes · odd = woven';
   }
 
-  // --- Live 2D cross-section preview ---
+  // --- Live 2D previews ---
   function drawPreview(cfg) {
+    if (cfg.project === 'bendstool') {
+      drawPreviewBS(cfg);
+      return;
+    }
     const canvas = $('preview');
     const ctx = canvas.getContext('2d');
     const W = canvas.width;
@@ -271,6 +361,76 @@
     ctx.lineWidth = 2 * sf;
     ctx.strokeStyle = '#fff';
     ctx.stroke();
+  }
+
+  // Bend stool: concentric rings + the staircase seam (connector chain).
+  function drawPreviewBS(cfg) {
+    const canvas = $('previewBS');
+    const ctx = canvas.getContext('2d');
+    const W = canvas.width;
+    const H = canvas.height;
+    ctx.clearRect(0, 0, W, H);
+    const sf = W / 600;
+
+    const lw = cfg.lineWidth;
+    if (!isPos(lw) || !isPos(cfg.disc.diameter)) {
+      $('bs_discHint').textContent = 'Enter a valid diameter and line width.';
+      return;
+    }
+    const { n, snapped } = discRings(cfg.disc.diameter, lw);
+    $('bs_discHint').textContent =
+      'Snapped to Ø' + snapped + ' mm · ' + n + ' ring' + (n > 1 ? 's' : '') +
+      ' of ' + lw + ' mm' + (Math.abs(snapped - cfg.disc.diameter) > 1e-9 ? ' (from Ø' + cfg.disc.diameter + ')' : '');
+
+    let maxR = snapped / 2;
+    if (cfg.brim.enabled && cfg.brim.lines > 0 && isPos(cfg.brim.lineWidth) && cfg.brim.outer) {
+      maxR += cfg.brim.lineWidth / 2 + lw / 2 + (cfg.brim.lines - 1) * cfg.brim.lineWidth + cfg.brim.lineWidth / 2;
+    }
+    const pad = 30 * sf;
+    const scale = (Math.min(W, H) / 2 - pad) / (maxR || 1);
+    const cxp = W / 2;
+    const cyp = H / 2;
+
+    // Brim rings (dashed, from the outermost bead centerline)
+    if (cfg.brim.enabled && cfg.brim.lines > 0 && isPos(cfg.brim.lineWidth)) {
+      const rOuter = snapped / 2 - lw / 2;
+      const dir = cfg.brim.outer ? 1 : -1;
+      ctx.setLineDash([5 * sf, 4 * sf]);
+      ctx.strokeStyle = '#2bd9a0';
+      ctx.lineWidth = 1.2 * sf;
+      for (let k = 1; k <= cfg.brim.lines; k++) {
+        const r = rOuter + dir * (cfg.brim.lineWidth / 2 + lw / 2 + (k - 1) * cfg.brim.lineWidth);
+        if (r <= 0) continue;
+        ctx.beginPath();
+        ctx.arc(cxp, cyp, r * scale, 0, 2 * Math.PI);
+        ctx.stroke();
+      }
+      ctx.setLineDash([]);
+    }
+
+    // Rings (inner -> outer) and the staircase seam connectors.
+    ctx.strokeStyle = '#4f9dff';
+    ctx.lineWidth = 1.8 * sf;
+    let a = Math.PI / 2;
+    for (let i = 0; i < n; i++) {
+      const r = lw / 2 + i * lw;
+      const gap = lw / r; // stop one line width before the ring start
+      ctx.beginPath();
+      // canvas Y is flipped; drawing CCW in printer space = CW on screen
+      ctx.arc(cxp, cyp, r * scale, -a, -(a + 2 * Math.PI - gap), true);
+      ctx.stroke();
+      const aEnd = a + 2 * Math.PI - gap;
+      if (i < n - 1) {
+        const r2 = r + lw;
+        ctx.strokeStyle = '#ffb454';
+        ctx.beginPath();
+        ctx.moveTo(cxp + r * scale * Math.cos(-aEnd), cyp + r * scale * Math.sin(-aEnd));
+        ctx.lineTo(cxp + r2 * scale * Math.cos(-aEnd), cyp + r2 * scale * Math.sin(-aEnd));
+        ctx.stroke();
+        ctx.strokeStyle = '#4f9dff';
+      }
+      a = aEnd;
+    }
   }
 
   // --- 3D toolpath viewer: orbit by drag, fixed zoom, Z-up, colored by feed ---
@@ -408,11 +568,17 @@
   })();
 
   // --- Live update (cheap) ---
+  function syncCards(cfg) {
+    if (cfg.project === 'cordhanger') {
+      showShapeParams(cfg.shape);
+      showPatternParams(cfg.pattern.type);
+    }
+    syncPrinterCards();
+  }
+
   function updateShapeUI() {
     const cfg = readConfig();
-    showShapeParams(cfg.shape);
-    showPatternParams(cfg.pattern.type);
-    showPrinterParams(cfg.printer.mode);
+    syncCards(cfg);
     drawPreview(cfg);
     saveLocal();
   }
@@ -420,9 +586,7 @@
   // --- Generate (button / Enter) ---
   function regenerate() {
     const cfg = readConfig();
-    showShapeParams(cfg.shape);
-    showPatternParams(cfg.pattern.type);
-    showPrinterParams(cfg.printer.mode);
+    syncCards(cfg);
     drawPreview(cfg);
 
     const err = validate(cfg);
@@ -522,7 +686,7 @@
   // Size canvas backing stores to the displayed size × devicePixelRatio so
   // lines are crisp on retina screens (drawing code scales strokes via W/600).
   function fitCanvases() {
-    ['preview', 'preview3d'].forEach((id) => {
+    ['preview', 'previewBS', 'preview3d'].forEach((id) => {
       const c = $(id);
       const dpr = Math.min(window.devicePixelRatio || 1, 2.5);
       const w = c.clientWidth || 600;
@@ -560,6 +724,36 @@
     $('brimFields').hidden = !$('brimEnabled').checked;
     $('patternFields').hidden = !$('patternEnabled').checked;
     $('hangFields').hidden = !$('hangEnabled').checked;
+    $('bs_brimFields').hidden = !$('bs_brimEnabled').checked;
+    showProject(activeProject());
+  }
+
+  // First run after the tabs update: seed the bend stool's generic settings
+  // (print, printer/material, brim) from the cord hanger's current values so
+  // both projects start from the same place but stay independent afterwards.
+  const SEED_MAP = {
+    layerHeight: 'bs_layerHeight', lineWidth: 'bs_lineWidth',
+    printFeed: 'bs_printFeed', travelFeed: 'bs_travelFeed',
+    tolerance: 'bs_tolerance', centerX: 'bs_centerX', centerY: 'bs_centerY',
+    printerMode: 'bs_printerMode', extrusionMultiplier: 'bs_extrusionMultiplier',
+    startEndEnabled: 'bs_startEndEnabled',
+    filDiameter: 'bs_filDiameter', filNozzleTemp: 'bs_filNozzleTemp',
+    filBedTemp: 'bs_filBedTemp', filFan: 'bs_filFan',
+    pelUpTemp: 'bs_pelUpTemp', pelMidTemp: 'bs_pelMidTemp', pelDownTemp: 'bs_pelDownTemp',
+    pelBedTemp: 'bs_pelBedTemp', pelPA: 'bs_pelPA', pelPurge: 'bs_pelPurge', pelFan: 'bs_pelFan',
+    brimEnabled: 'bs_brimEnabled', brimOuter: 'bs_brimOuter', brimLines: 'bs_brimLines',
+    brimLineWidth: 'bs_brimLineWidth', brimLayerHeight: 'bs_brimLayerHeight', brimFeed: 'bs_brimFeed',
+  };
+
+  function seedBendstool() {
+    Object.keys(SEED_MAP).forEach((src) => {
+      const a = $(src);
+      const b = $(SEED_MAP[src]);
+      if (!a || !b) return;
+      if (a.type === 'checkbox') b.checked = a.checked;
+      else b.value = a.value;
+    });
+    $('bs_brimFields').hidden = !$('bs_brimEnabled').checked;
   }
 
   // Double-buffered save: the previous good state is kept under a backup key,
@@ -582,22 +776,28 @@
       stored = localStorage.getItem(STORAGE_KEY);
     } catch (e) {
       storageOk = false;
-      return;
+      return null;
     }
     try {
       if (stored) {
-        applySettings(JSON.parse(stored));
-        return;
+        const parsed = JSON.parse(stored);
+        applySettings(parsed);
+        return parsed;
       }
     } catch (e) {
       /* main copy corrupt — fall through to backup */
     }
     try {
       const backup = localStorage.getItem(BACKUP_KEY);
-      if (backup) applySettings(JSON.parse(backup));
+      if (backup) {
+        const parsed = JSON.parse(backup);
+        applySettings(parsed);
+        return parsed;
+      }
     } catch (e) {
       /* backup unusable too — start from defaults */
     }
+    return null;
   }
 
   function exportSettings() {
@@ -661,6 +861,21 @@
     updateShapeUI();
   });
 
+  $('bs_brimEnabled').addEventListener('change', () => {
+    $('bs_brimFields').hidden = !$('bs_brimEnabled').checked;
+    updateShapeUI();
+  });
+
+  function switchProject(p) {
+    $('activeProject').value = p;
+    showProject(p);
+    fitCanvases();
+    updateShapeUI();
+    regenerate();
+  }
+  $('tabCordhanger').addEventListener('click', () => switchProject('cordhanger'));
+  $('tabBendstool').addEventListener('click', () => switchProject('bendstool'));
+
   $('regenBtn').addEventListener('click', regenerate);
   $('copyBtn').addEventListener('click', copy);
   $('downloadBtn').addEventListener('click', download);
@@ -700,8 +915,11 @@
     if (document.visibilityState === 'hidden') saveLocal();
   });
 
-  // Restore last-used settings (with backup fallback), then initial render.
-  restoreLocal();
+  // Restore last-used settings (with backup fallback); seed the bend stool's
+  // generic settings from the cord hanger the first time after the tabs update.
+  const restored = restoreLocal();
+  if (restored && !('bs_layerHeight' in restored)) seedBendstool();
+  showProject(activeProject());
   fitCanvases();
   updateShapeUI();
   regenerate();
