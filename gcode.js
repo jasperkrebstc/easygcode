@@ -189,23 +189,61 @@
       warnings.push('Line width is less than layer height — bead width clamped to layer height.');
     }
 
-    let base = Geo.adaptiveShape(cfg.shape, cfg.shapeParams, cfg.tolerance);
-    base = Geo.rotateToSeam(base, cfg.seamSide || 'back');
-    const sampler = Geo.makeSampler(base);
-    const perim = sampler.perimeter;
+    const isBS = cfg.project === 'bendstool';
 
-    if (!(perim > 1e-6) || !Number.isFinite(perim)) {
-      return {
-        gcode: '; ERROR: shape has zero size',
-        warnings: ['Shape has zero size — check your dimensions.'],
-        stats: { volume: 0, pathLength: 0, moves: 0, loops: 0, timeMin: 0 },
-        path: [],
-      };
+    let base = null;
+    let sampler = null;
+    let perim = 0;
+    if (!isBS) {
+      base = Geo.adaptiveShape(cfg.shape, cfg.shapeParams, cfg.tolerance);
+      base = Geo.rotateToSeam(base, cfg.seamSide || 'back');
+      sampler = Geo.makeSampler(base);
+      perim = sampler.perimeter;
+      if (!(perim > 1e-6) || !Number.isFinite(perim)) {
+        return {
+          gcode: '; ERROR: shape has zero size',
+          warnings: ['Shape has zero size — check your dimensions.'],
+          stats: { volume: 0, pathLength: 0, moves: 0, loops: 0, timeMin: 0 },
+          path: [],
+        };
+      }
     }
 
     const area = beadArea(cfg.lineWidth, lh);
-    const T = cfg.totalHeight / lh; // total loops (may be fractional)
+    // Vase: loops = height/layerHeight (may be fractional). Disc: stacked layers.
+    const T = isBS ? Math.max(1, Math.round((cfg.disc && cfg.disc.layers) || 1)) : cfg.totalHeight / lh;
     const Lmax = Math.ceil(T - 1e-9);
+
+    // ---- Disc setup (bend stool) ----
+    // Ring centerlines: lw/2 + i*lw from the center, so beads meet half-half in
+    // the middle. Perfect-fill diameters are therefore multiples of 2*lw; the
+    // requested diameter snaps to the nearest (ties round UP = one line more).
+    let ringN = 0;
+    let snappedD = 0;
+    const ringRadii = [];
+    let discOuterLoop = null;
+    if (isBS) {
+      const lw = cfg.lineWidth;
+      ringN = Math.max(1, Math.round(cfg.disc.diameter / (2 * lw)));
+      snappedD = 2 * ringN * lw;
+      if (Math.abs(snappedD - cfg.disc.diameter) > 1e-9) {
+        warnings.push(
+          'Disc diameter snapped to ' + snappedD + ' mm (' + ringN + ' rings; valid sizes step by ' +
+            2 * lw + ' mm with ' + lw + ' mm lines).'
+        );
+      }
+      for (let i = 0; i < ringN; i++) ringRadii.push(lw / 2 + i * lw);
+      // Outermost bead centerline circle doubles as the brim's base loop.
+      const rOut = ringRadii[ringN - 1];
+      const tol0 = cfg.tolerance > 0 ? cfg.tolerance : 0.05;
+      const dth0 = 2 * Math.acos(Math.max(-1, 1 - tol0 / rOut));
+      const steps0 = Math.max(24, Math.ceil((2 * Math.PI) / (isFinite(dth0) && dth0 > 0 ? dth0 : 0.2)));
+      discOuterLoop = [];
+      for (let s = 0; s < steps0; s++) {
+        const ang = (2 * Math.PI * s) / steps0;
+        discOuterLoop.push({ x: rOut * Math.cos(ang), y: rOut * Math.sin(ang) });
+      }
+    }
 
     // ---- Printer / extrusion mode ----
     // pellet: E is pure volume (mm^3), converted downstream by the Klipper
@@ -226,6 +264,7 @@
     const pat = cfg.pattern || {};
     const type = pat.type || 'weave';
     const patternOn =
+      !isBS &&
       !!pat.enabled &&
       pat.amplitude !== 0 &&
       ((type === 'weave' && pat.bumps >= 1) || (type === 'spikes' && pat.count >= 1));
@@ -253,7 +292,7 @@
     const hangFrac = Math.max(0, Math.min(45, hang.size || 0)) / 100;
     const pocketFrac =
       Math.max(0, Math.min(45, hang.pocket != null && hang.pocket > 0 ? hang.pocket : hang.size || 0)) / 100;
-    let hangOn = !!hang.enabled && hangFrac > 0.005 && pocketFrac > 0.005;
+    let hangOn = !isBS && !!hang.enabled && hangFrac > 0.005 && pocketFrac > 0.005;
     const hStart = Math.max(1, Math.round(hang.bottom || 1));
     const hTween = Math.max(1, Math.round(hang.transition || 1));
     const hBridgeFeed = hang.bridgeFeed > 0 ? hang.bridgeFeed : cfg.printFeed;
@@ -294,10 +333,15 @@
     }
 
     // ---- Header ----
-    lines.push('; EasyGCode — vase-mode generator');
+    lines.push('; EasyGCode — ' + (isBS ? 'bend stool' : 'cord hanger (vase mode)') + ' generator');
     lines.push('; ' + new Date().toISOString());
-    lines.push('; shape=' + cfg.shape + ' tolerance=' + cfg.tolerance + 'mm seam=' + (cfg.seamSide || 'back'));
-    lines.push('; layerHeight=' + lh + ' lineWidth=' + cfg.lineWidth + ' totalHeight=' + cfg.totalHeight);
+    if (isBS) {
+      lines.push('; disc: requested=' + cfg.disc.diameter + ' snapped=' + snappedD + ' rings=' + ringN + ' layers=' + T);
+      lines.push('; layerHeight=' + lh + ' lineWidth=' + cfg.lineWidth + ' tolerance=' + cfg.tolerance + 'mm');
+    } else {
+      lines.push('; shape=' + cfg.shape + ' tolerance=' + cfg.tolerance + 'mm seam=' + (cfg.seamSide || 'back'));
+      lines.push('; layerHeight=' + lh + ' lineWidth=' + cfg.lineWidth + ' totalHeight=' + cfg.totalHeight);
+    }
     if (patternOn) {
       let ln = '; pattern=' + type + ' amplitude=' + pat.amplitude + ' zAngle=' + (pat.zAngle || 0) +
         ' coverage=' + pat.coverage + '% plBottom=' + plBottom + ' plTop=' + plTop + ' bumpFeed=' + Math.round(bumpFeed);
@@ -396,14 +440,15 @@
 
     // ---- Brim ----
     const brim = cfg.brim;
-    if (brim && brim.enabled && brim.lines > 0) {
+    const brimBase = isBS ? discOuterLoop : base;
+    if (brim && brim.enabled && brim.lines > 0 && brimBase) {
       const bArea = beadArea(brim.lineWidth, brim.layerHeight);
       const brimFeed = brim.feed > 0 ? brim.feed : cfg.printFeed;
       const dir = brim.outer ? 1 : -1;
-      const centroid = base.reduce((s, p) => ({ x: s.x + p.x, y: s.y + p.y }), { x: 0, y: 0 });
-      centroid.x /= base.length;
-      centroid.y /= base.length;
-      const inradius = base.reduce((m, p) => Math.min(m, Geo.dist(p, centroid)), Infinity);
+      const centroid = brimBase.reduce((s, p) => ({ x: s.x + p.x, y: s.y + p.y }), { x: 0, y: 0 });
+      centroid.x /= brimBase.length;
+      centroid.y /= brimBase.length;
+      const inradius = brimBase.reduce((m, p) => Math.min(m, Geo.dist(p, centroid)), Infinity);
       lines.push('; --- brim (' + (brim.outer ? 'outer' : 'inner') + ') ---');
       for (let k = 1; k <= brim.lines; k++) {
         const d = brim.lineWidth / 2 + cfg.lineWidth / 2 + (k - 1) * brim.lineWidth;
@@ -411,7 +456,7 @@
           warnings.push('Inner brim line ' + k + ' skipped (offset exceeds shape size).');
           continue;
         }
-        const loop = Geo.offsetClosed(base, dir * d);
+        const loop = Geo.offsetClosed(brimBase, dir * d);
         if (!brim.outer && Geo.signedArea(loop) <= 1e-3) {
           warnings.push('Inner brim line ' + k + ' skipped (collapsed).');
           continue;
@@ -421,12 +466,14 @@
       }
     }
 
-    // ---- Base u-samples ----
+    // ---- Base u-samples (vase only) ----
     let uSet = [];
-    for (let i = 0; i < base.length; i++) uSet.push(sampler.uOf(i));
-    if (patternOn && type === 'weave') for (let j = 0; j < pat.bumps; j++) uSet.push(j / pat.bumps);
-    uSet = Array.from(new Set(uSet.map((u) => +u.toFixed(9)))).sort((a, b) => a - b);
-    if (uSet.length === 0 || uSet[0] > 1e-9) uSet.unshift(0);
+    if (!isBS) {
+      for (let i = 0; i < base.length; i++) uSet.push(sampler.uOf(i));
+      if (patternOn && type === 'weave') for (let j = 0; j < pat.bumps; j++) uSet.push(j / pat.bumps);
+      uSet = Array.from(new Set(uSet.map((u) => +u.toFixed(9)))).sort((a, b) => a - b);
+      if (uSet.length === 0 || uSet[0] > 1e-9) uSet.unshift(0);
+    }
 
     // ---- Spike placement (blue-noise, seam-centered) ----
     const spikesMode = patternOn && type === 'spikes';
@@ -599,32 +646,72 @@
       }
     }
 
-    // ---- Spiral ----
-    lines.push(
-      '; --- vase spiral' + (patternOn ? ' + ' + type : '') + (hangOn ? ' + hanger' : '') + ' ---'
-    );
+    // ---- Body ----
+    if (!isBS) {
+      lines.push(
+        '; --- vase spiral' + (patternOn ? ' + ' + type : '') + (hangOn ? ' + hanger' : '') + ' ---'
+      );
 
-    const start = spikesMode ? wallPoint(0, 0) : wpoint(0, 0).p;
-    travelAbs({ x: start.x, y: start.y, z: 0 });
-    prevBump = false;
-    prevU = 0;
+      const start = spikesMode ? wallPoint(0, 0) : wpoint(0, 0).p;
+      travelAbs({ x: start.x, y: start.y, z: 0 });
+      prevBump = false;
+      prevU = 0;
 
-    for (let L = 0; L < Lmax; L++) {
-      const uEnd = Math.min(1, T - L);
-      if (L === 1 && includeStartEnd && fanPWM > 0) {
-        lines.push('M106 S' + fanPWM + ' ; part cooling fan on after ramp loop');
-      }
-      if (inBand(L)) {
-        if (L === hStart) {
-          lines.push('; hanger loop (bridging sections at F' + Math.round(hBridgeFeed) + ')');
-          polyLoop(L, hangerPts, true, uEnd);
-        } else {
-          polyLoop(L, tweenLoopPts(L - hStart), false, uEnd);
+      for (let L = 0; L < Lmax; L++) {
+        const uEnd = Math.min(1, T - L);
+        if (L === 1 && includeStartEnd && fanPWM > 0) {
+          lines.push('M106 S' + fanPWM + ' ; part cooling fan on after ramp loop');
         }
-      } else if (spikesMode) {
-        spikesLoop(L, uEnd);
-      } else {
-        weaveLoop(L, uEnd);
+        if (inBand(L)) {
+          if (L === hStart) {
+            lines.push('; hanger loop (bridging sections at F' + Math.round(hBridgeFeed) + ')');
+            polyLoop(L, hangerPts, true, uEnd);
+          } else {
+            polyLoop(L, tweenLoopPts(L - hStart), false, uEnd);
+          }
+        } else if (spikesMode) {
+          spikesLoop(L, uEnd);
+        } else {
+          weaveLoop(L, uEnd);
+        }
+      }
+    } else {
+      // ---- Bend stool: concentric rings, inner to outer, staircase seam ----
+      // Each ring is traced CCW and stops one line width of arc before its own
+      // start; a radial connector steps out to the next ring there, so the seam
+      // shifts backward by lw/r radians per ring (a staircase drifting CW).
+      lines.push('; --- bend stool disc: ' + ringN + ' rings, ' + T + ' layer(s), D=' + snappedD + ' ---');
+      const lw = cfg.lineWidth;
+      const tol = cfg.tolerance > 0 ? cfg.tolerance : 0.05;
+      const a0 = Math.PI / 2;
+      for (let k = 0; k < T; k++) {
+        const z = (k + 1) * lh;
+        if (k === 1 && includeStartEnd && fanPWM > 0) {
+          lines.push('M106 S' + fanPWM + ' ; part cooling fan on after first layer');
+        }
+        let a = a0;
+        travelAbs({ x: cx + ringRadii[0] * Math.cos(a), y: cy + ringRadii[0] * Math.sin(a), z: z });
+        for (let i = 0; i < ringN; i++) {
+          const r = ringRadii[i];
+          const sweep = 2 * Math.PI - lw / r; // stop one line width short of the start
+          let dth = 2 * Math.acos(Math.max(-1, 1 - tol / r));
+          if (!isFinite(dth) || dth <= 0) dth = 0.2;
+          const steps = Math.max(12, Math.ceil(sweep / dth));
+          for (let s = 1; s <= steps; s++) {
+            const ang = a + (sweep * s) / steps;
+            emitSeg({ x: cx + r * Math.cos(ang), y: cy + r * Math.sin(ang), z: z }, cfg.printFeed, 1);
+          }
+          const aEnd = (a + sweep) % (2 * Math.PI);
+          if (i < ringN - 1) {
+            // radial connector out to the next ring (extruded, length = lw)
+            emitSeg(
+              { x: cx + ringRadii[i + 1] * Math.cos(aEnd), y: cy + ringRadii[i + 1] * Math.sin(aEnd), z: z },
+              cfg.printFeed,
+              1
+            );
+          }
+          a = aEnd;
+        }
       }
     }
 

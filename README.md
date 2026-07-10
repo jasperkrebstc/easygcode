@@ -1,10 +1,21 @@
 # EasyGCode
 
-For creating G-code on the go, easily. A dead-simple, phone-first tool to generate
-**vase-mode G-code** for **Klipper pellet 3D printing**. Pick a cross-section shape, set
-layer height / line width / total height, optionally add a brim, and get a continuous
-spiral of `G1` moves with **volumetric (mm³) extrusion**. No app store, no install — it
-runs as a web page / PWA.
+For creating G-code on the go, easily. The app is organized into **project tabs** that
+share the same engine (extrusion math, printer modes, start/end G-code, previews) but
+keep **fully independent settings** per project:
+
+- **Cord hanger** — the vase-mode generator described below.
+- **Bend stool** — (in progress) starts with the seat disc: concentric rings offset
+  inward by one line width, traced inner→outer as one continuous path with a
+  **staircase seam** (each ring stops one line width before its start; a radial
+  connector steps out, so the seam drifts by `lw/r` per ring). The diameter snaps to
+  the nearest multiple of `2 × line width` (ties round up) so the beads meet half-half
+  in the center. Supports stacked layers and a brim.
+
+The cord hanger is a dead-simple, phone-first tool to generate **vase-mode G-code** for
+**Klipper pellet 3D printing** (or the Bambu P1P in filament mode). Pick a cross-section
+shape, set layer height / line width / total height, optionally add a brim, and get a
+continuous spiral of `G1` moves. No app store, no install — it runs as a web page / PWA.
 
 ## Use it
 
