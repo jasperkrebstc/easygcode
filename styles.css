@@ -175,6 +175,7 @@ select {
 }
 
 canvas#preview,
+canvas#previewBS,
 canvas#preview3d {
   width: 100%;
   height: auto;

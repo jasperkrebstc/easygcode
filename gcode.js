@@ -333,7 +333,7 @@
     }
 
     // ---- Header ----
-    lines.push('; EasyGCode — ' + (isBS ? 'bend stool' : 'cord hanger (vase mode)') + ' generator');
+    lines.push('; EasyGCode — ' + (isBS ? 'bend stool' : 'coat hanger (vase mode)') + ' generator');
     lines.push('; ' + new Date().toISOString());
     if (isBS) {
       lines.push('; disc: requested=' + cfg.disc.diameter + ' snapped=' + snappedD + ' rings=' + ringN + ' layers=' + T);
@@ -441,7 +441,10 @@
     // ---- Brim ----
     const brim = cfg.brim;
     const brimBase = isBS ? discOuterLoop : base;
-    if (brim && brim.enabled && brim.lines > 0 && brimBase) {
+    if (isBS && brim && brim.enabled && !brim.outer) {
+      warnings.push('Inner brim skipped — the disc is solid there; use an outer brim.');
+    }
+    if (brim && brim.enabled && brim.lines > 0 && brimBase && !(isBS && !brim.outer)) {
       const bArea = beadArea(brim.lineWidth, brim.layerHeight);
       const brimFeed = brim.feed > 0 ? brim.feed : cfg.printFeed;
       const dir = brim.outer ? 1 : -1;

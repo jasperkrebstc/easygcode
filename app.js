@@ -391,16 +391,14 @@
     const cxp = W / 2;
     const cyp = H / 2;
 
-    // Brim rings (dashed, from the outermost bead centerline)
-    if (cfg.brim.enabled && cfg.brim.lines > 0 && isPos(cfg.brim.lineWidth)) {
+    // Brim rings (dashed; outer only — an inner brim would sit inside the solid disc)
+    if (cfg.brim.enabled && cfg.brim.outer && cfg.brim.lines > 0 && isPos(cfg.brim.lineWidth)) {
       const rOuter = snapped / 2 - lw / 2;
-      const dir = cfg.brim.outer ? 1 : -1;
       ctx.setLineDash([5 * sf, 4 * sf]);
       ctx.strokeStyle = '#2bd9a0';
       ctx.lineWidth = 1.2 * sf;
       for (let k = 1; k <= cfg.brim.lines; k++) {
-        const r = rOuter + dir * (cfg.brim.lineWidth / 2 + lw / 2 + (k - 1) * cfg.brim.lineWidth);
-        if (r <= 0) continue;
+        const r = rOuter + cfg.brim.lineWidth / 2 + lw / 2 + (k - 1) * cfg.brim.lineWidth;
         ctx.beginPath();
         ctx.arc(cxp, cyp, r * scale, 0, 2 * Math.PI);
         ctx.stroke();
@@ -690,7 +688,9 @@
       const c = $(id);
       const dpr = Math.min(window.devicePixelRatio || 1, 2.5);
       const w = c.clientWidth || 600;
-      const px = Math.round(w * dpr);
+      // Cap the backing store so a canvas can never feed back into its own
+      // layout size and grow without bound (belt-and-braces vs missing CSS).
+      const px = Math.min(1600, Math.round(w * dpr));
       if (px > 0 && c.width !== px) {
         c.width = px;
         c.height = px;
