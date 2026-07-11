@@ -404,9 +404,92 @@
     return pts;
   }
 
+  // Build one bend-stool loop as a polyline: a circle of radius r traced CCW
+  // from aStart, detouring out along each leg (hairpin side lines + tip cap)
+  // with tangent fillet arcs at the junctions. gapAng > 0 leaves the staircase
+  // gap before the start. leg = null gives a plain (gapped) circle.
+  // leg = { d: half-width of this hairpin, f: fillet radius, tipCenter:
+  // distance of the concentric cap center from the origin, angles: [rad...] }.
+  function stoolLoop(o) {
+    const pts = [];
+    const tol = o.tol > 0 ? o.tol : 0.05;
+    function arcSteps(radius, sweep) {
+      let dth = 2 * Math.acos(Math.max(-1, 1 - tol / Math.max(radius, 1e-6)));
+      if (!isFinite(dth) || dth <= 0) dth = 0.2;
+      return Math.max(2, Math.ceil(Math.abs(sweep) / dth));
+    }
+    function ringArc(a0, a1) {
+      const n = arcSteps(o.r, a1 - a0);
+      for (let s = 1; s <= n; s++) {
+        const a = a0 + ((a1 - a0) * s) / n;
+        pts.push({ x: o.r * Math.cos(a), y: o.r * Math.sin(a) });
+      }
+    }
+    function arcAround(cx0, cy0, radius, a0, a1) {
+      if (radius <= 1e-9 || Math.abs(a1 - a0) < 1e-9) return;
+      const n = arcSteps(radius, a1 - a0);
+      for (let s = 1; s <= n; s++) {
+        const a = a0 + ((a1 - a0) * s) / n;
+        pts.push({ x: cx0 + radius * Math.cos(a), y: cy0 + radius * Math.sin(a) });
+      }
+    }
+
+    const aEndTotal = o.aStart + 2 * Math.PI - (o.gapAng || 0);
+    pts.push({ x: o.r * Math.cos(o.aStart), y: o.r * Math.sin(o.aStart) });
+
+    if (!o.leg) {
+      ringArc(o.aStart, aEndTotal);
+      return pts;
+    }
+
+    const R = o.r;
+    const d = o.leg.d;
+    const f = Math.max(0, o.leg.f);
+    const tipCenter = o.leg.tipCenter;
+    const t = Math.sqrt(Math.max(0, (R + f) * (R + f) - (d + f) * (d + f)));
+    const beta = Math.atan2(d + f, t); // angular half-extent of a junction
+    const turn = Math.PI / 2 - beta; // fillet arc sweep (traversed clockwise)
+
+    let cur = o.aStart;
+    const angs = o.leg.angles
+      .map((p) => {
+        let a = p;
+        while (a <= o.aStart + 1e-12) a += 2 * Math.PI;
+        return a;
+      })
+      .sort((a, b) => a - b);
+
+    for (const p of angs) {
+      if (p - beta <= cur + 1e-9 || p + beta >= aEndTotal - 1e-9) continue; // no room; skip
+      const u = { x: Math.cos(p), y: Math.sin(p) };
+      const v = { x: -u.y, y: u.x };
+      const L = (tu, sv) => ({ x: u.x * tu + v.x * sv, y: u.y * tu + v.y * sv });
+
+      // Ring arc up to the entry tangent point (angle p - beta).
+      ringArc(cur, p - beta);
+      // Entry fillet: center at (t, -(d+f)) in leg coords, swept clockwise.
+      const F1 = L(t, -(d + f));
+      const a1 = Math.atan2(-F1.y, -F1.x);
+      arcAround(F1.x, F1.y, f, a1, a1 - turn);
+      // Straight side out to the cap start.
+      pts.push(L(tipCenter, -d));
+      // Tip cap: half-turn around the concentric tip center.
+      arcAround(u.x * tipCenter, u.y * tipCenter, d, p - Math.PI / 2, p + Math.PI / 2);
+      // Straight side back in.
+      pts.push(L(t, d));
+      // Exit fillet (mirror), also swept clockwise back onto the ring.
+      const F2 = L(t, d + f);
+      arcAround(F2.x, F2.y, f, p - Math.PI / 2, p - Math.PI / 2 - turn);
+      cur = p + beta;
+    }
+    ringArc(cur, aEndTotal);
+    return pts;
+  }
+
   window.Geo = {
     bezierPts,
     buildHangerLoop,
+    stoolLoop,
     rdpClosed,
     adaptiveShape,
     rotateToSeam,

@@ -5,12 +5,18 @@ share the same engine (extrusion math, printer modes, start/end G-code, previews
 keep **fully independent settings** per project:
 
 - **Coat hanger** — the vase-mode generator described below.
-- **Bend stool** — (in progress) starts with the seat disc: concentric rings offset
-  inward by one line width, traced inner→outer as one continuous path with a
-  **staircase seam** (each ring stops one line width before its start; a radial
-  connector steps out, so the seam drifts by `lw/r` per ring). The diameter snaps to
-  the nearest multiple of `2 × line width` (ties round up) so the beads meet half-half
-  in the center. Supports stacked layers and a brim.
+- **Bend stool** — (in progress) the seat disc: concentric rings offset inward by one
+  line width, traced inner→outer as one continuous path with a **staircase seam**
+  (each ring stops one line width before its start; a radial connector steps out).
+  The diameter snaps to the nearest multiple of `2 × line width` (ties round up) so
+  the beads meet half-half in the center. Optional **legs**: three, 120° apart (one
+  pointing left, two right), printed flat as nested hairpins radiating from the outer
+  rings — each hairpin pair joins one ring (leg width snaps like the diameter), with
+  tangent **fillets** at the junctions and concentric tip caps. **Seat height** is
+  measured rim edge → tip edge (cap arcs included). The seam is anchored at 0°
+  (between the two right legs) on the outermost ring; inner rings absorb the
+  staircase drift. The brim follows the full outline including legs. Supports
+  stacked layers.
 
 The coat hanger is a dead-simple, phone-first tool to generate **vase-mode G-code** for
 **Klipper pellet 3D printing** (or the Bambu P1P in filament mode). Pick a cross-section
