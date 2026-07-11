@@ -226,6 +226,10 @@
         legs = { m: m, snappedW: 2 * m * lw, tipCenter: tipCenter, fillet: fillet };
       }
     }
+    const at = cfg.disc.attractor;
+    if (at && at.enabled && !legs) {
+      warnings.push('Bend-zone spread needs legs enabled — ignored.');
+    }
     return { lw: lw, ringN: ringN, snappedD: snappedD, radii: radii, legs: legs, warnings: warnings };
   }
 
@@ -259,6 +263,22 @@
       };
     }
 
+    // Bend-zone attractor spread (legged loops only): hairpin q counted from
+    // the spine outward moves (2q+1)/2 x gap x lw, so all spacings inside R1
+    // become lw + gap*lw.
+    const at = cfg.disc.attractor;
+    const attrOn = !!(legs && at && at.enabled && at.r1 > 0 && at.r2 > at.r1 && at.gap > 0);
+    let attrPts = null;
+    if (attrOn) {
+      const A = n * lw + (Number.isFinite(at.pos) ? at.pos : 0); // rim + offset
+      attrPts = LEG_ANGLES.map((phi) => ({ x: A * Math.cos(phi), y: A * Math.sin(phi) }));
+    }
+    function attrFor(i) {
+      if (!attrOn || i < n - legs.m) return null;
+      const q = i - (n - legs.m);
+      return { points: attrPts, r1: at.r1, r2: at.r2, D: ((2 * q + 1) * at.gap * lw) / 2 };
+    }
+
     const loops = [];
     if (alt) {
       let pPrev = 0;
@@ -272,6 +292,7 @@
           aStart: cw ? s0 + del : s0 + pIn,
           gapAng: pIn + del,
           leg: legFor(i),
+          attr: attrFor(i),
         });
         if (cw) pts.reverse();
         loops.push(pts);
@@ -294,11 +315,22 @@
             aStart: starts[i],
             gapAng: lw / spec.radii[i],
             leg: legFor(i),
+            attr: attrFor(i),
           })
         );
       }
     }
-    return { spec: spec, loops: loops };
+    // Closed outermost outline (no seam gap) — brim base and preview.
+    const outline = Geo.stoolLoop({
+      r: spec.radii[n - 1],
+      tol: tol,
+      aStart: 0,
+      gapAng: 0,
+      leg: legFor(n - 1),
+      attr: attrFor(n - 1),
+    });
+    if (outline.length > 1 && Geo.dist(outline[0], outline[outline.length - 1]) < 1e-6) outline.pop();
+    return { spec: spec, loops: loops, outline: outline };
   }
 
   function generate(cfg) {
@@ -362,9 +394,11 @@
       const lw = cfg.lineWidth;
       const tolBS = cfg.tolerance > 0 ? cfg.tolerance : 0.05;
       const altSeam = cfg.disc.seamStyle === 'alternating';
+      let dl = null;
       if (legs || altSeam) {
         // Precompute each ring's polyline once (identical every layer).
-        legLoops = discLoops(cfg, spec).loops;
+        dl = discLoops(cfg, spec);
+        legLoops = dl.loops;
         if (legs && !altSeam) {
           // Staircase drift within the legged rings (seam is anchored at the
           // outermost ring; inner plain rings absorb the rest).
@@ -376,16 +410,9 @@
         }
       }
       if (legs) {
-        // Brim base: the outermost combined outline (closed, no seam gap).
-        const outline = Geo.stoolLoop({
-          r: ringRadii[ringN - 1],
-          tol: tolBS,
-          aStart: 0,
-          gapAng: 0,
-          leg: { d: legs.m * lw - lw / 2, f: legs.fillet, tipCenter: legs.tipCenter, angles: LEG_ANGLES },
-        });
-        if (outline.length > 1 && Geo.dist(outline[0], outline[outline.length - 1]) < 1e-6) outline.pop();
-        discOuterLoop = outline;
+        // Brim base: the outermost combined outline (spread included when the
+        // bend-zone attractor is on, so the brim hugs what actually prints).
+        discOuterLoop = dl.outline;
       } else {
         // Outermost bead centerline circle doubles as the brim's base loop.
         const rOut = ringRadii[ringN - 1];
@@ -496,6 +523,13 @@
           '; legs: 3 @ 120deg (one left) width=' + legs.snappedW + ' pairs=' + legs.m +
             ' seatHeight=' + cfg.disc.legs.seatHeight + ' fillet=' + legs.fillet + ' tipCenter=' + legs.tipCenter.toFixed(2)
         );
+        const at2 = cfg.disc.attractor;
+        if (at2 && at2.enabled) {
+          lines.push(
+            '; bend spread: pos=' + at2.pos + 'mm from rim, R1=' + at2.r1 + ' R2=' + at2.r2 +
+              ' gap=' + at2.gap + 'x lw'
+          );
+        }
       }
       lines.push('; layerHeight=' + lh + ' lineWidth=' + cfg.lineWidth + ' tolerance=' + cfg.tolerance + 'mm');
     } else {

@@ -410,32 +410,118 @@
   // gap before the start. leg = null gives a plain (gapped) circle.
   // leg = { d: half-width of this hairpin, f: fillet radius, tipCenter:
   // distance of the concentric cap center from the origin, angles: [rad...] }.
+  //
+  // attr = null | { points: [{x,y}..], r1, r2, D } spreads the loop for the
+  // bend zone: within r1 of the nearest attractor every point is offset by D
+  // along the loop's outward normal, easing to zero (smoothstep) at r2.
+  // Applied per primitive so it can never self-intersect: ring arcs grow
+  // radially, leg sides shift sideways, tip caps grow, and concave fillets
+  // SHRINK toward their center, clamped there — a collapsed fillet becomes a
+  // sharp corner.
   function stoolLoop(o) {
     const pts = [];
     const tol = o.tol > 0 ? o.tol : 0.05;
+    const attr = o.attr && o.attr.D > 0 && o.attr.points && o.attr.points.length ? o.attr : null;
+    const FINE = 1.2; // mm resampling inside attractor windows
+
+    function push(x, y) {
+      const n = pts.length;
+      if (n && Math.abs(pts[n - 1].x - x) < 1e-9 && Math.abs(pts[n - 1].y - y) < 1e-9) return;
+      pts.push({ x: x, y: y });
+    }
+    function distA(x, y) {
+      let dm = Infinity;
+      for (let i = 0; i < attr.points.length; i++) {
+        const q = attr.points[i];
+        const dd = Math.hypot(x - q.x, y - q.y);
+        if (dd < dm) dm = dd;
+      }
+      return dm;
+    }
+    function kAt(x, y) {
+      const dd = distA(x, y);
+      if (dd <= attr.r1) return 1;
+      if (dd >= attr.r2) return 0;
+      const tt = (dd - attr.r1) / (attr.r2 - attr.r1);
+      return 1 - tt * tt * (3 - 2 * tt); // smoothstep ease-out
+    }
+    function near(x, y) {
+      return distA(x, y) < attr.r2 + FINE * 2;
+    }
+
     function arcSteps(radius, sweep) {
       let dth = 2 * Math.acos(Math.max(-1, 1 - tol / Math.max(radius, 1e-6)));
       if (!isFinite(dth) || dth <= 0) dth = 0.2;
       return Math.max(2, Math.ceil(Math.abs(sweep) / dth));
     }
+
+    // Main-circle arc; attractor displaces radially outward from the origin.
     function ringArc(a0, a1) {
       const n = arcSteps(o.r, a1 - a0);
+      if (!attr) {
+        for (let s = 1; s <= n; s++) {
+          const a = a0 + ((a1 - a0) * s) / n;
+          push(o.r * Math.cos(a), o.r * Math.sin(a));
+        }
+        return;
+      }
+      let prev = a0;
       for (let s = 1; s <= n; s++) {
         const a = a0 + ((a1 - a0) * s) / n;
-        pts.push({ x: o.r * Math.cos(a), y: o.r * Math.sin(a) });
+        const fine =
+          near(o.r * Math.cos(prev), o.r * Math.sin(prev)) || near(o.r * Math.cos(a), o.r * Math.sin(a));
+        const m = fine ? Math.max(1, Math.ceil((Math.abs(a - prev) * o.r) / FINE)) : 1;
+        for (let j = 1; j <= m; j++) {
+          const aa = prev + ((a - prev) * j) / m;
+          const bx = o.r * Math.cos(aa);
+          const by = o.r * Math.sin(aa);
+          const rr = o.r + attr.D * kAt(bx, by);
+          push(rr * Math.cos(aa), rr * Math.sin(aa));
+        }
+        prev = a;
       }
     }
-    function arcAround(cx0, cy0, radius, a0, a1) {
+
+    // Arc around an arbitrary center. dSign: +1 = attractor grows the radius
+    // (convex caps), -1 = shrinks it toward the center, clamped at 0 (concave
+    // fillets -> sharp corner), 0/undefined = never displaced.
+    function arcAround(cx0, cy0, radius, a0, a1, dSign) {
       if (radius <= 1e-9 || Math.abs(a1 - a0) < 1e-9) return;
       const n = arcSteps(radius, a1 - a0);
+      if (!attr || !dSign) {
+        for (let s = 1; s <= n; s++) {
+          const a = a0 + ((a1 - a0) * s) / n;
+          push(cx0 + radius * Math.cos(a), cy0 + radius * Math.sin(a));
+        }
+        return;
+      }
+      let prev = a0;
       for (let s = 1; s <= n; s++) {
         const a = a0 + ((a1 - a0) * s) / n;
-        pts.push({ x: cx0 + radius * Math.cos(a), y: cy0 + radius * Math.sin(a) });
+        const fine =
+          near(cx0 + radius * Math.cos(prev), cy0 + radius * Math.sin(prev)) ||
+          near(cx0 + radius * Math.cos(a), cy0 + radius * Math.sin(a));
+        const m = fine ? Math.max(1, Math.ceil((Math.abs(a - prev) * radius) / FINE)) : 1;
+        for (let j = 1; j <= m; j++) {
+          const aa = prev + ((a - prev) * j) / m;
+          const bx = cx0 + radius * Math.cos(aa);
+          const by = cy0 + radius * Math.sin(aa);
+          const rr = Math.max(0, radius + dSign * attr.D * kAt(bx, by));
+          push(cx0 + rr * Math.cos(aa), cy0 + rr * Math.sin(aa));
+        }
+        prev = a;
       }
     }
 
     const aEndTotal = o.aStart + 2 * Math.PI - (o.gapAng || 0);
-    pts.push({ x: o.r * Math.cos(o.aStart), y: o.r * Math.sin(o.aStart) });
+    if (attr) {
+      const sx = o.r * Math.cos(o.aStart);
+      const sy = o.r * Math.sin(o.aStart);
+      const rr0 = o.r + attr.D * kAt(sx, sy);
+      push(rr0 * Math.cos(o.aStart), rr0 * Math.sin(o.aStart));
+    } else {
+      pts.push({ x: o.r * Math.cos(o.aStart), y: o.r * Math.sin(o.aStart) });
+    }
 
     if (!o.leg) {
       ringArc(o.aStart, aEndTotal);
@@ -465,22 +551,109 @@
       const v = { x: -u.y, y: u.x };
       const L = (tu, sv) => ({ x: u.x * tu + v.x * sv, y: u.y * tu + v.y * sv });
 
-      // Ring arc up to the entry tangent point (angle p - beta).
-      ringArc(cur, p - beta);
-      // Entry fillet: center at (t, -(d+f)) in leg coords, swept clockwise.
+      // Straight leg side from L(tFrom, sOff) (already emitted) to L(tTo, sOff);
+      // attractor shifts it sideways (away from the spine) with fine sampling
+      // only inside the affected windows.
+      function legLine(tFrom, tTo, sOff) {
+        if (!attr) {
+          const e = L(tTo, sOff);
+          push(e.x, e.y);
+          return;
+        }
+        const sgn = sOff >= 0 ? 1 : -1;
+        const emitT = (tt) => {
+          const b = L(tt, sOff);
+          const k = kAt(b.x, b.y);
+          push(b.x + sgn * v.x * attr.D * k, b.y + sgn * v.y * attr.D * k);
+        };
+        let lo = Infinity;
+        let hi = -Infinity;
+        for (let i = 0; i < attr.points.length; i++) {
+          const q = attr.points[i];
+          const tq = q.x * u.x + q.y * u.y;
+          const sq = q.x * v.x + q.y * v.y;
+          const perp = Math.abs(sq - sOff);
+          const RR = attr.r2 + FINE;
+          if (perp < RR) {
+            const half = Math.sqrt(RR * RR - perp * perp);
+            if (tq - half < lo) lo = tq - half;
+            if (tq + half > hi) hi = tq + half;
+          }
+        }
+        lo = Math.max(lo, Math.min(tFrom, tTo));
+        hi = Math.min(hi, Math.max(tFrom, tTo));
+        if (lo < hi) {
+          const dir = tTo >= tFrom ? 1 : -1;
+          const tA = dir > 0 ? lo : hi;
+          const tB = dir > 0 ? hi : lo;
+          if ((tA - tFrom) * dir > 1e-9) emitT(tA);
+          const m = Math.max(1, Math.ceil(Math.abs(tB - tA) / FINE));
+          for (let j = 1; j <= m; j++) emitT(tA + ((tB - tA) * j) / m);
+          if ((tTo - tB) * dir > 1e-9) emitT(tTo);
+        } else {
+          emitT(tTo);
+        }
+      }
+
+      // A fillet "collapses" when the attractor displacement reaches its
+      // radius. The pointwise-shrunk arc would then notch back through its own
+      // center, so instead we emit the TRUE offset corner: the intersection of
+      // the displaced ring circle (r + Dk) and the displaced leg line (d + Dk)
+      // — the tight-corner case. Returns null while the fillet survives.
+      function filletCorner(F, aA, aB, sSign) {
+        if (!attr) return null;
+        const pB = L(t, sSign * d); // line-side tangent point (base)
+        const Dk = attr.D * kAt(pB.x, pB.y);
+        if (f > 1e-9) {
+          const m = Math.max(6, Math.ceil((Math.abs(aB - aA) * f) / FINE));
+          let rMin = Infinity;
+          for (let s = 0; s <= m; s++) {
+            const aa = aA + ((aB - aA) * s) / m;
+            const rr = f - attr.D * kAt(F.x + f * Math.cos(aa), F.y + f * Math.sin(aa));
+            if (rr < rMin) rMin = rr;
+          }
+          if (rMin > 0.02) return null;
+        } else if (Dk <= 1e-9) {
+          return null; // sharp and undisplaced: nothing to add
+        }
+        const RR = o.r + Dk;
+        const dd2 = d + Dk;
+        const tc = Math.sqrt(Math.max(0, RR * RR - dd2 * dd2));
+        const c = L(tc, sSign * dd2);
+        // betaC: the displaced junction's angular half-extent — wider than the
+        // original beta, so the ring arc must stop/resume there instead.
+        return { tc: tc, x: c.x, y: c.y, betaC: Math.atan2(dd2, tc) };
+      }
+
+      // Compute both junction corners first: a collapsed fillet widens the
+      // angular footprint of the junction, and the ring arcs must honor that.
       const F1 = L(t, -(d + f));
       const a1 = Math.atan2(-F1.y, -F1.x);
-      arcAround(F1.x, F1.y, f, a1, a1 - turn);
-      // Straight side out to the cap start.
-      pts.push(L(tipCenter, -d));
-      // Tip cap: half-turn around the concentric tip center.
-      arcAround(u.x * tipCenter, u.y * tipCenter, d, p - Math.PI / 2, p + Math.PI / 2);
-      // Straight side back in.
-      pts.push(L(t, d));
-      // Exit fillet (mirror), also swept clockwise back onto the ring.
+      const c1 = filletCorner(F1, a1, a1 - turn, -1);
       const F2 = L(t, d + f);
-      arcAround(F2.x, F2.y, f, p - Math.PI / 2, p - Math.PI / 2 - turn);
-      cur = p + beta;
+      const c2 = filletCorner(F2, p - Math.PI / 2, p - Math.PI / 2 - turn, 1);
+
+      // Ring arc up to the (possibly displaced) entry junction.
+      ringArc(cur, p - (c1 ? c1.betaC : beta));
+      // Entry fillet: concave — shrinks toward its center, or the tight corner.
+      if (c1) {
+        push(c1.x, c1.y);
+        legLine(c1.tc, tipCenter, -d);
+      } else {
+        arcAround(F1.x, F1.y, f, a1, a1 - turn, -1);
+        legLine(t, tipCenter, -d);
+      }
+      // Tip cap: half-turn around the concentric tip center (convex: grows).
+      arcAround(u.x * tipCenter, u.y * tipCenter, d, p - Math.PI / 2, p + Math.PI / 2, 1);
+      // Straight side back in, then the exit fillet (mirror).
+      if (c2) {
+        legLine(tipCenter, c2.tc, d);
+        push(c2.x, c2.y);
+      } else {
+        legLine(tipCenter, t, d);
+        arcAround(F2.x, F2.y, f, p - Math.PI / 2, p - Math.PI / 2 - turn, -1);
+      }
+      cur = p + (c2 ? c2.betaC : beta);
     }
     ringArc(cur, aEndTotal);
     return pts;

@@ -19,7 +19,14 @@ keep **fully independent settings** per project:
   measured rim edge → tip edge (cap arcs included). The seam is anchored at 0°
   (between the two right legs) on the outermost ring; inner rings absorb the
   staircase drift. The brim follows the full outline including legs. Supports
-  stacked layers.
+  stacked layers. Optional **bend-zone spread** (attractor points): one point per
+  leg on the center→tip line (position in mm from the rim), with a full-effect
+  radius R1 and a smoothstep falloff to R2. Inside R1 every legged loop is locally
+  offset outward so line spacing becomes `lw + gap·lw` (hairpin q from the spine
+  moves (2q+1)/2·gap·lw); seat-only rings never move. Applied per primitive during
+  construction, so it cannot self-intersect — fillets shrink toward their centers
+  and, when the displacement exceeds them, become the exact offset corner (the
+  tight-corner case). The reheat-and-bend zone softens exactly there.
 
 The coat hanger is a dead-simple, phone-first tool to generate **vase-mode G-code** for
 **Klipper pellet 3D printing** (or the Bambu P1P in filament mode). Pick a cross-section
