@@ -243,10 +243,18 @@
       </section>
 
       <section class="card" data-project="bendstool" hidden>
-        <h2>Seat disc</h2>
+        <h2>
+          Seat &amp; legs
+          <label class="toggle"><input type="checkbox" id="bs_legsEnabled" /> legs</label>
+        </h2>
         <div class="grid">
           <div class="field"><label>Diameter (mm)</label><input type="number" id="bs_diameter" value="100" min="1" step="1" /></div>
           <div class="field"><label>Layers</label><input type="number" id="bs_layers" value="1" min="1" step="1" /></div>
+        </div>
+        <div id="bs_legFields" class="grid" hidden>
+          <div class="field"><label>Seat height (mm)</label><input type="number" id="bs_seatHeight" value="200" min="1" step="5" /></div>
+          <div class="field"><label>Leg width (mm)</label><input type="number" id="bs_legWidth" value="40" min="1" step="1" /></div>
+          <div class="field"><label>Leg fillet (mm)</label><input type="number" id="bs_legFillet" value="8" min="0" step="1" /></div>
         </div>
         <p class="hint" id="bs_discHint"></p>
         <canvas id="previewBS" width="600" height="600"></canvas>
@@ -288,7 +296,7 @@
       <section class="card">
         <h2>3D preview</h2>
         <canvas id="preview3d" width="600" height="600"></canvas>
-        <p class="hint">Drag to rotate · updates when you regenerate</p>
+        <p class="hint">Drag to rotate · pinch to zoom · two-finger pan · double-tap resets</p>
         <p class="hint"><span class="legend"></span> feedrate: blue = fast → red = slow</p>
       </section>
 

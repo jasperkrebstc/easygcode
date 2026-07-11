@@ -69,6 +69,12 @@
         disc: {
           diameter: num('bs_diameter'),
           layers: Math.max(1, Math.round(num('bs_layers'))),
+          legs: {
+            enabled: $('bs_legsEnabled').checked,
+            seatHeight: num('bs_seatHeight'),
+            width: num('bs_legWidth'),
+            fillet: num('bs_legFillet'),
+          },
         },
         brim: readBrim('bs_'),
       };
@@ -172,6 +178,12 @@
       if (!Number.isFinite(cfg.centerX) || !Number.isFinite(cfg.centerY))
         return 'Enter valid bed center X/Y.';
       if (cfg.disc.layers < 1) return 'Disc needs at least 1 layer.';
+      if (cfg.disc.legs.enabled) {
+        if (!isPos(cfg.disc.legs.seatHeight)) return 'Enter a valid seat height.';
+        if (!isPos(cfg.disc.legs.width)) return 'Enter a valid leg width.';
+        if (!Number.isFinite(cfg.disc.legs.fillet) || cfg.disc.legs.fillet < 0)
+          return 'Enter a valid leg fillet (0 or more).';
+      }
       return validatePrinter(cfg) || validateBrim(cfg.brim);
     }
 
@@ -247,13 +259,6 @@
     });
     $('tabCordhanger').classList.toggle('active', p === 'cordhanger');
     $('tabBendstool').classList.toggle('active', p === 'bendstool');
-  }
-
-  // Disc math shared with the generator: ring count snaps the diameter to a
-  // multiple of 2*lineWidth (ties round UP per the "one line more" rule).
-  function discRings(diameter, lw) {
-    const n = Math.max(1, Math.round(diameter / (2 * lw)));
-    return { n: n, snapped: 2 * n * lw };
   }
 
   function showPatternParams(type) {
@@ -363,7 +368,7 @@
     ctx.stroke();
   }
 
-  // Bend stool: concentric rings + the staircase seam (connector chain).
+  // Bend stool: rings (+ legs) with the staircase seam, via the shared spec.
   function drawPreviewBS(cfg) {
     const canvas = $('previewBS');
     const ctx = canvas.getContext('2d');
@@ -377,95 +382,202 @@
       $('bs_discHint').textContent = 'Enter a valid diameter and line width.';
       return;
     }
-    const { n, snapped } = discRings(cfg.disc.diameter, lw);
-    $('bs_discHint').textContent =
-      'Snapped to Ø' + snapped + ' mm · ' + n + ' ring' + (n > 1 ? 's' : '') +
-      ' of ' + lw + ' mm' + (Math.abs(snapped - cfg.disc.diameter) > 1e-9 ? ' (from Ø' + cfg.disc.diameter + ')' : '');
+    const spec = window.GcodeGen.discSpec(cfg);
+    const n = spec.ringN;
+    const legs = spec.legs;
+    let hint =
+      'Snapped to Ø' + spec.snappedD + ' mm · ' + n + ' ring' + (n > 1 ? 's' : '') + ' of ' + lw + ' mm';
+    if (legs) hint += ' · legs ' + legs.snappedW + ' mm wide (' + legs.m + ' pair' + (legs.m > 1 ? 's' : '') + ')';
+    if (cfg.disc.legs && cfg.disc.legs.enabled && !legs) hint += ' · ' + (spec.warnings[spec.warnings.length - 1] || 'legs invalid');
+    $('bs_discHint').textContent = hint;
 
-    let maxR = snapped / 2;
-    if (cfg.brim.enabled && cfg.brim.lines > 0 && isPos(cfg.brim.lineWidth) && cfg.brim.outer) {
-      maxR += cfg.brim.lineWidth / 2 + lw / 2 + (cfg.brim.lines - 1) * cfg.brim.lineWidth + cfg.brim.lineWidth / 2;
+    let maxR = spec.snappedD / 2;
+    if (legs) maxR = n * lw + cfg.disc.legs.seatHeight;
+    let brimExtent = 0;
+    if (cfg.brim.enabled && cfg.brim.outer && cfg.brim.lines > 0 && isPos(cfg.brim.lineWidth)) {
+      brimExtent = cfg.brim.lineWidth / 2 + lw / 2 + (cfg.brim.lines - 1) * cfg.brim.lineWidth + cfg.brim.lineWidth / 2;
     }
-    const pad = 30 * sf;
+    maxR += brimExtent;
+    const pad = 20 * sf;
     const scale = (Math.min(W, H) / 2 - pad) / (maxR || 1);
     const cxp = W / 2;
     const cyp = H / 2;
+    const tol = isPos(cfg.tolerance) ? cfg.tolerance : 0.05;
 
-    // Brim rings (dashed; outer only — an inner brim would sit inside the solid disc)
-    if (cfg.brim.enabled && cfg.brim.outer && cfg.brim.lines > 0 && isPos(cfg.brim.lineWidth)) {
-      const rOuter = snapped / 2 - lw / 2;
+    function strokePoly(pts, close) {
+      ctx.beginPath();
+      pts.forEach((p, i) => {
+        const X = cxp + p.x * scale;
+        const Y = cyp - p.y * scale;
+        if (i === 0) ctx.moveTo(X, Y);
+        else ctx.lineTo(X, Y);
+      });
+      if (close) ctx.closePath();
+      ctx.stroke();
+    }
+
+    function legFor(i) {
+      if (!legs || i < n - legs.m) return null;
+      const h = n - 1 - i;
+      return {
+        d: (legs.m - h) * lw - lw / 2,
+        f: legs.fillet + h * lw,
+        tipCenter: legs.tipCenter,
+        angles: window.GcodeGen.LEG_ANGLES,
+      };
+    }
+
+    // Brim (dashed): offsets of the outermost outline (with legs if enabled).
+    if (brimExtent > 0) {
+      let outline = window.Geo.stoolLoop({
+        r: spec.radii[n - 1], tol: tol, aStart: 0, gapAng: 0, leg: legFor(n - 1),
+      });
+      if (outline.length > 1 && window.Geo.dist(outline[0], outline[outline.length - 1]) < 1e-6) outline.pop();
       ctx.setLineDash([5 * sf, 4 * sf]);
       ctx.strokeStyle = '#2bd9a0';
       ctx.lineWidth = 1.2 * sf;
       for (let k = 1; k <= cfg.brim.lines; k++) {
-        const r = rOuter + cfg.brim.lineWidth / 2 + lw / 2 + (k - 1) * cfg.brim.lineWidth;
-        ctx.beginPath();
-        ctx.arc(cxp, cyp, r * scale, 0, 2 * Math.PI);
-        ctx.stroke();
+        const d = cfg.brim.lineWidth / 2 + lw / 2 + (k - 1) * cfg.brim.lineWidth;
+        strokePoly(window.Geo.offsetClosed(outline, d), true);
       }
       ctx.setLineDash([]);
     }
 
-    // Rings (inner -> outer) and the staircase seam connectors.
-    ctx.strokeStyle = '#4f9dff';
+    // Rings (+ legs) with staircase gaps; connectors in orange. When legs are
+    // on, the seam is anchored at 0 deg on the OUTERMOST ring (matching the
+    // generator); inner rings absorb the drift.
+    const starts = new Array(n);
+    if (legs) {
+      starts[n - 1] = 0;
+      for (let i = n - 2; i >= 0; i--) starts[i] = starts[i + 1] + lw / spec.radii[i];
+    } else {
+      starts[0] = Math.PI / 2;
+      for (let i = 1; i < n; i++) starts[i] = starts[i - 1] - lw / spec.radii[i - 1];
+    }
+    let prevEnd = null;
     ctx.lineWidth = 1.8 * sf;
-    let a = Math.PI / 2;
     for (let i = 0; i < n; i++) {
-      const r = lw / 2 + i * lw;
-      const gap = lw / r; // stop one line width before the ring start
-      ctx.beginPath();
-      // canvas Y is flipped; drawing CCW in printer space = CW on screen
-      ctx.arc(cxp, cyp, r * scale, -a, -(a + 2 * Math.PI - gap), true);
-      ctx.stroke();
-      const aEnd = a + 2 * Math.PI - gap;
-      if (i < n - 1) {
-        const r2 = r + lw;
+      const r = spec.radii[i];
+      const gapAng = lw / r;
+      const pts = window.Geo.stoolLoop({ r: r, tol: tol, aStart: starts[i], gapAng: gapAng, leg: legFor(i) });
+      if (prevEnd) {
         ctx.strokeStyle = '#ffb454';
         ctx.beginPath();
-        ctx.moveTo(cxp + r * scale * Math.cos(-aEnd), cyp + r * scale * Math.sin(-aEnd));
-        ctx.lineTo(cxp + r2 * scale * Math.cos(-aEnd), cyp + r2 * scale * Math.sin(-aEnd));
+        ctx.moveTo(cxp + prevEnd.x * scale, cyp - prevEnd.y * scale);
+        ctx.lineTo(cxp + pts[0].x * scale, cyp - pts[0].y * scale);
         ctx.stroke();
-        ctx.strokeStyle = '#4f9dff';
       }
-      a = aEnd;
+      ctx.strokeStyle = '#4f9dff';
+      strokePoly(pts, false);
+      prevEnd = pts[pts.length - 1];
     }
   }
 
-  // --- 3D toolpath viewer: orbit by drag, fixed zoom, Z-up, colored by feed ---
+  // --- 3D toolpath viewer ---
+  // One finger: orbit. Two fingers: pinch to zoom + pan. Double-tap: reset
+  // zoom/pan. Mouse wheel zooms too. The camera fit is computed once per
+  // regenerate (bounding radius), then stays constant while orbiting.
   const View3D = (function () {
     let canvas, ctx;
     let pts = [];
     let az = -0.6;
     let el = 0.5; // 0 = side view, PI/2 = top view
-    let dragging = false;
-    let lastX = 0, lastY = 0;
     let center = { x: 0, y: 0, z: 0 };
     let radius = 1; // bounding radius; zoom-to-fit is derived from it per render
     let feedMin = 0, feedMax = 1;
     const NB = 18; // color buckets for batched stroking
 
+    let userZoom = 1;
+    let panX = 0, panY = 0; // in canvas pixels
+    const pointers = new Map();
+    let lastX = 0, lastY = 0; // single-pointer orbit
+    let pinch = null; // { dist, zoom, cx, cy, panX, panY }
+    let lastTap = { t: 0, x: 0, y: 0 };
+
+    function cssToCanvas(e) {
+      const r = canvas.getBoundingClientRect();
+      const k = canvas.width / (r.width || 1);
+      return { x: (e.clientX - r.left) * k, y: (e.clientY - r.top) * k };
+    }
+
     function init() {
       canvas = $('preview3d');
       ctx = canvas.getContext('2d');
+
       canvas.addEventListener('pointerdown', (e) => {
-        dragging = true;
-        lastX = e.clientX;
-        lastY = e.clientY;
         canvas.setPointerCapture(e.pointerId);
+        pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        if (pointers.size === 1) {
+          lastX = e.clientX;
+          lastY = e.clientY;
+          // double-tap reset
+          const now = Date.now();
+          if (now - lastTap.t < 300 && Math.hypot(e.clientX - lastTap.x, e.clientY - lastTap.y) < 30) {
+            userZoom = 1;
+            panX = 0;
+            panY = 0;
+            render();
+          }
+          lastTap = { t: now, x: e.clientX, y: e.clientY };
+        } else if (pointers.size === 2) {
+          const [a, b] = [...pointers.values()];
+          pinch = {
+            dist: Math.hypot(b.x - a.x, b.y - a.y) || 1,
+            zoom: userZoom,
+            cx: (a.x + b.x) / 2,
+            cy: (a.y + b.y) / 2,
+            panX: panX,
+            panY: panY,
+          };
+        }
       });
+
       canvas.addEventListener('pointermove', (e) => {
-        if (!dragging) return;
-        az += (e.clientX - lastX) * 0.01;
-        el += (e.clientY - lastY) * 0.01;
-        el = Math.max(0, Math.min(Math.PI / 2, el));
-        lastX = e.clientX;
-        lastY = e.clientY;
-        e.preventDefault();
-        render();
+        if (!pointers.has(e.pointerId)) return;
+        pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        if (pointers.size === 2 && pinch) {
+          const [a, b] = [...pointers.values()];
+          const dist = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+          userZoom = Math.max(0.2, Math.min(40, (pinch.zoom * dist) / pinch.dist));
+          const cx = (a.x + b.x) / 2;
+          const cy = (a.y + b.y) / 2;
+          const k = canvas.width / (canvas.getBoundingClientRect().width || 1);
+          panX = pinch.panX + (cx - pinch.cx) * k;
+          panY = pinch.panY + (cy - pinch.cy) * k;
+          e.preventDefault();
+          render();
+        } else if (pointers.size === 1) {
+          az += (e.clientX - lastX) * 0.01;
+          el += (e.clientY - lastY) * 0.01;
+          el = Math.max(0, Math.min(Math.PI / 2, el));
+          lastX = e.clientX;
+          lastY = e.clientY;
+          e.preventDefault();
+          render();
+        }
       });
-      const stop = () => (dragging = false);
-      canvas.addEventListener('pointerup', stop);
-      canvas.addEventListener('pointercancel', stop);
+
+      const drop = (e) => {
+        pointers.delete(e.pointerId);
+        if (pointers.size < 2) pinch = null;
+        if (pointers.size === 1) {
+          const p = [...pointers.values()][0];
+          lastX = p.x;
+          lastY = p.y;
+        }
+      };
+      canvas.addEventListener('pointerup', drop);
+      canvas.addEventListener('pointercancel', drop);
+
+      canvas.addEventListener(
+        'wheel',
+        (e) => {
+          e.preventDefault();
+          userZoom = Math.max(0.2, Math.min(40, userZoom * Math.exp(-e.deltaY * 0.0015)));
+          render();
+        },
+        { passive: false }
+      );
     }
 
     function setPath(path) {
@@ -497,7 +609,7 @@
       render();
     }
 
-    // Z-up orthographic projection at a fixed zoom-to-fit scale.
+    // Z-up orthographic projection. Fit scale × user zoom, plus user pan.
     function project(p, scale) {
       const X = p.x - center.x, Y = p.y - center.y, Z = p.z - center.z;
       const ca = Math.cos(az), sa = Math.sin(az);
@@ -506,7 +618,10 @@
       const ce = Math.cos(el), se = Math.sin(el);
       const sxp = x1;
       const syp = Z * ce - y1 * se; // +Z up; tilt mixes in depth
-      return { x: canvas.width / 2 + sxp * scale, y: canvas.height / 2 - syp * scale };
+      return {
+        x: canvas.width / 2 + panX + sxp * scale,
+        y: canvas.height / 2 + panY - syp * scale,
+      };
     }
 
     // Blue (fast) -> red (slow). bucket 0 = fastest.
@@ -528,7 +643,7 @@
       const sf = W / 600;
       ctx.clearRect(0, 0, W, H);
       if (pts.length < 2) return;
-      const scale = (Math.min(W, H) / 2 - 18 * sf) / (radius || 1);
+      const scale = ((Math.min(W, H) / 2 - 18 * sf) / (radius || 1)) * userZoom;
       const proj = pts.map((p) => project(p, scale));
 
       // Travels first, faint.
@@ -725,6 +840,7 @@
     $('patternFields').hidden = !$('patternEnabled').checked;
     $('hangFields').hidden = !$('hangEnabled').checked;
     $('bs_brimFields').hidden = !$('bs_brimEnabled').checked;
+    $('bs_legFields').hidden = !$('bs_legsEnabled').checked;
     showProject(activeProject());
   }
 
@@ -863,6 +979,11 @@
 
   $('bs_brimEnabled').addEventListener('change', () => {
     $('bs_brimFields').hidden = !$('bs_brimEnabled').checked;
+    updateShapeUI();
+  });
+
+  $('bs_legsEnabled').addEventListener('change', () => {
+    $('bs_legFields').hidden = !$('bs_legsEnabled').checked;
     updateShapeUI();
   });
 

@@ -173,6 +173,62 @@
     ];
   }
 
+  // Angles of the three legs: one pointing left, two right (Mercedes rotated),
+  // so the seam at 0 deg (right) sits in the gap between the two right legs.
+  const LEG_ANGLES = [Math.PI, Math.PI / 3, -Math.PI / 3];
+
+  // Shared disc + legs parameter derivation (used by the generator and the 2D
+  // preview). Returns ring layout, snapped values, and leg spec or null.
+  function discSpec(cfg) {
+    const warnings = [];
+    const lw = cfg.lineWidth;
+    const ringN = Math.max(1, Math.round(cfg.disc.diameter / (2 * lw)));
+    const snappedD = 2 * ringN * lw;
+    if (Math.abs(snappedD - cfg.disc.diameter) > 1e-9) {
+      warnings.push(
+        'Disc diameter snapped to ' + snappedD + ' mm (' + ringN + ' rings; valid sizes step by ' +
+          2 * lw + ' mm with ' + lw + ' mm lines).'
+      );
+    }
+    const radii = [];
+    for (let i = 0; i < ringN; i++) radii.push(lw / 2 + i * lw);
+
+    let legs = null;
+    const lc = cfg.disc.legs;
+    if (lc && lc.enabled) {
+      let m = Math.max(1, Math.round(lc.width / (2 * lw)));
+      const snappedW = 2 * m * lw;
+      if (Math.abs(snappedW - lc.width) > 1e-9) {
+        warnings.push('Leg width snapped to ' + snappedW + ' mm (' + m + ' hairpin pair' + (m > 1 ? 's' : '') + ').');
+      }
+      if (m > ringN - 1) {
+        m = Math.max(1, ringN - 1);
+        warnings.push('Leg width clamped to ' + 2 * m * lw + ' mm — at least one plain center ring must remain.');
+      }
+      const fillet = Math.max(0, lc.fillet || 0);
+      const rimR = ringN * lw; // outer bead edge of the seat
+      // Concentric tip caps: outer plastic tip = tipCenter + m*lw. Seat height
+      // is measured rim edge -> tip edge, so:
+      const tipCenter = rimR + lc.seatHeight - m * lw;
+      // The straight side must have positive length on the outermost curve.
+      const R0 = radii[ringN - 1];
+      const d0 = m * lw - lw / 2;
+      const f0 = fillet;
+      const t0 = Math.sqrt(Math.max(0, (R0 + f0) * (R0 + f0) - (d0 + f0) * (d0 + f0)));
+      const minSeat = Math.ceil(t0 - rimR + m * lw + lw);
+      if (tipCenter <= t0 + 1e-6) {
+        warnings.push('Seat height too small for these legs (need at least ~' + minSeat + ' mm) — legs disabled.');
+        legs = null;
+      } else if (Math.atan2(d0 + f0, t0) > Math.PI / 3 - 0.02) {
+        warnings.push('Leg width + fillet too large — junctions would collide (legs are 120° apart). Legs disabled.');
+        legs = null;
+      } else {
+        legs = { m: m, snappedW: 2 * m * lw, tipCenter: tipCenter, fillet: fillet };
+      }
+    }
+    return { lw: lw, ringN: ringN, snappedD: snappedD, radii: radii, legs: legs, warnings: warnings };
+  }
+
   function generate(cfg) {
     const warnings = [];
     const lines = [];
@@ -220,28 +276,70 @@
     // requested diameter snaps to the nearest (ties round UP = one line more).
     let ringN = 0;
     let snappedD = 0;
-    const ringRadii = [];
+    let ringRadii = [];
+    let legs = null;
+    let legLoops = null; // per-ring polylines when legs are on (same every layer)
     let discOuterLoop = null;
     if (isBS) {
+      const spec = discSpec(cfg);
+      spec.warnings.forEach((w) => warnings.push(w));
+      ringN = spec.ringN;
+      snappedD = spec.snappedD;
+      ringRadii = spec.radii;
+      legs = spec.legs;
       const lw = cfg.lineWidth;
-      ringN = Math.max(1, Math.round(cfg.disc.diameter / (2 * lw)));
-      snappedD = 2 * ringN * lw;
-      if (Math.abs(snappedD - cfg.disc.diameter) > 1e-9) {
-        warnings.push(
-          'Disc diameter snapped to ' + snappedD + ' mm (' + ringN + ' rings; valid sizes step by ' +
-            2 * lw + ' mm with ' + lw + ' mm lines).'
-        );
-      }
-      for (let i = 0; i < ringN; i++) ringRadii.push(lw / 2 + i * lw);
-      // Outermost bead centerline circle doubles as the brim's base loop.
-      const rOut = ringRadii[ringN - 1];
-      const tol0 = cfg.tolerance > 0 ? cfg.tolerance : 0.05;
-      const dth0 = 2 * Math.acos(Math.max(-1, 1 - tol0 / rOut));
-      const steps0 = Math.max(24, Math.ceil((2 * Math.PI) / (isFinite(dth0) && dth0 > 0 ? dth0 : 0.2)));
-      discOuterLoop = [];
-      for (let s = 0; s < steps0; s++) {
-        const ang = (2 * Math.PI * s) / steps0;
-        discOuterLoop.push({ x: rOut * Math.cos(ang), y: rOut * Math.sin(ang) });
+      const tolBS = cfg.tolerance > 0 ? cfg.tolerance : 0.05;
+      if (legs) {
+        // Precompute each ring's polyline once. The staircase drifts backward
+        // by lw/r per ring, so anchor the seam at 0 deg on the OUTERMOST ring
+        // (the gap between the two right legs) and let the inner plain rings
+        // absorb the drift: a_i = sum of gaps of rings i..ringN-2.
+        const starts = new Array(ringN);
+        starts[ringN - 1] = 0;
+        for (let i = ringN - 2; i >= 0; i--) {
+          starts[i] = starts[i + 1] + lw / ringRadii[i];
+        }
+        legLoops = [];
+        let bandDrift = 0;
+        for (let i = 0; i < ringN; i++) {
+          const r = ringRadii[i];
+          const gapAng = lw / r;
+          let leg = null;
+          if (i >= ringN - legs.m) {
+            const h = ringN - 1 - i; // 0 = outermost hairpin
+            leg = {
+              d: (legs.m - h) * lw - lw / 2,
+              f: legs.fillet + h * lw,
+              tipCenter: legs.tipCenter,
+              angles: LEG_ANGLES,
+            };
+            bandDrift = Math.max(bandDrift, Math.abs(starts[i]));
+          }
+          legLoops.push(Geo.stoolLoop({ r: r, tol: tolBS, aStart: starts[i], gapAng: gapAng, leg: leg }));
+        }
+        if (bandDrift > Math.PI / 6) {
+          warnings.push('Seam staircase drifts close to a leg junction within the legged rings.');
+        }
+        // Brim base: the outermost combined outline (closed, no seam gap).
+        const outline = Geo.stoolLoop({
+          r: ringRadii[ringN - 1],
+          tol: tolBS,
+          aStart: 0,
+          gapAng: 0,
+          leg: { d: legs.m * lw - lw / 2, f: legs.fillet, tipCenter: legs.tipCenter, angles: LEG_ANGLES },
+        });
+        if (outline.length > 1 && Geo.dist(outline[0], outline[outline.length - 1]) < 1e-6) outline.pop();
+        discOuterLoop = outline;
+      } else {
+        // Outermost bead centerline circle doubles as the brim's base loop.
+        const rOut = ringRadii[ringN - 1];
+        const dth0 = 2 * Math.acos(Math.max(-1, 1 - tolBS / rOut));
+        const steps0 = Math.max(24, Math.ceil((2 * Math.PI) / (isFinite(dth0) && dth0 > 0 ? dth0 : 0.2)));
+        discOuterLoop = [];
+        for (let s = 0; s < steps0; s++) {
+          const ang = (2 * Math.PI * s) / steps0;
+          discOuterLoop.push({ x: rOut * Math.cos(ang), y: rOut * Math.sin(ang) });
+        }
       }
     }
 
@@ -337,6 +435,12 @@
     lines.push('; ' + new Date().toISOString());
     if (isBS) {
       lines.push('; disc: requested=' + cfg.disc.diameter + ' snapped=' + snappedD + ' rings=' + ringN + ' layers=' + T);
+      if (legs) {
+        lines.push(
+          '; legs: 3 @ 120deg (one left) width=' + legs.snappedW + ' pairs=' + legs.m +
+            ' seatHeight=' + cfg.disc.legs.seatHeight + ' fillet=' + legs.fillet + ' tipCenter=' + legs.tipCenter.toFixed(2)
+        );
+      }
       lines.push('; layerHeight=' + lh + ' lineWidth=' + cfg.lineWidth + ' tolerance=' + cfg.tolerance + 'mm');
     } else {
       lines.push('; shape=' + cfg.shape + ' tolerance=' + cfg.tolerance + 'mm seam=' + (cfg.seamSide || 'back'));
@@ -683,37 +787,58 @@
       // Each ring is traced CCW and stops one line width of arc before its own
       // start; a radial connector steps out to the next ring there, so the seam
       // shifts backward by lw/r radians per ring (a staircase drifting CW).
-      lines.push('; --- bend stool disc: ' + ringN + ' rings, ' + T + ' layer(s), D=' + snappedD + ' ---');
+      lines.push(
+        '; --- bend stool disc: ' + ringN + ' rings, ' + T + ' layer(s), D=' + snappedD +
+          (legs ? ', 3 legs' : '') + ' ---'
+      );
       const lw = cfg.lineWidth;
       const tol = cfg.tolerance > 0 ? cfg.tolerance : 0.05;
-      const a0 = Math.PI / 2;
-      for (let k = 0; k < T; k++) {
-        const z = (k + 1) * lh;
-        if (k === 1 && includeStartEnd && fanPWM > 0) {
-          lines.push('M106 S' + fanPWM + ' ; part cooling fan on after first layer');
+      if (legs) {
+        // Chained precomputed loops: each loop starts at the previous loop's
+        // end angle, so the first point of loop i+1 IS the radial connector.
+        for (let k = 0; k < T; k++) {
+          const z = (k + 1) * lh;
+          if (k === 1 && includeStartEnd && fanPWM > 0) {
+            lines.push('M106 S' + fanPWM + ' ; part cooling fan on after first layer');
+          }
+          travelAbs({ x: cx + legLoops[0][0].x, y: cy + legLoops[0][0].y, z: z });
+          for (let i = 0; i < ringN; i++) {
+            const lp = legLoops[i];
+            for (let q = i === 0 ? 1 : 0; q < lp.length; q++) {
+              emitSeg({ x: cx + lp[q].x, y: cy + lp[q].y, z: z }, cfg.printFeed, 1);
+            }
+          }
         }
-        let a = a0;
-        travelAbs({ x: cx + ringRadii[0] * Math.cos(a), y: cy + ringRadii[0] * Math.sin(a), z: z });
-        for (let i = 0; i < ringN; i++) {
-          const r = ringRadii[i];
-          const sweep = 2 * Math.PI - lw / r; // stop one line width short of the start
-          let dth = 2 * Math.acos(Math.max(-1, 1 - tol / r));
-          if (!isFinite(dth) || dth <= 0) dth = 0.2;
-          const steps = Math.max(12, Math.ceil(sweep / dth));
-          for (let s = 1; s <= steps; s++) {
-            const ang = a + (sweep * s) / steps;
-            emitSeg({ x: cx + r * Math.cos(ang), y: cy + r * Math.sin(ang), z: z }, cfg.printFeed, 1);
+      } else {
+        const a0 = Math.PI / 2;
+        for (let k = 0; k < T; k++) {
+          const z = (k + 1) * lh;
+          if (k === 1 && includeStartEnd && fanPWM > 0) {
+            lines.push('M106 S' + fanPWM + ' ; part cooling fan on after first layer');
           }
-          const aEnd = (a + sweep) % (2 * Math.PI);
-          if (i < ringN - 1) {
-            // radial connector out to the next ring (extruded, length = lw)
-            emitSeg(
-              { x: cx + ringRadii[i + 1] * Math.cos(aEnd), y: cy + ringRadii[i + 1] * Math.sin(aEnd), z: z },
-              cfg.printFeed,
-              1
-            );
+          let a = a0;
+          travelAbs({ x: cx + ringRadii[0] * Math.cos(a), y: cy + ringRadii[0] * Math.sin(a), z: z });
+          for (let i = 0; i < ringN; i++) {
+            const r = ringRadii[i];
+            const sweep = 2 * Math.PI - lw / r; // stop one line width short of the start
+            let dth = 2 * Math.acos(Math.max(-1, 1 - tol / r));
+            if (!isFinite(dth) || dth <= 0) dth = 0.2;
+            const steps = Math.max(12, Math.ceil(sweep / dth));
+            for (let s = 1; s <= steps; s++) {
+              const ang = a + (sweep * s) / steps;
+              emitSeg({ x: cx + r * Math.cos(ang), y: cy + r * Math.sin(ang), z: z }, cfg.printFeed, 1);
+            }
+            const aEnd = (a + sweep) % (2 * Math.PI);
+            if (i < ringN - 1) {
+              // radial connector out to the next ring (extruded, length = lw)
+              emitSeg(
+                { x: cx + ringRadii[i + 1] * Math.cos(aEnd), y: cy + ringRadii[i + 1] * Math.sin(aEnd), z: z },
+                cfg.printFeed,
+                1
+              );
+            }
+            a = aEnd;
           }
-          a = aEnd;
         }
       }
     }
@@ -733,5 +858,5 @@
     return { gcode: lines.join('\n') + '\n', warnings, stats, path };
   }
 
-  window.GcodeGen = { generate, beadArea };
+  window.GcodeGen = { generate, beadArea, discSpec, LEG_ANGLES };
 })();
