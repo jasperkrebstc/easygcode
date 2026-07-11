@@ -250,6 +250,13 @@
         <div class="grid">
           <div class="field"><label>Diameter (mm)</label><input type="number" id="bs_diameter" value="100" min="1" step="1" /></div>
           <div class="field"><label>Layers</label><input type="number" id="bs_layers" value="1" min="1" step="1" /></div>
+          <div class="field">
+            <label>Seam style</label>
+            <select id="bs_seamStyle">
+              <option value="staircase">Staircase (shifting)</option>
+              <option value="alternating">Zipper (fixed, alternating)</option>
+            </select>
+          </div>
         </div>
         <div id="bs_legFields" class="grid" hidden>
           <div class="field"><label>Seat height (mm)</label><input type="number" id="bs_seatHeight" value="200" min="1" step="5" /></div>
