@@ -229,6 +229,78 @@
     return { lw: lw, ringN: ringN, snappedD: snappedD, radii: radii, legs: legs, warnings: warnings };
   }
 
+  // Build the per-ring polylines for a bend-stool disc in the chosen seam
+  // style. Returns loops ordered inner->outer; each loop starts where the
+  // previous one ends (angle-wise), so the segment between them is the radial
+  // connector.
+  // - 'staircase': all rings CCW; each stops one line width before its start,
+  //   so the seam drifts by lw/r per ring (anchored at the outermost ring
+  //   when legs are on).
+  // - 'alternating': every other ring flips direction; each ring turns around
+  //   half a line width before the seam line, so the seam never moves (a
+  //   fixed "zipper" with hard U-turns at the connectors).
+  function discLoops(cfg, specIn) {
+    const spec = specIn || discSpec(cfg);
+    const lw = cfg.lineWidth;
+    const tol = cfg.tolerance > 0 ? cfg.tolerance : 0.05;
+    const n = spec.ringN;
+    const legs = spec.legs;
+    const alt = cfg.disc.seamStyle === 'alternating';
+    const s0 = legs ? 0 : Math.PI / 2; // seam anchor angle
+
+    function legFor(i) {
+      if (!legs || i < n - legs.m) return null;
+      const h = n - 1 - i;
+      return {
+        d: (legs.m - h) * lw - lw / 2,
+        f: legs.fillet + h * lw,
+        tipCenter: legs.tipCenter,
+        angles: LEG_ANGLES,
+      };
+    }
+
+    const loops = [];
+    if (alt) {
+      let pPrev = 0;
+      for (let i = 0; i < n; i++) {
+        const del = lw / 2 / spec.radii[i]; // turn around half a line width early
+        const pIn = i === 0 ? del : pPrev;
+        const cw = i % 2 === 1;
+        const pts = Geo.stoolLoop({
+          r: spec.radii[i],
+          tol: tol,
+          aStart: cw ? s0 + del : s0 + pIn,
+          gapAng: pIn + del,
+          leg: legFor(i),
+        });
+        if (cw) pts.reverse();
+        loops.push(pts);
+        pPrev = del;
+      }
+    } else {
+      const starts = new Array(n);
+      if (legs) {
+        starts[n - 1] = 0;
+        for (let i = n - 2; i >= 0; i--) starts[i] = starts[i + 1] + lw / spec.radii[i];
+      } else {
+        starts[0] = Math.PI / 2;
+        for (let i = 1; i < n; i++) starts[i] = starts[i - 1] - lw / spec.radii[i - 1];
+      }
+      for (let i = 0; i < n; i++) {
+        loops.push(
+          Geo.stoolLoop({
+            r: spec.radii[i],
+            tol: tol,
+            aStart: starts[i],
+            gapAng: lw / spec.radii[i],
+            leg: legFor(i),
+          })
+        );
+      }
+    }
+    return { spec: spec, loops: loops };
+  }
+
   function generate(cfg) {
     const warnings = [];
     const lines = [];
@@ -289,37 +361,21 @@
       legs = spec.legs;
       const lw = cfg.lineWidth;
       const tolBS = cfg.tolerance > 0 ? cfg.tolerance : 0.05;
-      if (legs) {
-        // Precompute each ring's polyline once. The staircase drifts backward
-        // by lw/r per ring, so anchor the seam at 0 deg on the OUTERMOST ring
-        // (the gap between the two right legs) and let the inner plain rings
-        // absorb the drift: a_i = sum of gaps of rings i..ringN-2.
-        const starts = new Array(ringN);
-        starts[ringN - 1] = 0;
-        for (let i = ringN - 2; i >= 0; i--) {
-          starts[i] = starts[i + 1] + lw / ringRadii[i];
-        }
-        legLoops = [];
-        let bandDrift = 0;
-        for (let i = 0; i < ringN; i++) {
-          const r = ringRadii[i];
-          const gapAng = lw / r;
-          let leg = null;
-          if (i >= ringN - legs.m) {
-            const h = ringN - 1 - i; // 0 = outermost hairpin
-            leg = {
-              d: (legs.m - h) * lw - lw / 2,
-              f: legs.fillet + h * lw,
-              tipCenter: legs.tipCenter,
-              angles: LEG_ANGLES,
-            };
-            bandDrift = Math.max(bandDrift, Math.abs(starts[i]));
+      const altSeam = cfg.disc.seamStyle === 'alternating';
+      if (legs || altSeam) {
+        // Precompute each ring's polyline once (identical every layer).
+        legLoops = discLoops(cfg, spec).loops;
+        if (legs && !altSeam) {
+          // Staircase drift within the legged rings (seam is anchored at the
+          // outermost ring; inner plain rings absorb the rest).
+          let bandDrift = 0;
+          for (let i = ringN - legs.m; i < ringN - 1; i++) bandDrift += lw / ringRadii[i];
+          if (bandDrift > Math.PI / 6) {
+            warnings.push('Seam staircase drifts close to a leg junction within the legged rings.');
           }
-          legLoops.push(Geo.stoolLoop({ r: r, tol: tolBS, aStart: starts[i], gapAng: gapAng, leg: leg }));
         }
-        if (bandDrift > Math.PI / 6) {
-          warnings.push('Seam staircase drifts close to a leg junction within the legged rings.');
-        }
+      }
+      if (legs) {
         // Brim base: the outermost combined outline (closed, no seam gap).
         const outline = Geo.stoolLoop({
           r: ringRadii[ringN - 1],
@@ -789,11 +845,12 @@
       // shifts backward by lw/r radians per ring (a staircase drifting CW).
       lines.push(
         '; --- bend stool disc: ' + ringN + ' rings, ' + T + ' layer(s), D=' + snappedD +
-          (legs ? ', 3 legs' : '') + ' ---'
+          (legs ? ', 3 legs' : '') +
+          ', seam=' + (cfg.disc.seamStyle === 'alternating' ? 'alternating (fixed)' : 'staircase') + ' ---'
       );
       const lw = cfg.lineWidth;
       const tol = cfg.tolerance > 0 ? cfg.tolerance : 0.05;
-      if (legs) {
+      if (legLoops) {
         // Chained precomputed loops: each loop starts at the previous loop's
         // end angle, so the first point of loop i+1 IS the radial connector.
         for (let k = 0; k < T; k++) {
@@ -858,5 +915,5 @@
     return { gcode: lines.join('\n') + '\n', warnings, stats, path };
   }
 
-  window.GcodeGen = { generate, beadArea, discSpec, LEG_ANGLES };
+  window.GcodeGen = { generate, beadArea, discSpec, discLoops, LEG_ANGLES };
 })();

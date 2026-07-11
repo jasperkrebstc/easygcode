@@ -6,8 +6,11 @@ keep **fully independent settings** per project:
 
 - **Coat hanger** — the vase-mode generator described below.
 - **Bend stool** — (in progress) the seat disc: concentric rings offset inward by one
-  line width, traced inner→outer as one continuous path with a **staircase seam**
-  (each ring stops one line width before its start; a radial connector steps out).
+  line width, traced inner→outer as one continuous path. Two selectable **seam
+  styles**: *staircase* (all rings one direction; each stops one line width before its
+  start, so the seam shifts per ring) or *zipper* (every other ring flips direction and
+  turns around half a line width before the seam line, so the seam stays fixed — at the
+  cost of hard U-turns).
   The diameter snaps to the nearest multiple of `2 × line width` (ties round up) so
   the beads meet half-half in the center. Optional **legs**: three, 120° apart (one
   pointing left, two right), printed flat as nested hairpins radiating from the outer

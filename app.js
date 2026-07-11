@@ -69,6 +69,7 @@
         disc: {
           diameter: num('bs_diameter'),
           layers: Math.max(1, Math.round(num('bs_layers'))),
+          seamStyle: $('bs_seamStyle').value === 'alternating' ? 'alternating' : 'staircase',
           legs: {
             enabled: $('bs_legsEnabled').checked,
             seatHeight: num('bs_seatHeight'),
@@ -443,23 +444,13 @@
       ctx.setLineDash([]);
     }
 
-    // Rings (+ legs) with staircase gaps; connectors in orange. When legs are
-    // on, the seam is anchored at 0 deg on the OUTERMOST ring (matching the
-    // generator); inner rings absorb the drift.
-    const starts = new Array(n);
-    if (legs) {
-      starts[n - 1] = 0;
-      for (let i = n - 2; i >= 0; i--) starts[i] = starts[i + 1] + lw / spec.radii[i];
-    } else {
-      starts[0] = Math.PI / 2;
-      for (let i = 1; i < n; i++) starts[i] = starts[i - 1] - lw / spec.radii[i - 1];
-    }
+    // Rings (+ legs) in the selected seam style, exactly as the generator
+    // builds them; connectors drawn in orange.
+    const loops = window.GcodeGen.discLoops(cfg, spec).loops;
     let prevEnd = null;
     ctx.lineWidth = 1.8 * sf;
-    for (let i = 0; i < n; i++) {
-      const r = spec.radii[i];
-      const gapAng = lw / r;
-      const pts = window.Geo.stoolLoop({ r: r, tol: tol, aStart: starts[i], gapAng: gapAng, leg: legFor(i) });
+    for (let i = 0; i < loops.length; i++) {
+      const pts = loops[i];
       if (prevEnd) {
         ctx.strokeStyle = '#ffb454';
         ctx.beginPath();
