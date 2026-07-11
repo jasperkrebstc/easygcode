@@ -541,6 +541,16 @@
               ' gap=' + at2.gap + 'x lw' +
               (T > 1 ? ', gradient 0 (bottom) -> 1 (top) over ' + T + ' layers' : '')
           );
+          if (T > 1) {
+            const dMaxH = ((2 * (legs.m - 1) + 1) * (at2.gap || 1) * cfg.lineWidth) / 2;
+            const stepLat = dMaxH / (T - 1);
+            const dropH = Math.max(0, Math.min(1, at2.drop || 0));
+            lines.push(
+              '; overhang: max lateral step ' + stepLat.toFixed(2) + 'mm/layer, angle ' +
+                ((Math.atan2(stepLat, lh) * 180) / Math.PI).toFixed(1) + ' deg from vertical, drop=' +
+                dropH + ' (min layer step ' + (lh * (1 - dropH)).toFixed(2) + 'mm at steepest)'
+            );
+          }
         }
       }
       lines.push('; layerHeight=' + lh + ' lineWidth=' + cfg.lineWidth + ' tolerance=' + cfg.tolerance + 'mm');
@@ -901,6 +911,17 @@
         // end angle, so the first point of loop i+1 IS the radial connector.
         // With the spread gradient, each layer gets its own loop set scaled
         // k/(T-1): collected at the bottom, fully spread at the top.
+        //
+        // Overhang drop (nonplanar): points in the spread zone sink so each
+        // layer sits closer to the one below by drop*lh*(localSpread/maxSpread)
+        // — at drop=1 the steepest point touches the layer underneath. Each
+        // point's own displacement w (at its layer scale) makes the accumulated
+        // drop collapse to a k-independent coefficient:
+        //   z = (k+1)*lh - dropMult*lh*(T-1) * w / Dmax
+        const at3 = cfg.disc.attractor || {};
+        const dropMult = attrGrad ? Math.max(0, Math.min(1, at3.drop || 0)) : 0;
+        const DmaxA = legs ? ((2 * (legs.m - 1) + 1) * (at3.gap || 1) * lw) / 2 : 0;
+        const dropCoef = dropMult > 0 && DmaxA > 0 ? (dropMult * lh * (T - 1)) / DmaxA : 0;
         for (let k = 0; k < T; k++) {
           const z = (k + 1) * lh;
           if (k === 1 && includeStartEnd && fanPWM > 0) {
@@ -911,11 +932,12 @@
               ? legLoops
               : discLoops(cfg, discSpecMemo, k / (T - 1)).loops
             : legLoops;
-          travelAbs({ x: cx + loopsK[0][0].x, y: cy + loopsK[0][0].y, z: z });
+          const zAt = (pt) => (dropCoef ? Math.max(lh, z - dropCoef * (pt.w || 0)) : z);
+          travelAbs({ x: cx + loopsK[0][0].x, y: cy + loopsK[0][0].y, z: zAt(loopsK[0][0]) });
           for (let i = 0; i < ringN; i++) {
             const lp = loopsK[i];
             for (let q = i === 0 ? 1 : 0; q < lp.length; q++) {
-              emitSeg({ x: cx + lp[q].x, y: cy + lp[q].y, z: z }, cfg.printFeed, 1);
+              emitSeg({ x: cx + lp[q].x, y: cy + lp[q].y, z: zAt(lp[q]) }, cfg.printFeed, 1);
             }
           }
         }

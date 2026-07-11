@@ -424,10 +424,10 @@
     const attr = o.attr && o.attr.D > 0 && o.attr.points && o.attr.points.length ? o.attr : null;
     const FINE = 1.2; // mm resampling inside attractor windows
 
-    function push(x, y) {
+    function push(x, y, w) {
       const n = pts.length;
       if (n && Math.abs(pts[n - 1].x - x) < 1e-9 && Math.abs(pts[n - 1].y - y) < 1e-9) return;
-      pts.push({ x: x, y: y });
+      pts.push({ x: x, y: y, w: w || 0 });
     }
     function distA(x, y) {
       let dm = Infinity;
@@ -475,8 +475,9 @@
           const aa = prev + ((a - prev) * j) / m;
           const bx = o.r * Math.cos(aa);
           const by = o.r * Math.sin(aa);
-          const rr = o.r + attr.D * kAt(bx, by);
-          push(rr * Math.cos(aa), rr * Math.sin(aa));
+          const kk = kAt(bx, by);
+          const rr = o.r + attr.D * kk;
+          push(rr * Math.cos(aa), rr * Math.sin(aa), attr.D * kk);
         }
         prev = a;
       }
@@ -506,8 +507,9 @@
           const aa = prev + ((a - prev) * j) / m;
           const bx = cx0 + radius * Math.cos(aa);
           const by = cy0 + radius * Math.sin(aa);
-          const rr = Math.max(0, radius + dSign * attr.D * kAt(bx, by));
-          push(cx0 + rr * Math.cos(aa), cy0 + rr * Math.sin(aa));
+          const kk = kAt(bx, by);
+          const rr = Math.max(0, radius + dSign * attr.D * kk);
+          push(cx0 + rr * Math.cos(aa), cy0 + rr * Math.sin(aa), attr.D * kk);
         }
         prev = a;
       }
@@ -517,8 +519,9 @@
     if (attr) {
       const sx = o.r * Math.cos(o.aStart);
       const sy = o.r * Math.sin(o.aStart);
-      const rr0 = o.r + attr.D * kAt(sx, sy);
-      push(rr0 * Math.cos(o.aStart), rr0 * Math.sin(o.aStart));
+      const k0 = kAt(sx, sy);
+      const rr0 = o.r + attr.D * k0;
+      push(rr0 * Math.cos(o.aStart), rr0 * Math.sin(o.aStart), attr.D * k0);
     } else {
       pts.push({ x: o.r * Math.cos(o.aStart), y: o.r * Math.sin(o.aStart) });
     }
@@ -564,7 +567,7 @@
         const emitT = (tt) => {
           const b = L(tt, sOff);
           const k = kAt(b.x, b.y);
-          push(b.x + sgn * v.x * attr.D * k, b.y + sgn * v.y * attr.D * k);
+          push(b.x + sgn * v.x * attr.D * k, b.y + sgn * v.y * attr.D * k, attr.D * k);
         };
         let lo = Infinity;
         let hi = -Infinity;
@@ -622,7 +625,7 @@
         const c = L(tc, sSign * dd2);
         // betaC: the displaced junction's angular half-extent — wider than the
         // original beta, so the ring arc must stop/resume there instead.
-        return { tc: tc, x: c.x, y: c.y, betaC: Math.atan2(dd2, tc) };
+        return { tc: tc, x: c.x, y: c.y, w: Dk, betaC: Math.atan2(dd2, tc) };
       }
 
       // Compute both junction corners first: a collapsed fillet widens the
@@ -637,7 +640,7 @@
       ringArc(cur, p - (c1 ? c1.betaC : beta));
       // Entry fillet: concave — shrinks toward its center, or the tight corner.
       if (c1) {
-        push(c1.x, c1.y);
+        push(c1.x, c1.y, c1.w);
         legLine(c1.tc, tipCenter, -d);
       } else {
         arcAround(F1.x, F1.y, f, a1, a1 - turn, -1);
@@ -648,7 +651,7 @@
       // Straight side back in, then the exit fillet (mirror).
       if (c2) {
         legLine(tipCenter, c2.tc, d);
-        push(c2.x, c2.y);
+        push(c2.x, c2.y, c2.w);
       } else {
         legLine(tipCenter, t, d);
         arcAround(F2.x, F2.y, f, p - Math.PI / 2, p - Math.PI / 2 - turn, -1);

@@ -1,5 +1,5 @@
 /* Simple offline cache for the static app shell. Bump CACHE on each release. */
-const CACHE = 'easygcode-v20';
+const CACHE = 'easygcode-v21';
 const ASSETS = [
   './',
   './index.html',

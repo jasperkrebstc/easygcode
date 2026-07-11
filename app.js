@@ -82,6 +82,7 @@
             r1: num('bs_attrR1'),
             r2: num('bs_attrR2'),
             gap: num('bs_attrGap'),
+            drop: num('bs_attrDrop'),
           },
         },
         brim: readBrim('bs_'),
@@ -197,6 +198,8 @@
           if (!isPos(a.r1)) return 'Enter a valid full-spread radius R1.';
           if (!isPos(a.r2) || a.r2 <= a.r1) return 'Falloff radius R2 must be greater than R1.';
           if (!isPos(a.gap)) return 'Spread gap must be greater than 0.';
+          if (!Number.isFinite(a.drop) || a.drop < 0 || a.drop > 1)
+            return 'Overhang drop must be between 0 and 1.';
         }
       }
       return validatePrinter(cfg) || validateBrim(cfg.brim);
@@ -403,6 +406,19 @@
     let hint =
       'Snapped to Ø' + spec.snappedD + ' mm · ' + n + ' ring' + (n > 1 ? 's' : '') + ' of ' + lw + ' mm';
     if (legs) hint += ' · legs ' + legs.snappedW + ' mm wide (' + legs.m + ' pair' + (legs.m > 1 ? 's' : '') + ')';
+    if (legs && cfg.disc.attractor.enabled && isPos(cfg.disc.attractor.gap)) {
+      const T = cfg.disc.layers;
+      if (T > 1) {
+        const dMax = ((2 * (legs.m - 1) + 1) * cfg.disc.attractor.gap * lw) / 2;
+        const stepLat = dMax / (T - 1);
+        const ang = (Math.atan2(stepLat, cfg.layerHeight) * 180) / Math.PI;
+        const drop = Math.max(0, Math.min(1, cfg.disc.attractor.drop || 0));
+        hint += ' · max overhang ' + ang.toFixed(1) + '° (' + stepLat.toFixed(2) + ' mm/layer, min step ' +
+          (cfg.layerHeight * (1 - drop)).toFixed(2) + ' mm)';
+      } else {
+        hint += ' · 1 layer: no gradient/drop';
+      }
+    }
     if (cfg.disc.legs && cfg.disc.legs.enabled && !legs) hint += ' · ' + (spec.warnings[spec.warnings.length - 1] || 'legs invalid');
     $('bs_discHint').textContent = hint;
 
