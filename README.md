@@ -28,11 +28,12 @@ keep **fully independent settings** per project:
   and, when the displacement exceeds them, become the exact offset corner (the
   tight-corner case). With multiple layers the spread grows linearly from zero at
   the bottom (lines collected) to maximum at the top. The **overhang drop** (0–1,
-  default 0.5) then compensates the resulting overhang nonplanar-style: points sink
-  by drop·lh·(local spread ÷ max spread) per layer, squeezing the layers together in
-  the bend zone — at 1 the steepest point touches the layer underneath. The max
-  overhang angle and the squeezed layer step are shown in the hint and the G-code
-  header. The reheat-and-bend zone softens exactly there.
+  default 0.5) then packs the layers together nonplanar-style: each point slides
+  DOWN the overhang slope (z and lateral together) proportionally to how far it
+  moved out — at 1 the most-displaced point lands exactly on the layer below's
+  original position. The slope angle is preserved; the beads just pack denser along
+  it. The max overhang angle and squeezed layer spacing are shown in the hint and
+  the G-code header. The reheat-and-bend zone softens exactly there.
 
 The coat hanger is a dead-simple, phone-first tool to generate **vase-mode G-code** for
 **Klipper pellet 3D printing** (or the Bambu P1P in filament mode). Pick a cross-section

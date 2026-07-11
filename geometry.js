@@ -448,6 +448,12 @@
     function near(x, y) {
       return distA(x, y) < attr.r2 + FINE * 2;
     }
+    // Applied lateral displacement for falloff factor g. attr.pb pulls the
+    // point back down the overhang slope proportionally to how far it moved
+    // out (per-loop constant), preserving the wall's slope angle.
+    function eff(g) {
+      return attr.D * g * (1 - g * (attr.pb || 0));
+    }
 
     function arcSteps(radius, sweep) {
       let dth = 2 * Math.acos(Math.max(-1, 1 - tol / Math.max(radius, 1e-6)));
@@ -476,7 +482,7 @@
           const bx = o.r * Math.cos(aa);
           const by = o.r * Math.sin(aa);
           const kk = kAt(bx, by);
-          const rr = o.r + attr.D * kk;
+          const rr = o.r + eff(kk);
           push(rr * Math.cos(aa), rr * Math.sin(aa), attr.D * kk);
         }
         prev = a;
@@ -508,7 +514,7 @@
           const bx = cx0 + radius * Math.cos(aa);
           const by = cy0 + radius * Math.sin(aa);
           const kk = kAt(bx, by);
-          const rr = Math.max(0, radius + dSign * attr.D * kk);
+          const rr = Math.max(0, radius + dSign * eff(kk));
           push(cx0 + rr * Math.cos(aa), cy0 + rr * Math.sin(aa), attr.D * kk);
         }
         prev = a;
@@ -520,7 +526,7 @@
       const sx = o.r * Math.cos(o.aStart);
       const sy = o.r * Math.sin(o.aStart);
       const k0 = kAt(sx, sy);
-      const rr0 = o.r + attr.D * k0;
+      const rr0 = o.r + eff(k0);
       push(rr0 * Math.cos(o.aStart), rr0 * Math.sin(o.aStart), attr.D * k0);
     } else {
       pts.push({ x: o.r * Math.cos(o.aStart), y: o.r * Math.sin(o.aStart) });
@@ -567,7 +573,8 @@
         const emitT = (tt) => {
           const b = L(tt, sOff);
           const k = kAt(b.x, b.y);
-          push(b.x + sgn * v.x * attr.D * k, b.y + sgn * v.y * attr.D * k, attr.D * k);
+          const e = eff(k);
+          push(b.x + sgn * v.x * e, b.y + sgn * v.y * e, attr.D * k);
         };
         let lo = Infinity;
         let hi = -Infinity;
@@ -606,13 +613,14 @@
       function filletCorner(F, aA, aB, sSign) {
         if (!attr) return null;
         const pB = L(t, sSign * d); // line-side tangent point (base)
-        const Dk = attr.D * kAt(pB.x, pB.y);
+        const kc = kAt(pB.x, pB.y);
+        const Dk = eff(kc);
         if (f > 1e-9) {
           const m = Math.max(6, Math.ceil((Math.abs(aB - aA) * f) / FINE));
           let rMin = Infinity;
           for (let s = 0; s <= m; s++) {
             const aa = aA + ((aB - aA) * s) / m;
-            const rr = f - attr.D * kAt(F.x + f * Math.cos(aa), F.y + f * Math.sin(aa));
+            const rr = f - eff(kAt(F.x + f * Math.cos(aa), F.y + f * Math.sin(aa)));
             if (rr < rMin) rMin = rr;
           }
           if (rMin > 0.02) return null;
@@ -625,7 +633,7 @@
         const c = L(tc, sSign * dd2);
         // betaC: the displaced junction's angular half-extent — wider than the
         // original beta, so the ring arc must stop/resume there instead.
-        return { tc: tc, x: c.x, y: c.y, w: Dk, betaC: Math.atan2(dd2, tc) };
+        return { tc: tc, x: c.x, y: c.y, w: attr.D * kc, betaC: Math.atan2(dd2, tc) };
       }
 
       // Compute both junction corners first: a collapsed fillet widens the

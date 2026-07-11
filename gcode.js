@@ -280,7 +280,15 @@
     function attrFor(i) {
       if (!attrOn || scale <= 0 || i < n - legs.m) return null;
       const q = i - (n - legs.m);
-      return { points: attrPts, r1: at.r1, r2: at.r2, D: (((2 * q + 1) * at.gap * lw) / 2) * scale };
+      const Dfull = ((2 * q + 1) * at.gap * lw) / 2;
+      const Dmax = ((2 * (legs.m - 1) + 1) * at.gap * lw) / 2;
+      const T = Math.max(1, Math.round((cfg.disc && cfg.disc.layers) || 1));
+      const drop = Math.max(0, Math.min(1, at.drop || 0));
+      // Down-slope pull-back: each point slides back along the overhang slope
+      // proportionally to how far it moved out, so the slope ANGLE is
+      // preserved while the layers pack together (see the z drop in generate).
+      const pb = T > 1 ? (drop * Dfull) / (Dmax * (T - 1)) : 0;
+      return { points: attrPts, r1: at.r1, r2: at.r2, D: Dfull * scale, pb: pb };
     }
 
     const loops = [];
@@ -547,8 +555,9 @@
             const dropH = Math.max(0, Math.min(1, at2.drop || 0));
             lines.push(
               '; overhang: max lateral step ' + stepLat.toFixed(2) + 'mm/layer, angle ' +
-                ((Math.atan2(stepLat, lh) * 180) / Math.PI).toFixed(1) + ' deg from vertical, drop=' +
-                dropH + ' (min layer step ' + (lh * (1 - dropH)).toFixed(2) + 'mm at steepest)'
+                ((Math.atan2(stepLat, lh) * 180) / Math.PI).toFixed(1) + ' deg from vertical (preserved), drop=' +
+                dropH + ' -> layer spacing squeezed to ' + (lh * (1 - dropH / (T - 1))).toFixed(2) +
+                'mm at steepest'
             );
           }
         }
@@ -912,16 +921,17 @@
         // With the spread gradient, each layer gets its own loop set scaled
         // k/(T-1): collected at the bottom, fully spread at the top.
         //
-        // Overhang drop (nonplanar): points in the spread zone sink so each
-        // layer sits closer to the one below by drop*lh*(localSpread/maxSpread)
-        // — at drop=1 the steepest point touches the layer underneath. Each
-        // point's own displacement w (at its layer scale) makes the accumulated
-        // drop collapse to a k-independent coefficient:
-        //   z = (k+1)*lh - dropMult*lh*(T-1) * w / Dmax
+        // Overhang drop (nonplanar, slope-following): each point slides DOWN
+        // the overhang slope proportionally to how far it moved out — shift
+        // (in layer steps) = drop * w / Dmax, at most one step. The lateral
+        // part of the slide is applied during construction (attr.pb); here the
+        // vertical part: z = (k+1)*lh - drop*lh*(w/Dmax). At drop=1 the most-
+        // displaced point lands exactly on the layer below's original spot;
+        // the slope angle is preserved while the layers pack together.
         const at3 = cfg.disc.attractor || {};
         const dropMult = attrGrad ? Math.max(0, Math.min(1, at3.drop || 0)) : 0;
         const DmaxA = legs ? ((2 * (legs.m - 1) + 1) * (at3.gap || 1) * lw) / 2 : 0;
-        const dropCoef = dropMult > 0 && DmaxA > 0 ? (dropMult * lh * (T - 1)) / DmaxA : 0;
+        const dropCoef = dropMult > 0 && DmaxA > 0 ? (dropMult * lh) / DmaxA : 0;
         for (let k = 0; k < T; k++) {
           const z = (k + 1) * lh;
           if (k === 1 && includeStartEnd && fanPWM > 0) {
