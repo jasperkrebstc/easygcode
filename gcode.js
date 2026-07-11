@@ -243,7 +243,11 @@
   // - 'alternating': every other ring flips direction; each ring turns around
   //   half a line width before the seam line, so the seam never moves (a
   //   fixed "zipper" with hard U-turns at the connectors).
-  function discLoops(cfg, specIn) {
+  // attrScale (0..1, default 1) scales the attractor displacement — used for
+  // the vertical gradient: bottom layer 0 (lines collected), top layer 1
+  // (maximum spread), linear in between.
+  function discLoops(cfg, specIn, attrScale) {
+    const scale = attrScale == null ? 1 : attrScale;
     const spec = specIn || discSpec(cfg);
     const lw = cfg.lineWidth;
     const tol = cfg.tolerance > 0 ? cfg.tolerance : 0.05;
@@ -274,9 +278,9 @@
       attrPts = LEG_ANGLES.map((phi) => ({ x: A * Math.cos(phi), y: A * Math.sin(phi) }));
     }
     function attrFor(i) {
-      if (!attrOn || i < n - legs.m) return null;
+      if (!attrOn || scale <= 0 || i < n - legs.m) return null;
       const q = i - (n - legs.m);
-      return { points: attrPts, r1: at.r1, r2: at.r2, D: ((2 * q + 1) * at.gap * lw) / 2 };
+      return { points: attrPts, r1: at.r1, r2: at.r2, D: (((2 * q + 1) * at.gap * lw) / 2) * scale };
     }
 
     const loops = [];
@@ -330,7 +334,7 @@
       attr: attrFor(n - 1),
     });
     if (outline.length > 1 && Geo.dist(outline[0], outline[outline.length - 1]) < 1e-6) outline.pop();
-    return { spec: spec, loops: loops, outline: outline };
+    return { spec: spec, loops: loops, outline: outline, attrOn: attrOn };
   }
 
   function generate(cfg) {
@@ -382,7 +386,9 @@
     let snappedD = 0;
     let ringRadii = [];
     let legs = null;
-    let legLoops = null; // per-ring polylines when legs are on (same every layer)
+    let legLoops = null; // per-ring polylines when legs are on
+    let attrGrad = false; // bottom->top spread gradient active
+    let discSpecMemo = null;
     let discOuterLoop = null;
     if (isBS) {
       const spec = discSpec(cfg);
@@ -409,10 +415,15 @@
           }
         }
       }
+      // Vertical spread gradient: with more than one layer, the bottom layer
+      // prints with the lines collected (scale 0) and the spread grows
+      // linearly to the maximum at the top layer.
+      attrGrad = !!(dl && dl.attrOn && T > 1);
+      discSpecMemo = spec;
       if (legs) {
-        // Brim base: the outermost combined outline (spread included when the
-        // bend-zone attractor is on, so the brim hugs what actually prints).
-        discOuterLoop = dl.outline;
+        // Brim base: the outermost combined outline of the BOTTOM layer (the
+        // brim hugs what actually prints first — unspread when gradient is on).
+        discOuterLoop = attrGrad ? discLoops(cfg, spec, 0).outline : dl.outline;
       } else {
         // Outermost bead centerline circle doubles as the brim's base loop.
         const rOut = ringRadii[ringN - 1];
@@ -527,7 +538,8 @@
         if (at2 && at2.enabled) {
           lines.push(
             '; bend spread: pos=' + at2.pos + 'mm from rim, R1=' + at2.r1 + ' R2=' + at2.r2 +
-              ' gap=' + at2.gap + 'x lw'
+              ' gap=' + at2.gap + 'x lw' +
+              (T > 1 ? ', gradient 0 (bottom) -> 1 (top) over ' + T + ' layers' : '')
           );
         }
       }
@@ -887,14 +899,21 @@
       if (legLoops) {
         // Chained precomputed loops: each loop starts at the previous loop's
         // end angle, so the first point of loop i+1 IS the radial connector.
+        // With the spread gradient, each layer gets its own loop set scaled
+        // k/(T-1): collected at the bottom, fully spread at the top.
         for (let k = 0; k < T; k++) {
           const z = (k + 1) * lh;
           if (k === 1 && includeStartEnd && fanPWM > 0) {
             lines.push('M106 S' + fanPWM + ' ; part cooling fan on after first layer');
           }
-          travelAbs({ x: cx + legLoops[0][0].x, y: cy + legLoops[0][0].y, z: z });
+          const loopsK = attrGrad
+            ? k === T - 1
+              ? legLoops
+              : discLoops(cfg, discSpecMemo, k / (T - 1)).loops
+            : legLoops;
+          travelAbs({ x: cx + loopsK[0][0].x, y: cy + loopsK[0][0].y, z: z });
           for (let i = 0; i < ringN; i++) {
-            const lp = legLoops[i];
+            const lp = loopsK[i];
             for (let q = i === 0 ? 1 : 0; q < lp.length; q++) {
               emitSeg({ x: cx + lp[q].x, y: cy + lp[q].y, z: z }, cfg.printFeed, 1);
             }
