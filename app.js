@@ -76,6 +76,13 @@
             width: num('bs_legWidth'),
             fillet: num('bs_legFillet'),
           },
+          attractor: {
+            enabled: $('bs_attrEnabled').checked,
+            pos: num('bs_attrPos'),
+            r1: num('bs_attrR1'),
+            r2: num('bs_attrR2'),
+            gap: num('bs_attrGap'),
+          },
         },
         brim: readBrim('bs_'),
       };
@@ -184,6 +191,13 @@
         if (!isPos(cfg.disc.legs.width)) return 'Enter a valid leg width.';
         if (!Number.isFinite(cfg.disc.legs.fillet) || cfg.disc.legs.fillet < 0)
           return 'Enter a valid leg fillet (0 or more).';
+        if (cfg.disc.attractor.enabled) {
+          const a = cfg.disc.attractor;
+          if (!Number.isFinite(a.pos)) return 'Enter a valid spread position.';
+          if (!isPos(a.r1)) return 'Enter a valid full-spread radius R1.';
+          if (!isPos(a.r2) || a.r2 <= a.r1) return 'Falloff radius R2 must be greater than R1.';
+          if (!isPos(a.gap)) return 'Spread gap must be greater than 0.';
+        }
       }
       return validatePrinter(cfg) || validateBrim(cfg.brim);
     }
@@ -417,36 +431,52 @@
       ctx.stroke();
     }
 
-    function legFor(i) {
-      if (!legs || i < n - legs.m) return null;
-      const h = n - 1 - i;
-      return {
-        d: (legs.m - h) * lw - lw / 2,
-        f: legs.fillet + h * lw,
-        tipCenter: legs.tipCenter,
-        angles: window.GcodeGen.LEG_ANGLES,
-      };
-    }
+    const dl = window.GcodeGen.discLoops(cfg, spec);
 
-    // Brim (dashed): offsets of the outermost outline (with legs if enabled).
+    // Brim (dashed): offsets of the outermost outline (legs + spread included).
     if (brimExtent > 0) {
-      let outline = window.Geo.stoolLoop({
-        r: spec.radii[n - 1], tol: tol, aStart: 0, gapAng: 0, leg: legFor(n - 1),
-      });
-      if (outline.length > 1 && window.Geo.dist(outline[0], outline[outline.length - 1]) < 1e-6) outline.pop();
       ctx.setLineDash([5 * sf, 4 * sf]);
       ctx.strokeStyle = '#2bd9a0';
       ctx.lineWidth = 1.2 * sf;
       for (let k = 1; k <= cfg.brim.lines; k++) {
         const d = cfg.brim.lineWidth / 2 + lw / 2 + (k - 1) * cfg.brim.lineWidth;
-        strokePoly(window.Geo.offsetClosed(outline, d), true);
+        strokePoly(window.Geo.offsetClosed(dl.outline, d), true);
       }
+      ctx.setLineDash([]);
+    }
+
+    // Attractor points + their R1/R2 circles (bend-zone spread).
+    if (legs && cfg.disc.attractor.enabled && isPos(cfg.disc.attractor.r1)) {
+      const at = cfg.disc.attractor;
+      const A = n * lw + (Number.isFinite(at.pos) ? at.pos : 0);
+      ctx.setLineDash([3 * sf, 3 * sf]);
+      window.GcodeGen.LEG_ANGLES.forEach((phi) => {
+        const ax = cxp + A * Math.cos(phi) * scale;
+        const ay = cyp - A * Math.sin(phi) * scale;
+        ctx.strokeStyle = 'rgba(255,82,82,0.8)';
+        ctx.lineWidth = 1 * sf;
+        ctx.beginPath();
+        ctx.arc(ax, ay, at.r1 * scale, 0, 2 * Math.PI);
+        ctx.stroke();
+        if (isPos(at.r2) && at.r2 > at.r1) {
+          ctx.strokeStyle = 'rgba(255,82,82,0.35)';
+          ctx.beginPath();
+          ctx.arc(ax, ay, at.r2 * scale, 0, 2 * Math.PI);
+          ctx.stroke();
+        }
+        ctx.setLineDash([]);
+        ctx.fillStyle = '#ff5252';
+        ctx.beginPath();
+        ctx.arc(ax, ay, 3.5 * sf, 0, 2 * Math.PI);
+        ctx.fill();
+        ctx.setLineDash([3 * sf, 3 * sf]);
+      });
       ctx.setLineDash([]);
     }
 
     // Rings (+ legs) in the selected seam style, exactly as the generator
     // builds them; connectors drawn in orange.
-    const loops = window.GcodeGen.discLoops(cfg, spec).loops;
+    const loops = dl.loops;
     let prevEnd = null;
     ctx.lineWidth = 1.8 * sf;
     for (let i = 0; i < loops.length; i++) {

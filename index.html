@@ -262,6 +262,11 @@
           <div class="field"><label>Seat height (mm)</label><input type="number" id="bs_seatHeight" value="200" min="1" step="5" /></div>
           <div class="field"><label>Leg width (mm)</label><input type="number" id="bs_legWidth" value="40" min="1" step="1" /></div>
           <div class="field"><label>Leg fillet (mm)</label><input type="number" id="bs_legFillet" value="8" min="0" step="1" /></div>
+          <div class="field"><label>Bend spread</label><label class="toggle"><input type="checkbox" id="bs_attrEnabled" /> enable</label></div>
+          <div class="field"><label>Spread position (mm from rim)</label><input type="number" id="bs_attrPos" value="0" step="1" /></div>
+          <div class="field"><label>Full-spread radius R1 (mm)</label><input type="number" id="bs_attrR1" value="15" min="0.1" step="1" /></div>
+          <div class="field"><label>Falloff end radius R2 (mm)</label><input type="number" id="bs_attrR2" value="35" min="0.1" step="1" /></div>
+          <div class="field"><label>Spread gap (× line width)</label><input type="number" id="bs_attrGap" value="1.0" min="0.05" step="0.1" /></div>
         </div>
         <p class="hint" id="bs_discHint"></p>
         <canvas id="previewBS" width="600" height="600"></canvas>
