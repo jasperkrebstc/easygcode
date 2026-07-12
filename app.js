@@ -70,6 +70,7 @@
           diameter: num('bs_diameter'),
           layers: Math.max(1, Math.round(num('bs_layers'))),
           seamStyle: $('bs_seamStyle').value === 'alternating' ? 'alternating' : 'staircase',
+          dome: num('bs_domeMult'),
           legs: {
             enabled: $('bs_legsEnabled').checked,
             seatHeight: num('bs_seatHeight'),
@@ -187,6 +188,8 @@
       if (!Number.isFinite(cfg.centerX) || !Number.isFinite(cfg.centerY))
         return 'Enter valid bed center X/Y.';
       if (cfg.disc.layers < 1) return 'Disc needs at least 1 layer.';
+      if (!Number.isFinite(cfg.disc.dome) || cfg.disc.dome <= 0 || cfg.disc.dome > 1)
+        return 'Dome multiplier must be between 0 and 1 (1 = flat).';
       if (cfg.disc.legs.enabled) {
         if (!isPos(cfg.disc.legs.seatHeight)) return 'Enter a valid seat height.';
         if (!isPos(cfg.disc.legs.width)) return 'Enter a valid leg width.';
@@ -406,6 +409,11 @@
     let hint =
       'Snapped to Ø' + spec.snappedD + ' mm · ' + n + ' ring' + (n > 1 ? 's' : '') + ' of ' + lw + ' mm';
     if (legs) hint += ' · legs ' + legs.snappedW + ' mm wide (' + legs.m + ' pair' + (legs.m > 1 ? 's' : '') + ')';
+    if (Number.isFinite(cfg.disc.dome) && cfg.disc.dome < 1 && cfg.disc.layers > 1) {
+      const T = cfg.disc.layers;
+      hint += ' · dome: top z ' + (cfg.layerHeight * (1 + (T - 1) * cfg.disc.dome)).toFixed(1) +
+        ' center / ' + (cfg.layerHeight * T).toFixed(1) + ' edge';
+    }
     if (legs && cfg.disc.attractor.enabled && isPos(cfg.disc.attractor.gap)) {
       const T = cfg.disc.layers;
       if (T > 1) {
