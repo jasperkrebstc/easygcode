@@ -421,8 +421,8 @@
         const stepLat = dMax / (T - 1);
         const ang = (Math.atan2(stepLat, cfg.layerHeight) * 180) / Math.PI;
         const drop = Math.max(0, Math.min(1, cfg.disc.attractor.drop || 0));
-        hint += ' · max overhang ' + ang.toFixed(1) + '° (' + stepLat.toFixed(2) + ' mm/layer, squeezed step ' +
-          (cfg.layerHeight * (1 - drop)).toFixed(2) + ' mm)';
+        hint += ' · max overhang ' + ang.toFixed(1) + '° (' + stepLat.toFixed(2) + ' mm/layer, packed to ' +
+          Math.round((1 - drop) * 100) + '% along slope)';
       } else {
         hint += ' · 1 layer: no gradient/drop';
       }
