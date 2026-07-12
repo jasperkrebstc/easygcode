@@ -33,7 +33,12 @@ keep **fully independent settings** per project:
   moved out — at 1 the most-displaced point lands exactly on the layer below's
   original position. The slope angle is preserved; the beads just pack denser along
   it. The max overhang angle and squeezed layer spacing are shown in the hint and
-  the G-code header. The reheat-and-bend zone softens exactly there.
+  the G-code header. The reheat-and-bend zone softens exactly there. Finally an optional **dome**
+  (center layer-height multiplier, 0–1, 1 = flat): after a uniform first layer, each
+  loop's layer height is bezier-eased from `dome × lh` at the innermost circle (slow
+  start, fast middle, tiny end falloff) up to the full `lh` at the outermost leg
+  curve — heights accumulate into a dished, curvy seat, the legs get a U-profile,
+  and extrusion follows each loop's actual bead height.
 
 The coat hanger is a dead-simple, phone-first tool to generate **vase-mode G-code** for
 **Klipper pellet 3D printing** (or the Bambu P1P in filament mode). Pick a cross-section

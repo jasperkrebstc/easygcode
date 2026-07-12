@@ -609,13 +609,13 @@
 
     // Core extruding move at an explicit feedrate. E output is scaled by the
     // printer mode (volume vs filament mm) and the extrusion multiplier.
-    function emitSeg(cur, feed, ramp) {
+    function emitSeg(cur, feed, ramp, areaOvr) {
       const segLen = dist3(prev, cur);
       if (segLen < 1e-7) {
         prev = cur;
         return;
       }
-      const dVol = area * segLen * ramp;
+      const dVol = (areaOvr || area) * segLen * ramp;
       totalVolume += dVol;
       pathLength += segLen;
       let line = 'G1 X' + f3(cur.x) + ' Y' + f3(cur.y) + ' Z' + f3(cur.z) + ' E' + f5(dVol * eFactor);
@@ -915,6 +915,28 @@
       );
       const lw = cfg.lineWidth;
       const tol = cfg.tolerance > 0 ? cfg.tolerance : 0.05;
+
+      // Dome: per-loop layer-height multiplier, bezier-eased from the center
+      // value (input) to 1.0 at the outermost loop. Slow start, fast middle,
+      // tiny falloff at the end: f(t) = 2.7(1-t)t^2 + t^3 (f'(0)=0, f'(1)=0.3).
+      // The first printed layer stays uniform at the nominal layer height.
+      const dm = Math.max(0.05, Math.min(1, cfg.disc.dome != null ? cfg.disc.dome : 1));
+      const domed = ringN > 1 && dm < 1 - 1e-9;
+      const easeD = (t) => 2.7 * (1 - t) * t * t + t * t * t;
+      const loopH = [];
+      const loopArea = [];
+      for (let i = 0; i < ringN; i++) {
+        const h = domed ? lh * (dm + (1 - dm) * easeD(i / (ringN - 1))) : lh;
+        loopH.push(h);
+        loopArea.push(domed ? beadArea(lw, h) : area);
+      }
+      if (domed) {
+        lines.push(
+          '; dome: center x' + dm + ' (' + (dm * lh).toFixed(2) + 'mm/layer) -> edge ' + lh +
+            'mm/layer; top z ' + (lh + (T - 1) * dm * lh).toFixed(2) + ' center vs ' +
+            (T * lh).toFixed(2) + ' edge'
+        );
+      }
       if (legLoops) {
         // Chained precomputed loops: each loop starts at the previous loop's
         // end angle, so the first point of loop i+1 IS the radial connector.
@@ -942,12 +964,18 @@
               ? legLoops
               : discLoops(cfg, discSpecMemo, k / (T - 1)).loops
             : legLoops;
-          const zAt = (pt) => (dropCoef ? Math.max(lh, z - dropCoef * (pt.w || 0)) : z);
-          travelAbs({ x: cx + loopsK[0][0].x, y: cy + loopsK[0][0].y, z: zAt(loopsK[0][0]) });
+          const zPt = (i, pt) => {
+            const zb = domed && k > 0 ? lh + k * loopH[i] : z;
+            if (!dropCoef) return zb;
+            const dc = domed ? (dropMult * loopH[i]) / DmaxA : dropCoef;
+            return Math.max(lh, zb - dc * (pt.w || 0));
+          };
+          travelAbs({ x: cx + loopsK[0][0].x, y: cy + loopsK[0][0].y, z: zPt(0, loopsK[0][0]) });
           for (let i = 0; i < ringN; i++) {
             const lp = loopsK[i];
+            const aOvr = domed && k > 0 ? loopArea[i] : null;
             for (let q = i === 0 ? 1 : 0; q < lp.length; q++) {
-              emitSeg({ x: cx + lp[q].x, y: cy + lp[q].y, z: zAt(lp[q]) }, cfg.printFeed, 1);
+              emitSeg({ x: cx + lp[q].x, y: cy + lp[q].y, z: zPt(i, lp[q]) }, cfg.printFeed, 1, aOvr);
             }
           }
         }
@@ -959,24 +987,28 @@
             lines.push('M106 S' + fanPWM + ' ; part cooling fan on after first layer');
           }
           let a = a0;
-          travelAbs({ x: cx + ringRadii[0] * Math.cos(a), y: cy + ringRadii[0] * Math.sin(a), z: z });
+          const zRing = (i) => (domed && k > 0 ? lh + k * loopH[i] : z);
+          travelAbs({ x: cx + ringRadii[0] * Math.cos(a), y: cy + ringRadii[0] * Math.sin(a), z: zRing(0) });
           for (let i = 0; i < ringN; i++) {
             const r = ringRadii[i];
+            const zi = zRing(i);
+            const aOvr = domed && k > 0 ? loopArea[i] : null;
             const sweep = 2 * Math.PI - lw / r; // stop one line width short of the start
             let dth = 2 * Math.acos(Math.max(-1, 1 - tol / r));
             if (!isFinite(dth) || dth <= 0) dth = 0.2;
             const steps = Math.max(12, Math.ceil(sweep / dth));
             for (let s = 1; s <= steps; s++) {
               const ang = a + (sweep * s) / steps;
-              emitSeg({ x: cx + r * Math.cos(ang), y: cy + r * Math.sin(ang), z: z }, cfg.printFeed, 1);
+              emitSeg({ x: cx + r * Math.cos(ang), y: cy + r * Math.sin(ang), z: zi }, cfg.printFeed, 1, aOvr);
             }
             const aEnd = (a + sweep) % (2 * Math.PI);
             if (i < ringN - 1) {
               // radial connector out to the next ring (extruded, length = lw)
               emitSeg(
-                { x: cx + ringRadii[i + 1] * Math.cos(aEnd), y: cy + ringRadii[i + 1] * Math.sin(aEnd), z: z },
+                { x: cx + ringRadii[i + 1] * Math.cos(aEnd), y: cy + ringRadii[i + 1] * Math.sin(aEnd), z: zRing(i + 1) },
                 cfg.printFeed,
-                1
+                1,
+                domed && k > 0 ? loopArea[i + 1] : null
               );
             }
             a = aEnd;
