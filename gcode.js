@@ -281,7 +281,13 @@
       if (!attrOn || scale <= 0 || i < n - legs.m) return null;
       const q = i - (n - legs.m);
       const Dfull = ((2 * q + 1) * at.gap * lw) / 2;
-      return { points: attrPts, r1: at.r1, r2: at.r2, D: Dfull * scale };
+      // Lateral part of the overhang drop: compress the spread toward the spine
+      // by drop * (Dfull / Dmax) = drop * (2q+1)/(2m-1). Combined with the
+      // accumulating z-drop the move follows the overhang slope (angle kept).
+      const T = Math.max(1, Math.round((cfg.disc && cfg.disc.layers) || 1));
+      const drop = Math.max(0, Math.min(1, at.drop || 0));
+      const slopeK = T > 1 && drop > 0 ? (drop * (2 * q + 1)) / (2 * legs.m - 1) : 0;
+      return { points: attrPts, r1: at.r1, r2: at.r2, D: Dfull * scale, slopeK: slopeK };
     }
 
     const loops = [];
@@ -549,8 +555,8 @@
             lines.push(
               '; overhang: max lateral step ' + stepLat.toFixed(2) + 'mm/layer, angle ' +
                 ((Math.atan2(stepLat, lh) * 180) / Math.PI).toFixed(1) + ' deg from vertical, drop=' +
-                dropH + ' -> travel spacing squeezed to ' + (lh * (1 - dropH)).toFixed(2) +
-                'mm/pair at steepest (extrusion stays full height)'
+                dropH + ' -> layers packed along the slope to ' + Math.round((1 - dropH) * 100) +
+                '% spacing at steepest (angle preserved, extrusion stays full height)'
             );
           }
         }

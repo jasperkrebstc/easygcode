@@ -452,7 +452,11 @@
     // point back down the overhang slope proportionally to how far it moved
     // out (per-loop constant), preserving the wall's slope angle.
     function eff(g) {
-      return attr.D * g * (1 - g * (attr.pb || 0));
+      // Along-slope compression: pull the applied displacement back toward the
+      // spine by g*slopeK (= drop * overhang ratio), so the point moves toward
+      // the less-spread point on the layer below. Paired with the accumulating
+      // z-drop this makes the move follow the overhang slope (angle preserved).
+      return attr.D * g * (1 - g * (attr.slopeK || 0));
     }
 
     function arcSteps(radius, sweep) {
