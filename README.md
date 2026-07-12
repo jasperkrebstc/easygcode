@@ -28,12 +28,14 @@ keep **fully independent settings** per project:
   and, when the displacement exceeds them, become the exact offset corner (the
   tight-corner case). With multiple layers the spread grows linearly from zero at
   the bottom (lines collected) to maximum at the top. The **overhang drop** (0–1,
-  default 0.5) then packs the layers together nonplanar-style: each point slides
-  DOWN the overhang slope (z and lateral together) proportionally to how far it
-  moved out — at 1 the most-displaced point lands exactly on the layer below's
-  original position. The slope angle is preserved; the beads just pack denser along
-  it. The max overhang angle and squeezed layer spacing are shown in the hint and
-  the G-code header. The reheat-and-bend zone softens exactly there. Finally an optional **dome**
+  default 0.5) then compensates the overhang nonplanar-style: the TRAVEL height
+  sinks in the spread zone (by drop × local overhang steepness × the loop's layer
+  height, accumulating layer over layer) while EXTRUSION stays at the full local
+  layer height — the squish deliberately overfills the reduced gap, since slanted
+  layers have more volume to cover. At drop 0.5 every layer pair in the steepest
+  spot sits half a layer height apart; nonplanarity grows k× with each layer. The
+  max overhang angle and squeezed travel spacing are shown in the hint and the
+  G-code header. The reheat-and-bend zone softens exactly there. Finally an optional **dome**
   (center layer-height multiplier, 0–1, 1 = flat): after a uniform first layer, each
   loop's layer height is bezier-eased from `dome × lh` at the innermost circle (slow
   start, fast middle, tiny end falloff) up to the full `lh` at the outermost leg
