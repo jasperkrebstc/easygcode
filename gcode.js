@@ -281,14 +281,7 @@
       if (!attrOn || scale <= 0 || i < n - legs.m) return null;
       const q = i - (n - legs.m);
       const Dfull = ((2 * q + 1) * at.gap * lw) / 2;
-      const Dmax = ((2 * (legs.m - 1) + 1) * at.gap * lw) / 2;
-      const T = Math.max(1, Math.round((cfg.disc && cfg.disc.layers) || 1));
-      const drop = Math.max(0, Math.min(1, at.drop || 0));
-      // Down-slope pull-back: each point slides back along the overhang slope
-      // proportionally to how far it moved out, so the slope ANGLE is
-      // preserved while the layers pack together (see the z drop in generate).
-      const pb = T > 1 ? (drop * Dfull) / (Dmax * (T - 1)) : 0;
-      return { points: attrPts, r1: at.r1, r2: at.r2, D: Dfull * scale, pb: pb };
+      return { points: attrPts, r1: at.r1, r2: at.r2, D: Dfull * scale };
     }
 
     const loops = [];
@@ -555,9 +548,9 @@
             const dropH = Math.max(0, Math.min(1, at2.drop || 0));
             lines.push(
               '; overhang: max lateral step ' + stepLat.toFixed(2) + 'mm/layer, angle ' +
-                ((Math.atan2(stepLat, lh) * 180) / Math.PI).toFixed(1) + ' deg from vertical (preserved), drop=' +
-                dropH + ' -> layer spacing squeezed to ' + (lh * (1 - dropH / (T - 1))).toFixed(2) +
-                'mm at steepest'
+                ((Math.atan2(stepLat, lh) * 180) / Math.PI).toFixed(1) + ' deg from vertical, drop=' +
+                dropH + ' -> travel spacing squeezed to ' + (lh * (1 - dropH)).toFixed(2) +
+                'mm/pair at steepest (extrusion stays full height)'
             );
           }
         }
@@ -943,17 +936,19 @@
         // With the spread gradient, each layer gets its own loop set scaled
         // k/(T-1): collected at the bottom, fully spread at the top.
         //
-        // Overhang drop (nonplanar, slope-following): each point slides DOWN
-        // the overhang slope proportionally to how far it moved out — shift
-        // (in layer steps) = drop * w / Dmax, at most one step. The lateral
-        // part of the slide is applied during construction (attr.pb); here the
-        // vertical part: z = (k+1)*lh - drop*lh*(w/Dmax). At drop=1 the most-
-        // displaced point lands exactly on the layer below's original spot;
-        // the slope angle is preserved while the layers pack together.
+        // Overhang drop (nonplanar, accumulating): the TRAVEL height sinks in
+        // the overhang zone while EXTRUSION stays at the full local layer
+        // height — the squish deliberately overfills the reduced gap, since
+        // slanted layers have more volume to cover. Per-pair spacing at a
+        // point becomes hs*(1 - drop*ratio) with ratio = overhang steepness
+        // (D_loop*kfac / Dmax), so the nonplanarity accumulates: layer k sinks
+        // k x as much as layer 1. With w tagged at its own layer scale the
+        // accumulated drop collapses to z = zb - drop*hs*(T-1)*w/Dmax, where
+        // hs is the loop's own (dome-adjusted) layer height.
         const at3 = cfg.disc.attractor || {};
         const dropMult = attrGrad ? Math.max(0, Math.min(1, at3.drop || 0)) : 0;
         const DmaxA = legs ? ((2 * (legs.m - 1) + 1) * (at3.gap || 1) * lw) / 2 : 0;
-        const dropCoef = dropMult > 0 && DmaxA > 0 ? (dropMult * lh) / DmaxA : 0;
+        const dropOn = dropMult > 0 && DmaxA > 0;
         for (let k = 0; k < T; k++) {
           const z = (k + 1) * lh;
           if (k === 1 && includeStartEnd && fanPWM > 0) {
@@ -966,8 +961,8 @@
             : legLoops;
           const zPt = (i, pt) => {
             const zb = domed && k > 0 ? lh + k * loopH[i] : z;
-            if (!dropCoef) return zb;
-            const dc = domed ? (dropMult * loopH[i]) / DmaxA : dropCoef;
+            if (!dropOn) return zb;
+            const dc = (dropMult * loopH[i] * (T - 1)) / DmaxA;
             return Math.max(lh, zb - dc * (pt.w || 0));
           };
           travelAbs({ x: cx + loopsK[0][0].x, y: cy + loopsK[0][0].y, z: zPt(0, loopsK[0][0]) });
