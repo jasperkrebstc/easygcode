@@ -28,6 +28,32 @@
     return (ww - h) * h + Math.PI * (h / 2) * (h / 2);
   }
 
+  // Smooth radius profile through control points {h, s} (sorted, h in [0,1]).
+  // Catmull-Rom for a natural curve through the points; scale clamped to a
+  // small positive minimum so the wall can never collapse or invert.
+  function makeProfile(cps) {
+    return function (hf) {
+      const x = Math.max(0, Math.min(1, hf));
+      if (cps.length === 1) return Math.max(0.05, cps[0].s);
+      let i = 0;
+      while (i < cps.length - 2 && x > cps[i + 1].h) i++;
+      const p1 = cps[i];
+      const p2 = cps[i + 1];
+      const p0 = cps[i - 1] || p1;
+      const p3 = cps[i + 2] || p2;
+      const t = (x - p1.h) / ((p2.h - p1.h) || 1e-9);
+      const t2 = t * t;
+      const t3 = t2 * t;
+      const s =
+        0.5 *
+        (2 * p1.s +
+          (-p0.s + p2.s) * t +
+          (2 * p0.s - 5 * p1.s + 4 * p2.s - p3.s) * t2 +
+          (-p0.s + 3 * p1.s - 3 * p2.s + p3.s) * t3);
+      return Math.max(0.05, s);
+    };
+  }
+
   const f3 = (v) => v.toFixed(3);
   const f5 = (v) => v.toFixed(5);
   const dist3 = (a, b) => Math.hypot(b.x - a.x, b.y - a.y, b.z - a.z);
@@ -361,6 +387,7 @@
     }
 
     const isBS = cfg.project === 'bendstool';
+    const isVessel = cfg.project === 'vessel';
 
     let base = null;
     let sampler = null;
@@ -380,9 +407,36 @@
       }
     }
 
+    // ---- Vessel setup: radius profile + scaled base (wall centerline) ----
+    let vProfile = null;
+    let vBase = base;
+    let vAlt = false;
+    let vBottomLayers = 0;
+    let vWallN = 1;
+    if (isVessel) {
+      const ve = cfg.vessel || {};
+      const cps = [{ h: 0, s: ve.bottom > 0 ? ve.bottom : 1 }];
+      if (Number.isFinite(ve.midH) && ve.midH > 0.001 && ve.midH < 0.999) {
+        cps.push({ h: ve.midH, s: ve.mid > 0 ? ve.mid : 1 });
+      }
+      cps.push({ h: 1, s: ve.top > 0 ? ve.top : 1 });
+      cps.sort((a, b) => a.h - b.h);
+      vProfile = makeProfile(cps);
+      const s0 = vProfile(0);
+      vBase = base.map((p) => ({ x: p.x * s0, y: p.y * s0 }));
+      vAlt = ve.seamStyle === 'alternating';
+      vBottomLayers = Math.max(0, Math.round(ve.bottomLayers || 0));
+      vWallN = Math.max(1, Math.round((ve.height || lh) / lh));
+    }
+
     const area = beadArea(cfg.lineWidth, lh);
-    // Vase: loops = height/layerHeight (may be fractional). Disc: stacked layers.
-    const T = isBS ? Math.max(1, Math.round((cfg.disc && cfg.disc.layers) || 1)) : cfg.totalHeight / lh;
+    // Vase: loops = height/layerHeight (may be fractional). Disc/vessel: whole
+    // stacked layers / revolutions.
+    const T = isBS
+      ? Math.max(1, Math.round((cfg.disc && cfg.disc.layers) || 1))
+      : isVessel
+      ? vWallN
+      : cfg.totalHeight / lh;
     const Lmax = Math.ceil(T - 1e-9);
 
     // ---- Disc setup (bend stool) ----
@@ -562,6 +616,18 @@
         }
       }
       lines.push('; layerHeight=' + lh + ' lineWidth=' + cfg.lineWidth + ' tolerance=' + cfg.tolerance + 'mm');
+    } else if (isVessel) {
+      const ve = cfg.vessel || {};
+      lines.push(
+        '; vessel shape=' + cfg.shape + ' wallHeight=' + (vWallN * lh) + ' (snapped) bottomLayers=' +
+          vBottomLayers + ' seam=' + (vAlt ? 'zipper' : 'staircase')
+      );
+      lines.push(
+        '; profile (radius x): bottom=' + (ve.bottom != null ? ve.bottom : 1) +
+          ' mid=' + (ve.mid != null ? ve.mid : 1) + '@h' + (ve.midH != null ? ve.midH : 0.5) +
+          ' top=' + (ve.top != null ? ve.top : 1) + ' (Catmull-Rom loft)'
+      );
+      lines.push('; layerHeight=' + lh + ' lineWidth=' + cfg.lineWidth + ' tolerance=' + cfg.tolerance + 'mm');
     } else {
       lines.push('; shape=' + cfg.shape + ' tolerance=' + cfg.tolerance + 'mm seam=' + (cfg.seamSide || 'back'));
       lines.push('; layerHeight=' + lh + ' lineWidth=' + cfg.lineWidth + ' totalHeight=' + cfg.totalHeight);
@@ -664,7 +730,7 @@
 
     // ---- Brim ----
     const brim = cfg.brim;
-    const brimBase = isBS ? discOuterLoop : base;
+    const brimBase = isBS ? discOuterLoop : isVessel ? vBase : base;
     if (isBS && brim && brim.enabled && !brim.outer) {
       warnings.push('Inner brim skipped — the disc is solid there; use an outer brim.');
     }
@@ -874,7 +940,85 @@
     }
 
     // ---- Body ----
-    if (!isBS) {
+    if (isVessel) {
+      // Closed bottom (concentric fill, one line width inside the wall so the
+      // wall butts its outer edge), then the wall spiral from z=0 up and out
+      // along the radius profile, closed by a flat extrusion-ramp-down loop.
+      const tolV = cfg.tolerance > 0 ? cfg.tolerance : 0.05;
+      const wallH = vWallN * lh;
+      lines.push(
+        '; --- vessel: ' + vBottomLayers + '-layer bottom (' + (vAlt ? 'zipper' : 'staircase') +
+          ') + spiral wall to z=' + wallH.toFixed(2) + ' ---'
+      );
+
+      const innerBase = Geo.offsetClosed(vBase, -cfg.lineWidth);
+      const fill = Geo.ringFill(innerBase, cfg.lineWidth, tolV, vAlt, cfg.seamSide || 'back');
+      if (!fill.loops.length) {
+        warnings.push('Bottom is too small to fill at this line width — the vessel has no closed bottom.');
+      }
+      for (let k = 0; k < vBottomLayers && fill.loops.length; k++) {
+        const z = (k + 1) * lh;
+        if (k === 1 && includeStartEnd && fanPWM > 0) {
+          lines.push('M106 S' + fanPWM + ' ; part cooling fan on');
+        }
+        travelAbs({ x: fill.loops[0][0].x + cx, y: fill.loops[0][0].y + cy, z: z });
+        for (let i = 0; i < fill.loops.length; i++) {
+          const lp = fill.loops[i];
+          for (let q = i === 0 ? 1 : 0; q < lp.length; q++) {
+            emitSeg({ x: lp[q].x + cx, y: lp[q].y + cy, z: z }, cfg.printFeed, 1);
+          }
+        }
+      }
+
+      // Wall point at revolution L, fraction u — base scaled by the profile.
+      function vW(L, u) {
+        const sp = sampler.at(u);
+        const z = Math.min(lh * (L + u), wallH);
+        const s = vProfile(z / wallH);
+        return { x: sp.pos.x * s + cx, y: sp.pos.y * s + cy, z: z };
+      }
+      const startW = vW(0, 0);
+      travelAbs({ x: startW.x, y: startW.y, z: 0 });
+      let pu = 0;
+      for (let L = 0; L < vWallN; L++) {
+        if (L === 1 && includeStartEnd && fanPWM > 0 && vBottomLayers < 2) {
+          lines.push('M106 S' + fanPWM + ' ; part cooling fan on after ramp loop');
+        }
+        for (let i = 0; i < uSet.length; i++) {
+          const u = uSet[i];
+          if (u <= 1e-9) continue;
+          const w = vW(L, u);
+          const ramp = L === 0 ? Math.max(0, Math.min(1, (pu + u) / 2)) : 1;
+          emitSeg(w, cfg.printFeed, ramp);
+          pu = u;
+        }
+        const wEnd = vW(L, 1);
+        const rampEnd = L === 0 ? Math.max(0, Math.min(1, (pu + 1) / 2)) : 1;
+        emitSeg(wEnd, cfg.printFeed, rampEnd);
+        pu = 0;
+      }
+
+      // Flat top: one revolution at z=wallH with the extrusion ramping 1 -> 0
+      // and no height gain, so the top closes off cleanly on top of the last
+      // loop and tapers to nothing at the seam.
+      lines.push('; flat top: no z gain, extrusion ramps to zero for a clean finish');
+      const sTop = vProfile(1);
+      pu = 0;
+      for (let i = 0; i < uSet.length; i++) {
+        const u = uSet[i];
+        if (u <= 1e-9) continue;
+        const sp = sampler.at(u);
+        const ramp = Math.max(0, Math.min(1, 1 - (pu + u) / 2));
+        emitSeg({ x: sp.pos.x * sTop + cx, y: sp.pos.y * sTop + cy, z: wallH }, cfg.printFeed, ramp);
+        pu = u;
+      }
+      const spTop = sampler.at(0);
+      emitSeg(
+        { x: spTop.pos.x * sTop + cx, y: spTop.pos.y * sTop + cy, z: wallH },
+        cfg.printFeed,
+        Math.max(0, Math.min(1, 1 - (pu + 1) / 2))
+      );
+    } else if (!isBS) {
       lines.push(
         '; --- vase spiral' + (patternOn ? ' + ' + type : '') + (hangOn ? ' + hanger' : '') + ' ---'
       );
@@ -1033,5 +1177,5 @@
     return { gcode: lines.join('\n') + '\n', warnings, stats, path };
   }
 
-  window.GcodeGen = { generate, beadArea, discSpec, discLoops, LEG_ANGLES };
+  window.GcodeGen = { generate, beadArea, discSpec, discLoops, LEG_ANGLES, makeProfile };
 })();

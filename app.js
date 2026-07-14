@@ -15,7 +15,27 @@
   let lastGcode = '';
 
   function activeProject() {
-    return $('activeProject').value === 'bendstool' ? 'bendstool' : 'cordhanger';
+    const v = $('activeProject').value;
+    return v === 'bendstool' || v === 'vessel' ? v : 'cordhanger';
+  }
+
+  // Read a shape select + its params for the given input-id prefix ('' for the
+  // coat hanger, 've_' for the vessel) so both share one shape model.
+  function readShape(pre) {
+    const shape = $(pre + 'shape').value;
+    const shapeParams = {
+      circle: { radius: num(pre + 'circle_radius') },
+      roundedRect: {
+        width: num(pre + 'rect_width'),
+        length: num(pre + 'rect_length'),
+        fillet: num(pre + 'rect_fillet'),
+      },
+      ellipse: { rx: num(pre + 'ellipse_rx'), ry: num(pre + 'ellipse_ry') },
+      polygon: { radius: num(pre + 'poly_radius'), sides: num(pre + 'poly_sides') },
+      star: { outerR: num(pre + 'star_outer'), innerR: num(pre + 'star_inner'), points: num(pre + 'star_points') },
+      squircle: { size: num(pre + 'sq_size'), n: num(pre + 'sq_n') },
+    }[shape];
+    return { shape: shape, shapeParams: shapeParams };
   }
 
   // Shared card readers, parameterized by the project's input-id prefix so
@@ -90,24 +110,39 @@
       };
     }
 
-    const shape = $('shape').value;
-    const shapeParams = {
-      circle: { radius: num('circle_radius') },
-      roundedRect: {
-        width: num('rect_width'),
-        length: num('rect_length'),
-        fillet: num('rect_fillet'),
-      },
-      ellipse: { rx: num('ellipse_rx'), ry: num('ellipse_ry') },
-      polygon: { radius: num('poly_radius'), sides: num('poly_sides') },
-      star: { outerR: num('star_outer'), innerR: num('star_inner'), points: num('star_points') },
-      squircle: { size: num('sq_size'), n: num('sq_n') },
-    }[shape];
+    if (activeProject() === 'vessel') {
+      const vs = readShape('ve_');
+      return {
+        project: 'vessel',
+        printer: readPrinter('ve_'),
+        layerHeight: num('ve_layerHeight'),
+        lineWidth: num('ve_lineWidth'),
+        printFeed: num('ve_printFeed'),
+        travelFeed: num('ve_travelFeed'),
+        tolerance: num('ve_tolerance'),
+        seamSide: $('ve_seamSide').value,
+        centerX: num('ve_centerX'),
+        centerY: num('ve_centerY'),
+        shape: vs.shape,
+        shapeParams: vs.shapeParams,
+        vessel: {
+          height: num('ve_height'),
+          bottomLayers: Math.max(0, Math.round(num('ve_bottomLayers'))),
+          seamStyle: $('ve_seamStyle').value === 'alternating' ? 'alternating' : 'staircase',
+          bottom: num('ve_profBottom'),
+          midH: num('ve_profMidH'),
+          mid: num('ve_profMid'),
+          top: num('ve_profTop'),
+        },
+        brim: readBrim('ve_'),
+      };
+    }
 
+    const cs = readShape('');
     return {
       project: 'cordhanger',
-      shape,
-      shapeParams,
+      shape: cs.shape,
+      shapeParams: cs.shapeParams,
       printer: readPrinter(''),
       layerHeight: num('layerHeight'),
       lineWidth: num('lineWidth'),
@@ -208,6 +243,35 @@
       return validatePrinter(cfg) || validateBrim(cfg.brim);
     }
 
+    if (cfg.project === 'vessel') {
+      const vchecks = {
+        'layer height': cfg.layerHeight,
+        'line width': cfg.lineWidth,
+        'wall height': cfg.vessel.height,
+        'print feed': cfg.printFeed,
+        'travel feed': cfg.travelFeed,
+        'chord tolerance': cfg.tolerance,
+      };
+      for (const name in vchecks) {
+        if (!isPos(vchecks[name])) return 'Enter a valid ' + name + ' (must be greater than 0).';
+      }
+      if (!Number.isFinite(cfg.centerX) || !Number.isFinite(cfg.centerY))
+        return 'Enter valid bed center X/Y.';
+      if (!Number.isInteger(cfg.vessel.bottomLayers) || cfg.vessel.bottomLayers < 0)
+        return 'Bottom layers must be 0 or more.';
+      const pr = cfg.vessel;
+      if (!isPos(pr.bottom) || !isPos(pr.mid) || !isPos(pr.top))
+        return 'Profile scales must be greater than 0.';
+      if (!Number.isFinite(pr.midH) || pr.midH < 0 || pr.midH > 1)
+        return 'Middle height must be between 0 and 1.';
+      for (const k in cfg.shapeParams) {
+        const v = cfg.shapeParams[k];
+        if (!Number.isFinite(v)) return 'Enter a valid value for ' + k + '.';
+        if (k !== 'fillet' && v <= 0) return 'Shape value "' + k + '" must be greater than 0.';
+      }
+      return validatePrinter(cfg) || validateBrim(cfg.brim);
+    }
+
     const checks = {
       'layer height': cfg.layerHeight,
       'line width': cfg.lineWidth,
@@ -250,8 +314,8 @@
     return null;
   }
 
-  function showShapeParams(shape) {
-    document.querySelectorAll('.shape-params').forEach((el) => {
+  function showShapeParams(shape, cls) {
+    document.querySelectorAll('.' + (cls || 'shape-params')).forEach((el) => {
       el.hidden = el.getAttribute('data-shape') !== shape;
     });
   }
@@ -260,6 +324,7 @@
     [
       ['printerMode', 'printer-params', 'printerHint'],
       ['bs_printerMode', 'printer-params-bs', 'bs_printerHint'],
+      ['ve_printerMode', 'printer-params-ve', 've_printerHint'],
     ].forEach(([selId, cls, hintId]) => {
       const sel = $(selId);
       if (!sel) return;
@@ -280,6 +345,7 @@
     });
     $('tabCordhanger').classList.toggle('active', p === 'cordhanger');
     $('tabBendstool').classList.toggle('active', p === 'bendstool');
+    $('tabVessel').classList.toggle('active', p === 'vessel');
   }
 
   function showPatternParams(type) {
@@ -296,6 +362,10 @@
   function drawPreview(cfg) {
     if (cfg.project === 'bendstool') {
       drawPreviewBS(cfg);
+      return;
+    }
+    if (cfg.project === 'vessel') {
+      drawPreviewVessel(cfg);
       return;
     }
     const canvas = $('preview');
@@ -518,6 +588,176 @@
     }
   }
 
+  // Vessel: top-view (base shape + bottom fill rings + wall + brim) and a
+  // side-profile silhouette from the radius control points.
+  function drawPreviewVessel(cfg) {
+    const ve = cfg.vessel;
+    const lh = cfg.layerHeight;
+    const nWall = isPos(lh) && isPos(ve.height) ? Math.max(1, Math.round(ve.height / lh)) : 0;
+    $('ve_hint').textContent =
+      'wall ' + (nWall * lh).toFixed(1) + ' mm (' + nWall + ' rev' + (nWall === 1 ? '' : 's') + ') · bottom ' +
+      ve.bottomLayers + ' layer' + (ve.bottomLayers === 1 ? '' : 's') + ' · ' +
+      (ve.seamStyle === 'alternating' ? 'zipper' : 'staircase') + ' seam · flat ramp-down top';
+
+    const canvas = $('ve_preview');
+    const ctx = canvas.getContext('2d');
+    const W = canvas.width;
+    const H = canvas.height;
+    ctx.clearRect(0, 0, W, H);
+    const sf = W / 600;
+
+    let base = null;
+    try {
+      base = window.Geo.rotateToSeam(
+        window.Geo.adaptiveShape(cfg.shape, cfg.shapeParams, isPos(cfg.tolerance) ? cfg.tolerance : 0.05),
+        cfg.seamSide
+      );
+    } catch (e) {
+      base = null;
+    }
+    if (base && base.length && Number.isFinite(base[0].x) && isPos(cfg.lineWidth)) {
+      const s0 = isPos(ve.bottom) ? ve.bottom : 1;
+      const wall = base.map((p) => ({ x: p.x * s0, y: p.y * s0 }));
+      const lw = cfg.lineWidth;
+      const tol = isPos(cfg.tolerance) ? cfg.tolerance : 0.05;
+      let fill = { loops: [], outline: null };
+      try {
+        fill = window.Geo.ringFill(window.Geo.offsetClosed(wall, -lw), lw, tol, ve.seamStyle === 'alternating', cfg.seamSide);
+      } catch (e) {
+        fill = { loops: [], outline: null };
+      }
+      const brimLoops = [];
+      if (cfg.brim.enabled && cfg.brim.lines > 0 && isPos(cfg.brim.lineWidth)) {
+        const dir = cfg.brim.outer ? 1 : -1;
+        for (let k = 1; k <= cfg.brim.lines; k++) {
+          const d = cfg.brim.lineWidth / 2 + lw / 2 + (k - 1) * cfg.brim.lineWidth;
+          brimLoops.push(window.Geo.offsetClosed(wall, dir * d));
+        }
+      }
+      let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+      [wall].concat(brimLoops).forEach((l) =>
+        l.forEach((p) => {
+          if (p.x < minX) minX = p.x;
+          if (p.x > maxX) maxX = p.x;
+          if (p.y < minY) minY = p.y;
+          if (p.y > maxY) maxY = p.y;
+        })
+      );
+      const pad = 30 * sf;
+      const scale = Math.min((W - 2 * pad) / (maxX - minX || 1), (H - 2 * pad) / (maxY - minY || 1));
+      const ox = (minX + maxX) / 2;
+      const oy = (minY + maxY) / 2;
+      const tx = (p) => W / 2 + (p.x - ox) * scale;
+      const ty = (p) => H / 2 - (p.y - oy) * scale;
+      const strokeArr = (loop, color, width, close) => {
+        ctx.beginPath();
+        loop.forEach((p, i) => (i === 0 ? ctx.moveTo(tx(p), ty(p)) : ctx.lineTo(tx(p), ty(p))));
+        if (close) ctx.closePath();
+        ctx.strokeStyle = color;
+        ctx.lineWidth = width;
+        ctx.stroke();
+      };
+      fill.loops.forEach((lp) => strokeArr(lp, '#2bd9a0', 1.2 * sf, false));
+      if (brimLoops.length) {
+        ctx.setLineDash([5 * sf, 4 * sf]);
+        brimLoops.forEach((l) => strokeArr(l, '#8a8f98', 1 * sf, true));
+        ctx.setLineDash([]);
+      }
+      strokeArr(wall, '#4f9dff', 2.5 * sf, true);
+      const seam = wall[0];
+      ctx.beginPath();
+      ctx.arc(tx(seam), ty(seam), 7 * sf, 0, 2 * Math.PI);
+      ctx.fillStyle = '#ff5252';
+      ctx.fill();
+      ctx.lineWidth = 2 * sf;
+      ctx.strokeStyle = '#fff';
+      ctx.stroke();
+    }
+
+    drawVesselProfile(cfg);
+  }
+
+  // Side silhouette: radius scale (× base max radius) vs height, mirrored, with
+  // the control points marked. Shows exactly the lofted profile the wall uses.
+  function drawVesselProfile(cfg) {
+    const canvas = $('ve_profile');
+    const ctx = canvas.getContext('2d');
+    const W = canvas.width;
+    const H = canvas.height;
+    ctx.clearRect(0, 0, W, H);
+    const sf = W / 600;
+    const ve = cfg.vessel;
+    if (!isPos(ve.height)) return;
+
+    const cps = [{ h: 0, s: isPos(ve.bottom) ? ve.bottom : 1 }];
+    if (Number.isFinite(ve.midH) && ve.midH > 0.001 && ve.midH < 0.999) {
+      cps.push({ h: ve.midH, s: isPos(ve.mid) ? ve.mid : 1 });
+    }
+    cps.push({ h: 1, s: isPos(ve.top) ? ve.top : 1 });
+    cps.sort((a, b) => a.h - b.h);
+    const prof = window.GcodeGen.makeProfile(cps);
+
+    let baseR = 30;
+    try {
+      const b = window.Geo.adaptiveShape(cfg.shape, cfg.shapeParams, 0.3);
+      baseR = Math.max.apply(null, b.map((p) => Math.hypot(p.x, p.y)));
+    } catch (e) {
+      baseR = 30;
+    }
+    const H0 = ve.height;
+    const N = 120;
+    const pts = [];
+    for (let i = 0; i <= N; i++) {
+      const hf = i / N;
+      pts.push({ r: baseR * prof(hf), z: hf * H0 });
+    }
+    const maxR = Math.max.apply(null, pts.map((p) => p.r)) * 1.06 || 1;
+    const pad = 24 * sf;
+    const sx = (W / 2 - pad) / maxR;
+    const sz = (H - 2 * pad) / (H0 || 1);
+    const cxp = W / 2;
+    const bottomY = H - pad;
+    const X = (r) => cxp + r * sx;
+    const Y = (z) => bottomY - z * sz;
+
+    ctx.beginPath();
+    pts.forEach((p, i) => (i === 0 ? ctx.moveTo(X(p.r), Y(p.z)) : ctx.lineTo(X(p.r), Y(p.z))));
+    for (let i = pts.length - 1; i >= 0; i--) ctx.lineTo(X(-pts[i].r), Y(pts[i].z));
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(79,157,255,0.18)';
+    ctx.fill();
+    ctx.strokeStyle = '#4f9dff';
+    ctx.lineWidth = 2 * sf;
+    ctx.stroke();
+
+    ctx.strokeStyle = 'rgba(154,163,178,0.35)';
+    ctx.lineWidth = 1 * sf;
+    ctx.setLineDash([4 * sf, 4 * sf]);
+    ctx.beginPath();
+    ctx.moveTo(cxp, Y(0));
+    ctx.lineTo(cxp, Y(H0));
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    ctx.strokeStyle = 'rgba(43,217,160,0.8)';
+    ctx.lineWidth = 2.5 * sf;
+    ctx.beginPath();
+    ctx.moveTo(X(-pts[0].r), Y(0));
+    ctx.lineTo(X(pts[0].r), Y(0));
+    ctx.stroke();
+
+    ctx.fillStyle = '#ff5252';
+    cps.forEach((cp) => {
+      const r = baseR * cp.s;
+      const z = cp.h * H0;
+      [r, -r].forEach((rr) => {
+        ctx.beginPath();
+        ctx.arc(X(rr), Y(z), 4.5 * sf, 0, 2 * Math.PI);
+        ctx.fill();
+      });
+    });
+  }
+
   // --- 3D toolpath viewer ---
   // One finger: orbit. Two fingers: pinch to zoom + pan. Double-tap: reset
   // zoom/pan. Mouse wheel zooms too. The camera fit is computed once per
@@ -730,6 +970,8 @@
     if (cfg.project === 'cordhanger') {
       showShapeParams(cfg.shape);
       showPatternParams(cfg.pattern.type);
+    } else if (cfg.project === 'vessel') {
+      showShapeParams(cfg.shape, 've-shape-params');
     }
     syncPrinterCards();
   }
@@ -844,16 +1086,17 @@
   // Size canvas backing stores to the displayed size × devicePixelRatio so
   // lines are crisp on retina screens (drawing code scales strokes via W/600).
   function fitCanvases() {
-    ['preview', 'previewBS', 'preview3d'].forEach((id) => {
+    ['preview', 'previewBS', 've_preview', 've_profile', 'preview3d'].forEach((id) => {
       const c = $(id);
       const dpr = Math.min(window.devicePixelRatio || 1, 2.5);
       const w = c.clientWidth || 600;
       // Cap the backing store so a canvas can never feed back into its own
       // layout size and grow without bound (belt-and-braces vs missing CSS).
       const px = Math.min(1600, Math.round(w * dpr));
-      if (px > 0 && c.width !== px) {
+      const py = id === 've_profile' ? Math.round(px * 0.6) : px; // profile is wide, not square
+      if (px > 0 && (c.width !== px || c.height !== py)) {
         c.width = px;
-        c.height = px;
+        c.height = py;
       }
     });
   }
@@ -886,6 +1129,7 @@
     $('hangFields').hidden = !$('hangEnabled').checked;
     $('bs_brimFields').hidden = !$('bs_brimEnabled').checked;
     $('bs_legFields').hidden = !$('bs_legsEnabled').checked;
+    $('ve_brimFields').hidden = !$('ve_brimEnabled').checked;
     showProject(activeProject());
   }
 
@@ -915,6 +1159,39 @@
       else b.value = a.value;
     });
     $('bs_brimFields').hidden = !$('bs_brimEnabled').checked;
+  }
+
+  // Same idea for the vessel: seed its generic settings + shape from the cord
+  // hanger the first time it appears, then it stays independent.
+  const SEED_MAP_VE = {
+    layerHeight: 've_layerHeight', lineWidth: 've_lineWidth',
+    printFeed: 've_printFeed', travelFeed: 've_travelFeed',
+    tolerance: 've_tolerance', seamSide: 've_seamSide', centerX: 've_centerX', centerY: 've_centerY',
+    printerMode: 've_printerMode', extrusionMultiplier: 've_extrusionMultiplier',
+    startEndEnabled: 've_startEndEnabled',
+    filDiameter: 've_filDiameter', filNozzleTemp: 've_filNozzleTemp',
+    filBedTemp: 've_filBedTemp', filFan: 've_filFan',
+    pelUpTemp: 've_pelUpTemp', pelMidTemp: 've_pelMidTemp', pelDownTemp: 've_pelDownTemp',
+    pelBedTemp: 've_pelBedTemp', pelPA: 've_pelPA', pelPurge: 've_pelPurge', pelFan: 've_pelFan',
+    shape: 've_shape',
+    circle_radius: 've_circle_radius', rect_width: 've_rect_width', rect_length: 've_rect_length',
+    rect_fillet: 've_rect_fillet', ellipse_rx: 've_ellipse_rx', ellipse_ry: 've_ellipse_ry',
+    poly_radius: 've_poly_radius', poly_sides: 've_poly_sides',
+    star_outer: 've_star_outer', star_inner: 've_star_inner', star_points: 've_star_points',
+    sq_size: 've_sq_size', sq_n: 've_sq_n',
+    brimEnabled: 've_brimEnabled', brimOuter: 've_brimOuter', brimLines: 've_brimLines',
+    brimLineWidth: 've_brimLineWidth', brimLayerHeight: 've_brimLayerHeight', brimFeed: 've_brimFeed',
+  };
+
+  function seedVessel() {
+    Object.keys(SEED_MAP_VE).forEach((src) => {
+      const a = $(src);
+      const b = $(SEED_MAP_VE[src]);
+      if (!a || !b) return;
+      if (a.type === 'checkbox') b.checked = a.checked;
+      else b.value = a.value;
+    });
+    $('ve_brimFields').hidden = !$('ve_brimEnabled').checked;
   }
 
   // Double-buffered save: the previous good state is kept under a backup key,
@@ -1032,6 +1309,11 @@
     updateShapeUI();
   });
 
+  $('ve_brimEnabled').addEventListener('change', () => {
+    $('ve_brimFields').hidden = !$('ve_brimEnabled').checked;
+    updateShapeUI();
+  });
+
   function switchProject(p) {
     $('activeProject').value = p;
     showProject(p);
@@ -1041,6 +1323,7 @@
   }
   $('tabCordhanger').addEventListener('click', () => switchProject('cordhanger'));
   $('tabBendstool').addEventListener('click', () => switchProject('bendstool'));
+  $('tabVessel').addEventListener('click', () => switchProject('vessel'));
 
   $('regenBtn').addEventListener('click', regenerate);
   $('copyBtn').addEventListener('click', copy);
@@ -1085,6 +1368,7 @@
   // generic settings from the cord hanger the first time after the tabs update.
   const restored = restoreLocal();
   if (restored && !('bs_layerHeight' in restored)) seedBendstool();
+  if (restored && !('ve_layerHeight' in restored)) seedVessel();
   showProject(activeProject());
   fitCanvases();
   updateShapeUI();

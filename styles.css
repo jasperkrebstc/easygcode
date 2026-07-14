@@ -176,6 +176,8 @@ select {
 
 canvas#preview,
 canvas#previewBS,
+canvas#ve_preview,
+canvas#ve_profile,
 canvas#preview3d {
   width: 100%;
   height: auto;
@@ -185,6 +187,17 @@ canvas#preview3d {
   border-radius: 12px;
   margin-top: 12px;
   display: block;
+}
+
+canvas#ve_profile {
+  aspect-ratio: 5 / 3;
+}
+
+h3.subhead {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--muted, #9aa3b2);
+  margin: 14px 0 2px;
 }
 
 canvas#preview3d {
