@@ -688,14 +688,32 @@
   function ringFill(outer, lw, tol, alt, seamSide) {
     const n = outer.length;
     if (n < 3) return { loops: [], outline: null };
+    // Area centroid (not the vertex average, which skews with point density) —
+    // so scaled rings stay truly concentric and connectors land radially.
     let cx = 0;
     let cy = 0;
+    let a2 = 0;
     for (let i = 0; i < n; i++) {
-      cx += outer[i].x;
-      cy += outer[i].y;
+      const p = outer[i];
+      const q = outer[(i + 1) % n];
+      const cross = p.x * q.y - q.x * p.y;
+      a2 += cross;
+      cx += (p.x + q.x) * cross;
+      cy += (p.y + q.y) * cross;
     }
-    cx /= n;
-    cy /= n;
+    if (Math.abs(a2) < 1e-9) {
+      cx = 0;
+      cy = 0;
+      for (let i = 0; i < n; i++) {
+        cx += outer[i].x;
+        cy += outer[i].y;
+      }
+      cx /= n;
+      cy /= n;
+    } else {
+      cx /= 3 * a2;
+      cy /= 3 * a2;
+    }
     let Rmax = 0;
     for (let i = 0; i < n; i++) {
       const d = Math.hypot(outer[i].x - cx, outer[i].y - cy);
@@ -709,22 +727,45 @@
     }
     const outline = rings[0].slice();
     rings.reverse(); // inner -> outer
-    const loops = [];
-    for (let idx = 0; idx < rings.length; idx++) {
-      const r = rotateToSeam(rings[idx], seamSide);
+
+    // Resample every ring to the SAME N points, each starting at the seam. The
+    // rings are radial scaled copies, so sample j is radially aligned across
+    // them — connecting two rings at the same index is a clean radial step.
+    let outerPer = perimeter(rings[rings.length - 1]);
+    const N = Math.max(48, Math.ceil(outerPer / Math.max(tol * 8, 0.5)));
+    const S = rings.map((r) => resampleClosed(rotateToSeam(r, seamSide), N));
+    const gapN = rings.map((r) => {
       const per = perimeter(r);
-      const N = Math.max(24, Math.ceil(per / Math.max(tol * 8, 0.4)));
-      const M = resampleClosed(r, N); // even by arc length, M[0] at the seam
-      const gN = Math.max(1, Math.min(N - 2, Math.round((lw / per) * N)));
-      let seq;
-      if (alt && idx % 2 === 1) {
-        // Zipper: reverse direction (M[0], M[N-1], M[N-2], ...), same seam.
-        seq = [M[0]];
-        for (let k = N - 1; k >= 1; k--) seq.push(M[k]);
-      } else {
-        seq = M.slice(); // M[0..N-1]
+      return Math.max(1, Math.min(N - 2, Math.round((lw / per) * N)));
+    });
+
+    const loops = [];
+    if (!alt) {
+      // Staircase: innermost anchored at the seam; each ring traces forward and
+      // stops one line width before its start, and the next (outer) ring begins
+      // exactly where this one ended (same index -> radial connector). The seam
+      // drifts outward, and every ring's gap is bridged by the next connector.
+      let startIdx = 0;
+      for (let i = 0; i < S.length; i++) {
+        const cnt = N - gapN[i]; // segments to trace (leave the gap)
+        const poly = [];
+        for (let t = 0; t <= cnt; t++) poly.push(S[i][(startIdx + t) % N]);
+        loops.push(poly);
+        startIdx = (startIdx + cnt) % N;
       }
-      loops.push(seq.slice(0, N - gN + 1)); // seam -> around -> stop gN before
+    } else {
+      // Zipper: gap held at the fixed seam, every other ring reversed, so the
+      // connectors alternate sides at the seam (hard U-turns, no drift).
+      for (let i = 0; i < S.length; i++) {
+        const cnt = N - gapN[i];
+        const poly = [];
+        if (i % 2 === 0) {
+          for (let t = 0; t <= cnt; t++) poly.push(S[i][t % N]);
+        } else {
+          for (let t = 0; t <= cnt; t++) poly.push(S[i][(N - t) % N]);
+        }
+        loops.push(poly);
+      }
     }
     return { loops: loops, outline: outline };
   }

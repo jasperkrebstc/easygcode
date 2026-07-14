@@ -657,13 +657,30 @@
         ctx.lineWidth = width;
         ctx.stroke();
       };
-      fill.loops.forEach((lp) => strokeArr(lp, '#2bd9a0', 1.2 * sf, false));
       if (brimLoops.length) {
         ctx.setLineDash([5 * sf, 4 * sf]);
         brimLoops.forEach((l) => strokeArr(l, '#8a8f98', 1 * sf, true));
         ctx.setLineDash([]);
       }
-      strokeArr(wall, '#4f9dff', 2.5 * sf, true);
+      // Bottom fill: rings in blue, radial/zipper connectors in orange — the
+      // same seam display as the bend stool. Traced inner -> outer.
+      let prevEnd = null;
+      for (let i = 0; i < fill.loops.length; i++) {
+        const lp = fill.loops[i];
+        if (!lp.length) continue;
+        if (prevEnd) {
+          ctx.beginPath();
+          ctx.moveTo(tx(prevEnd), ty(prevEnd));
+          ctx.lineTo(tx(lp[0]), ty(lp[0]));
+          ctx.strokeStyle = '#ffb454';
+          ctx.lineWidth = 1.6 * sf;
+          ctx.stroke();
+        }
+        strokeArr(lp, '#4f9dff', 1.4 * sf, false);
+        prevEnd = lp[lp.length - 1];
+      }
+      // Wall outline (thicker, the vessel's outer edge).
+      strokeArr(wall, '#6fb4ff', 2.5 * sf, true);
       const seam = wall[0];
       ctx.beginPath();
       ctx.arc(tx(seam), ty(seam), 7 * sf, 0, 2 * Math.PI);
