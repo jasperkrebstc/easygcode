@@ -43,6 +43,22 @@ keep **fully independent settings** per project:
   curve — heights accumulate into a dished, curvy seat, the legs get a U-profile,
   and extrusion follows each loop's actual bead height.
 
+- **Vessel** — simple trays, vases and cylinders. Reuses the same base **shapes**
+  (circle, rounded rectangle, ellipse, polygon, star, squircle) and **print
+  settings / printer modes** as the other projects. A **closed bottom** is printed
+  first as a concentric solid fill of the footprint (scaled inward from a true
+  one-line-width offset so its outer edge butts the wall's inner face), in the same
+  *staircase* or *zipper* **seam** styles as the bend-stool seat, over a
+  configurable number of **bottom layers**. The **wall** is then a continuous
+  vase-mode spiral just outside the bottom, starting again at `z = 0` (so the bottom
+  sits inside it) and ramping extrusion up over the first revolution. A **radius
+  profile** — bottom / middle / top scale control points, lofted with a Catmull-Rom
+  curve and shown as a live side-silhouette preview — tapers the wall with height
+  for cones, bellied vases, and flared trays (all `1` = a straight prism). The wall
+  height snaps to a whole number of layers, and the **last revolution is a flat cap**:
+  it holds `z` constant and ramps the extrusion back down to zero, closing the top
+  cleanly. Separate **brim** settings, like the other projects.
+
 The coat hanger is a dead-simple, phone-first tool to generate **vase-mode G-code** for
 **Klipper pellet 3D printing** (or the Bambu P1P in filament mode). Pick a cross-section
 shape, set layer height / line width / total height, optionally add a brim, and get a

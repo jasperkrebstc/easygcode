@@ -24,6 +24,7 @@
     <nav class="tabs">
       <button type="button" id="tabCordhanger" class="tab active">Coat hanger</button>
       <button type="button" id="tabBendstool" class="tab">Bend stool</button>
+      <button type="button" id="tabVessel" class="tab">Vessel</button>
     </nav>
     <input type="hidden" id="activeProject" value="cordhanger" />
 
@@ -304,6 +305,148 @@
           <div class="field"><label>Brim line width (mm)</label><input type="number" id="bs_brimLineWidth" value="2.0" min="0.1" step="0.1" /></div>
           <div class="field"><label>Brim layer height (mm)</label><input type="number" id="bs_brimLayerHeight" value="0.6" min="0.05" step="0.05" /></div>
           <div class="field"><label>Brim feedrate (mm/min)</label><input type="number" id="bs_brimFeed" value="1800" min="1" step="50" /></div>
+        </div>
+      </section>
+
+      <section class="card" data-project="vessel" hidden>
+        <h2>
+          Printer &amp; material
+          <label class="toggle"><input type="checkbox" id="ve_startEndEnabled" checked /> start/end G-code</label>
+        </h2>
+        <div class="grid">
+          <div class="field">
+            <label>Printer</label>
+            <select id="ve_printerMode">
+              <option value="pellet">Pellet (Klipper)</option>
+              <option value="filament">Filament (Marlin)</option>
+            </select>
+          </div>
+          <div class="field"><label>Extrusion multiplier</label><input type="number" id="ve_extrusionMultiplier" value="1.0" min="0.01" step="0.01" /></div>
+        </div>
+        <div class="printer-params-ve grid" data-mode="pellet">
+          <div class="field"><label>Zone up temp (°C)</label><input type="number" id="ve_pelUpTemp" value="210" min="0" step="5" /></div>
+          <div class="field"><label>Zone mid temp (°C)</label><input type="number" id="ve_pelMidTemp" value="210" min="0" step="5" /></div>
+          <div class="field"><label>Zone down temp (°C)</label><input type="number" id="ve_pelDownTemp" value="210" min="0" step="5" /></div>
+          <div class="field"><label>Bed temp (°C)</label><input type="number" id="ve_pelBedTemp" value="50" min="0" step="5" /></div>
+          <div class="field"><label>Pressure advance</label><input type="number" id="ve_pelPA" value="0.3" min="0" step="0.05" /></div>
+          <div class="field"><label>Purge quantity</label><input type="number" id="ve_pelPurge" value="5000" min="0" step="100" /></div>
+          <div class="field"><label>Fan (%)</label><input type="number" id="ve_pelFan" value="0" min="0" max="100" step="5" /></div>
+        </div>
+        <div class="printer-params-ve grid" data-mode="filament" hidden>
+          <div class="field"><label>Filament diameter (mm)</label><input type="number" id="ve_filDiameter" value="1.75" min="0.1" step="0.05" /></div>
+          <div class="field"><label>Nozzle temp (°C)</label><input type="number" id="ve_filNozzleTemp" value="205" min="0" step="5" /></div>
+          <div class="field"><label>Bed temp (°C)</label><input type="number" id="ve_filBedTemp" value="60" min="0" step="5" /></div>
+          <div class="field"><label>Fan (%)</label><input type="number" id="ve_filFan" value="100" min="0" max="100" step="5" /></div>
+        </div>
+        <p class="hint" id="ve_printerHint"></p>
+      </section>
+
+      <section class="card" data-project="vessel" hidden>
+        <h2>Shape</h2>
+        <div class="field">
+          <label for="ve_shape">Cross-section</label>
+          <select id="ve_shape">
+            <option value="circle">Circle</option>
+            <option value="roundedRect">Rounded rectangle</option>
+            <option value="ellipse">Ellipse</option>
+            <option value="polygon">Polygon</option>
+            <option value="star">Star</option>
+            <option value="squircle">Squircle</option>
+          </select>
+        </div>
+
+        <div class="ve-shape-params" data-shape="circle">
+          <div class="field"><label>Radius (mm)</label><input type="number" id="ve_circle_radius" value="30" min="0.1" step="0.5" /></div>
+        </div>
+        <div class="ve-shape-params" data-shape="roundedRect" hidden>
+          <div class="field"><label>Width X (mm)</label><input type="number" id="ve_rect_width" value="60" min="0.1" step="0.5" /></div>
+          <div class="field"><label>Length Y (mm)</label><input type="number" id="ve_rect_length" value="40" min="0.1" step="0.5" /></div>
+          <div class="field"><label>Corner fillet (mm)</label><input type="number" id="ve_rect_fillet" value="8" min="0" step="0.5" /></div>
+        </div>
+        <div class="ve-shape-params" data-shape="ellipse" hidden>
+          <div class="field"><label>Radius X (mm)</label><input type="number" id="ve_ellipse_rx" value="40" min="0.1" step="0.5" /></div>
+          <div class="field"><label>Radius Y (mm)</label><input type="number" id="ve_ellipse_ry" value="25" min="0.1" step="0.5" /></div>
+        </div>
+        <div class="ve-shape-params" data-shape="polygon" hidden>
+          <div class="field"><label>Radius (mm)</label><input type="number" id="ve_poly_radius" value="30" min="0.1" step="0.5" /></div>
+          <div class="field"><label>Sides</label><input type="number" id="ve_poly_sides" value="6" min="3" step="1" /></div>
+        </div>
+        <div class="ve-shape-params" data-shape="star" hidden>
+          <div class="field"><label>Outer radius (mm)</label><input type="number" id="ve_star_outer" value="35" min="0.1" step="0.5" /></div>
+          <div class="field"><label>Inner radius (mm)</label><input type="number" id="ve_star_inner" value="18" min="0.1" step="0.5" /></div>
+          <div class="field"><label>Points</label><input type="number" id="ve_star_points" value="5" min="2" step="1" /></div>
+        </div>
+        <div class="ve-shape-params" data-shape="squircle" hidden>
+          <div class="field"><label>Size (mm)</label><input type="number" id="ve_sq_size" value="30" min="0.1" step="0.5" /></div>
+          <div class="field"><label>Exponent n</label><input type="number" id="ve_sq_n" value="4" min="0.2" step="0.1" /></div>
+        </div>
+
+        <canvas id="ve_preview" width="600" height="600"></canvas>
+      </section>
+
+      <section class="card" data-project="vessel" hidden>
+        <h2>Vessel &amp; profile</h2>
+        <div class="grid">
+          <div class="field"><label>Wall height (mm)</label><input type="number" id="ve_height" value="60" min="1" step="1" /></div>
+          <div class="field"><label>Bottom layers</label><input type="number" id="ve_bottomLayers" value="3" min="0" step="1" /></div>
+          <div class="field">
+            <label>Bottom seam style</label>
+            <select id="ve_seamStyle">
+              <option value="staircase">Staircase (shifting)</option>
+              <option value="alternating">Zipper (fixed, alternating)</option>
+            </select>
+          </div>
+        </div>
+        <h3 class="subhead">Radius profile (× base, lofted bottom → top)</h3>
+        <div class="grid">
+          <div class="field"><label>Bottom scale (×)</label><input type="number" id="ve_profBottom" value="1.0" min="0.05" step="0.05" /></div>
+          <div class="field"><label>Middle height (0–1)</label><input type="number" id="ve_profMidH" value="0.5" min="0" max="1" step="0.05" /></div>
+          <div class="field"><label>Middle scale (×)</label><input type="number" id="ve_profMid" value="1.0" min="0.05" step="0.05" /></div>
+          <div class="field"><label>Top scale (×)</label><input type="number" id="ve_profTop" value="1.0" min="0.05" step="0.05" /></div>
+        </div>
+        <p class="hint" id="ve_hint"></p>
+        <canvas id="ve_profile" width="600" height="360"></canvas>
+      </section>
+
+      <section class="card" data-project="vessel" hidden>
+        <h2>Print settings</h2>
+        <div class="grid">
+          <div class="field"><label>Layer height (mm)</label><input type="number" id="ve_layerHeight" value="0.6" min="0.05" step="0.05" /></div>
+          <div class="field"><label>Line width (mm)</label><input type="number" id="ve_lineWidth" value="2.0" min="0.1" step="0.1" /></div>
+          <div class="field"><label>Print feed (mm/min)</label><input type="number" id="ve_printFeed" value="1800" min="1" step="50" /></div>
+          <div class="field"><label>Travel feed (mm/min)</label><input type="number" id="ve_travelFeed" value="6000" min="1" step="100" /></div>
+          <div class="field"><label>Chord tolerance (mm)</label><input type="number" id="ve_tolerance" value="0.05" min="0.001" step="0.01" /></div>
+          <div class="field">
+            <label>Seam position</label>
+            <select id="ve_seamSide">
+              <option value="back">Back (+Y)</option>
+              <option value="front">Front (−Y)</option>
+              <option value="right">Right (+X)</option>
+              <option value="left">Left (−X)</option>
+            </select>
+          </div>
+          <div class="field"><label>Bed center X (mm)</label><input type="number" id="ve_centerX" value="125" step="1" /></div>
+          <div class="field"><label>Bed center Y (mm)</label><input type="number" id="ve_centerY" value="125" step="1" /></div>
+        </div>
+      </section>
+
+      <section class="card" data-project="vessel" hidden>
+        <h2>
+          Brim
+          <label class="toggle"><input type="checkbox" id="ve_brimEnabled" /> enable</label>
+        </h2>
+        <div id="ve_brimFields" class="grid" hidden>
+          <div class="field">
+            <label>Direction</label>
+            <select id="ve_brimOuter">
+              <option value="outer">Outer</option>
+              <option value="inner">Inner</option>
+            </select>
+          </div>
+          <div class="field"><label>Number of lines</label><input type="number" id="ve_brimLines" value="4" min="1" step="1" /></div>
+          <div class="field"><label>Brim line width (mm)</label><input type="number" id="ve_brimLineWidth" value="2.0" min="0.1" step="0.1" /></div>
+          <div class="field"><label>Brim layer height (mm)</label><input type="number" id="ve_brimLayerHeight" value="0.6" min="0.05" step="0.05" /></div>
+          <div class="field"><label>Brim feedrate (mm/min)</label><input type="number" id="ve_brimFeed" value="1800" min="1" step="50" /></div>
         </div>
       </section>
 

@@ -674,10 +674,66 @@
     return pts;
   }
 
+  // Concentric solid fill of a closed CCW shape. `outer` is the outermost ring
+  // (already positioned, e.g. one line width inside a vessel wall so it butts
+  // the wall's inner edge). Interior rings are produced by scaling `outer`
+  // toward its centroid with a radial step of `lw` at the widest point — this
+  // never self-intersects (unlike a naive per-vertex offset on a fine polygon)
+  // and is an exact concentric offset for circles. Returns open polylines
+  // ordered inner -> outer (each traced from the seam, stopping ~one line width
+  // before closing so the generator's connector to the next ring lands cleanly)
+  // plus the outer closed outline.
+  //   alt=false -> staircase (every ring same direction); alt=true -> zipper
+  //   (alternate direction). seamSide sets the seam axis.
+  function ringFill(outer, lw, tol, alt, seamSide) {
+    const n = outer.length;
+    if (n < 3) return { loops: [], outline: null };
+    let cx = 0;
+    let cy = 0;
+    for (let i = 0; i < n; i++) {
+      cx += outer[i].x;
+      cy += outer[i].y;
+    }
+    cx /= n;
+    cy /= n;
+    let Rmax = 0;
+    for (let i = 0; i < n; i++) {
+      const d = Math.hypot(outer[i].x - cx, outer[i].y - cy);
+      if (d > Rmax) Rmax = d;
+    }
+    if (Rmax < lw * 0.5) return { loops: [], outline: outer.slice() };
+    const rings = []; // outer -> inner
+    for (let k = 0; k * lw <= Rmax - lw * 0.5 && k < 4000; k++) {
+      const f = (Rmax - k * lw) / Rmax;
+      rings.push(outer.map((p) => ({ x: cx + (p.x - cx) * f, y: cy + (p.y - cy) * f })));
+    }
+    const outline = rings[0].slice();
+    rings.reverse(); // inner -> outer
+    const loops = [];
+    for (let idx = 0; idx < rings.length; idx++) {
+      const r = rotateToSeam(rings[idx], seamSide);
+      const per = perimeter(r);
+      const N = Math.max(24, Math.ceil(per / Math.max(tol * 8, 0.4)));
+      const M = resampleClosed(r, N); // even by arc length, M[0] at the seam
+      const gN = Math.max(1, Math.min(N - 2, Math.round((lw / per) * N)));
+      let seq;
+      if (alt && idx % 2 === 1) {
+        // Zipper: reverse direction (M[0], M[N-1], M[N-2], ...), same seam.
+        seq = [M[0]];
+        for (let k = N - 1; k >= 1; k--) seq.push(M[k]);
+      } else {
+        seq = M.slice(); // M[0..N-1]
+      }
+      loops.push(seq.slice(0, N - gN + 1)); // seam -> around -> stop gN before
+    }
+    return { loops: loops, outline: outline };
+  }
+
   window.Geo = {
     bezierPts,
     buildHangerLoop,
     stoolLoop,
+    ringFill,
     rdpClosed,
     adaptiveShape,
     rotateToSeam,
