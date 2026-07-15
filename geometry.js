@@ -686,7 +686,10 @@
   //   style: 'staircase' (default; every ring same direction) | 'alternating'
   //   (zipper: alternate direction; `true` also accepted) | 'spiral' (one
   //   continuous seamless path, see below). seamSide sets the seam axis.
-  function ringFill(outer, lw, tol, style, seamSide) {
+  //   wallCurve (spiral style only): the wall centerline one line width
+  //   outside `outer` — the spiral continues one extra revolution onto it, so
+  //   the fill hands off to the wall as the same unbroken line.
+  function ringFill(outer, lw, tol, style, seamSide, wallCurve) {
     const alt = style === true || style === 'alternating';
     const spiral = style === 'spiral';
     const n = outer.length;
@@ -744,16 +747,17 @@
 
     const loops = [];
     if (spiral) {
-      // True spiral: one continuous seamless path. The innermost ring is
-      // traced closed, then each revolution morphs radially from one ring to
-      // the next (pitch = exactly one line width; the rings are radially
-      // aligned scaled copies, so this works for any footprint). A spiral
-      // cannot end flush all the way around, so the outermost ring is traced
-      // closed too — it butts the wall by construction, no gap. Where the
-      // spiral peels off / merges into those closed rings the local line
-      // spacing shrinks below lw; each point carries an extrusion factor
-      // e = (inner gap + outer gap) / 2lw (1 -> 0.5 over those revolutions)
-      // so the flow matches the covered width instead of overfilling.
+      // True spiral: one continuous seamless path that never stops. A tiny
+      // closed innermost ring bounds the center, then each revolution morphs
+      // radially from one ring to the next (pitch = exactly one line width;
+      // the rings are radially aligned scaled copies, so any footprint
+      // works). Instead of ending at the fill's edge — a spiral can't end
+      // flush all the way around — it keeps going one more revolution onto
+      // `wallCurve`, so the wall is simply the next turn of the same line and
+      // the spacing stays one line width everywhere: no gap, nothing to
+      // taper. Only the first revolution, peeling off the center ring, has
+      // shrinking spacing; its points carry extrusion factors (0.5 -> 1)
+      // matching the covered width.
       const M = S.length;
       const poly = [];
       for (let j = 0; j <= N; j++) {
@@ -765,15 +769,17 @@
           const t = j / N;
           const a = S[k][j % N];
           const b = S[k + 1][j % N];
-          const gIn = k === 0 ? t : 1;
-          const gOut = k === M - 2 ? 1 - t : 1;
-          poly.push({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t, e: (gIn + gOut) / 2 });
+          poly.push({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t, e: k === 0 ? (1 + t) / 2 : 1 });
         }
       }
-      if (M > 1) {
+      if (wallCurve && wallCurve.length >= 3) {
+        const W = resampleClosed(rotateToSeam(wallCurve, seamSide), N);
+        const src = S[M - 1];
         for (let j = 1; j <= N; j++) {
-          const p = S[M - 1][j % N];
-          poly.push({ x: p.x, y: p.y, e: 1 });
+          const t = j / N;
+          const a = src[j % N];
+          const b = W[j % N];
+          poly.push({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t, e: 1 });
         }
       }
       loops.push(poly);
