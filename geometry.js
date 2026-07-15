@@ -754,15 +754,19 @@
         startIdx = (startIdx + cnt) % N;
       }
     } else {
-      // Zipper: gap held at the fixed seam, every other ring reversed, so the
-      // connectors alternate sides at the seam (hard U-turns, no drift).
+      // Zipper: the gap is CENTERED on the seam (half a line width on each
+      // side), the SAME two indices on every ring, with every other ring
+      // reversed. Because the cut is split half-and-half instead of taken off
+      // one end, it never alternates sides, and consecutive rings share an
+      // endpoint index -> the connectors are radial, parallel, and fixed
+      // (a clean zipper straddling a stationary seam).
+      const hg = Math.max(1, Math.min(Math.floor((N - 2) / 2), Math.round((lw / outerPer) * N / 2)));
       for (let i = 0; i < S.length; i++) {
-        const cnt = N - gapN[i];
         const poly = [];
         if (i % 2 === 0) {
-          for (let t = 0; t <= cnt; t++) poly.push(S[i][t % N]);
+          for (let j = hg; j <= N - hg; j++) poly.push(S[i][j % N]);
         } else {
-          for (let t = 0; t <= cnt; t++) poly.push(S[i][(N - t) % N]);
+          for (let j = N - hg; j >= hg; j--) poly.push(S[i][j % N]);
         }
         loops.push(poly);
       }
