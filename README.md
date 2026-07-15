@@ -61,8 +61,10 @@ keep **fully independent settings** per project:
   flat wall revolution (these stacked turns are the wall's lowest layers) and the
   last one runs straight into the wall helix. All styles print over a configurable
   number of **bottom layers**. The **wall** is then a continuous
-  vase-mode spiral just outside the bottom, starting again at `z = 0` (so the bottom
-  sits inside it) and ramping extrusion up over the first revolution. A **radius
+  vase-mode spiral just outside the bottom; with a ring-style bottom it starts again
+  at `z = 0` (so the bottom sits inside it) and ramps extrusion up over the first
+  revolution, while with the true-spiral bottom it continues from the handoff with
+  no travel and no ramp. A **radius
   profile** — bottom / middle / top scale control points, lofted with a Catmull-Rom
   curve and shown as a live side-silhouette preview — tapers the wall with height
   for cones, bellied vases, and flared trays (all `1` = a straight prism). The wall
