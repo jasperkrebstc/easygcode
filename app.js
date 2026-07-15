@@ -1355,7 +1355,25 @@
   });
 
   if ('serviceWorker' in navigator) {
-    window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+    // updateViaCache 'none' => the browser re-fetches sw.js from the network on
+    // every load (not the HTTP cache), so a new release is detected right away.
+    // If the page is already controlled at load, a later controllerchange means
+    // an updated worker took over -> reload once to swap to the fresh code. (Not
+    // attached on the very first visit, so the initial claim doesn't reload.)
+    let refreshing = false;
+    if (navigator.serviceWorker.controller) {
+      navigator.serviceWorker.addEventListener('controllerchange', () => {
+        if (refreshing) return;
+        refreshing = true;
+        window.location.reload();
+      });
+    }
+    window.addEventListener('load', () => {
+      navigator.serviceWorker
+        .register('sw.js', { updateViaCache: 'none' })
+        .then((reg) => reg.update())
+        .catch(() => {});
+    });
   }
 
   // iOS shows the numeric keypad for inputmode=decimal.
