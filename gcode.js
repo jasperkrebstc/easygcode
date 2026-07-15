@@ -967,14 +967,29 @@
       const wallH = vWallN * lh;
       lines.push(
         '; --- vessel: ' + vBottomLayers + '-layer bottom (' +
-          (vBottomStyle === 'spiral' ? 'true spiral' : vAlt ? 'zipper' : 'staircase') +
+          (vBottomStyle === 'spiral' ? 'true spiral, continuous into wall' : vAlt ? 'zipper' : 'staircase') +
           ') + spiral wall to z=' + wallH.toFixed(2) + ' ---'
       );
 
       const innerBase = Geo.offsetClosed(vBase, -cfg.lineWidth);
-      const fill = Geo.ringFill(innerBase, cfg.lineWidth, tolV, vBottomStyle, cfg.seamSide || 'back');
+      const vSpiralB = vBottomStyle === 'spiral';
+      const fill = Geo.ringFill(
+        innerBase, cfg.lineWidth, tolV, vBottomStyle, cfg.seamSide || 'back', vSpiralB ? vBase : null
+      );
       if (!fill.loops.length) {
         warnings.push('Bottom is too small to fill at this line width — the vessel has no closed bottom.');
+      }
+      // Spiral bottom: each layer's path already continues out onto the wall
+      // curve, so the stacked transition revolutions ARE the wall's lowest
+      // layers, and after the last bottom layer the helix picks up from there
+      // as the same unbroken line (no travel, no bed ramp).
+      const vContinuous = vSpiralB && vBottomLayers > 0 && fill.loops.length > 0;
+      let wallStartL = 0;
+      if (vContinuous) {
+        wallStartL = Math.min(vBottomLayers, vWallN - 1);
+        if (vBottomLayers >= vWallN) {
+          warnings.push('Wall height gives fewer revolutions than bottom layers — increase wall height for a clean spiral-bottom handoff.');
+        }
       }
       for (let k = 0; k < vBottomLayers && fill.loops.length; k++) {
         const z = (k + 1) * lh;
@@ -999,10 +1014,12 @@
         const s = vProfile(z / wallH);
         return { x: sp.pos.x * s + cx, y: sp.pos.y * s + cy, z: z };
       }
-      const startW = vW(0, 0);
-      travelAbs({ x: startW.x, y: startW.y, z: 0 });
+      if (!vContinuous) {
+        const startW = vW(0, 0);
+        travelAbs({ x: startW.x, y: startW.y, z: 0 });
+      }
       let pu = 0;
-      for (let L = 0; L < vWallN; L++) {
+      for (let L = wallStartL; L < vWallN; L++) {
         if (L === 1 && includeStartEnd && fanPWM > 0 && vBottomLayers < 2) {
           lines.push('M106 S' + fanPWM + ' ; part cooling fan on after ramp loop');
         }
