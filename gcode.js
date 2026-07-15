@@ -411,6 +411,7 @@
     let vProfile = null;
     let vBase = base;
     let vAlt = false;
+    let vBottomStyle = 'staircase';
     let vBottomLayers = 0;
     let vWallN = 1;
     let vFlatTop = true;
@@ -425,7 +426,8 @@
       vProfile = makeProfile(cps);
       const s0 = vProfile(0);
       vBase = base.map((p) => ({ x: p.x * s0, y: p.y * s0 }));
-      vAlt = ve.seamStyle === 'alternating';
+      vBottomStyle = ve.seamStyle === 'alternating' || ve.seamStyle === 'spiral' ? ve.seamStyle : 'staircase';
+      vAlt = vBottomStyle === 'alternating';
       vFlatTop = ve.topStyle !== 'spiral';
       vBottomLayers = Math.max(0, Math.round(ve.bottomLayers || 0));
       vWallN = Math.max(1, Math.round((ve.height || lh) / lh));
@@ -622,7 +624,7 @@
       const ve = cfg.vessel || {};
       lines.push(
         '; vessel shape=' + cfg.shape + ' wallHeight=' + (vWallN * lh) + ' (snapped) bottomLayers=' +
-          vBottomLayers + ' seam=' + (vAlt ? 'zipper' : 'staircase') +
+          vBottomLayers + ' bottom=' + (vBottomStyle === 'spiral' ? 'true spiral' : vAlt ? 'zipper' : 'staircase') +
           ' top=' + (vFlatTop ? 'flat cap' : 'open spiral')
       );
       lines.push(
@@ -964,12 +966,13 @@
       const tolV = cfg.tolerance > 0 ? cfg.tolerance : 0.05;
       const wallH = vWallN * lh;
       lines.push(
-        '; --- vessel: ' + vBottomLayers + '-layer bottom (' + (vAlt ? 'zipper' : 'staircase') +
+        '; --- vessel: ' + vBottomLayers + '-layer bottom (' +
+          (vBottomStyle === 'spiral' ? 'true spiral' : vAlt ? 'zipper' : 'staircase') +
           ') + spiral wall to z=' + wallH.toFixed(2) + ' ---'
       );
 
       const innerBase = Geo.offsetClosed(vBase, -cfg.lineWidth);
-      const fill = Geo.ringFill(innerBase, cfg.lineWidth, tolV, vAlt, cfg.seamSide || 'back');
+      const fill = Geo.ringFill(innerBase, cfg.lineWidth, tolV, vBottomStyle, cfg.seamSide || 'back');
       if (!fill.loops.length) {
         warnings.push('Bottom is too small to fill at this line width — the vessel has no closed bottom.');
       }
@@ -982,7 +985,9 @@
         for (let i = 0; i < fill.loops.length; i++) {
           const lp = fill.loops[i];
           for (let q = i === 0 ? 1 : 0; q < lp.length; q++) {
-            emitSeg({ x: lp[q].x + cx, y: lp[q].y + cy, z: z }, cfg.printFeed, 1);
+            // Spiral-fill points carry their own extrusion factor (taper where
+            // the spiral meets the closed end rings); ring fills use 1.
+            emitSeg({ x: lp[q].x + cx, y: lp[q].y + cy, z: z }, cfg.printFeed, lp[q].e != null ? lp[q].e : 1);
           }
         }
       }
