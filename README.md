@@ -124,6 +124,8 @@ The footprint is sampled into evenly spaced points and traced as one continuous 
 Z rises by `layerHeight` per full loop with no seam and no retractions. The **first
 turn ramps up**: it starts at `Z = 0` with 0% extrusion and linearly climbs to
 `layerHeight` at 100% extrusion over one loop, so the wall builds off the bed cleanly.
+The **last turn ramps down**: a final revolution holds Z constant (no height gain) while
+the extrusion tapers to zero, so the top rim finishes level and clean, not on a spiral ramp.
 
 ### Adaptive resolution
 
@@ -157,7 +159,9 @@ present and future) and **type-specific**:
   best-candidate) outward pokes distributed evenly-but-random across the confined area.
   Each spike is a triangle whose base width equals the line width (so the inner wall reads
   as continuous), with the tip at full amplitude. Deterministic per **seed** — change the
-  seed to re-roll.
+  seed to re-roll. Each spike stays a clean base→tip→base triangle exactly one line width
+  wide even through the hanger and transition loops (their dense points are dropped inside
+  the spike window so the drop is never pinched narrow).
 
 ### Wall hanger
 
