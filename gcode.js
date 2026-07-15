@@ -831,7 +831,7 @@
     }
 
     function spikesLoop(L, uEnd) {
-      const events = [];
+      let events = [];
       for (let i = 0; i < uSet.length; i++) {
         const u = uSet[i];
         if (L > 0 && u <= 1e-9) continue;
@@ -839,6 +839,12 @@
         events.push({ u, tip: false });
       }
       const spk = (byLoop[L] || []).filter((u) => u > hwU * 1.2 && u < uEnd - hwU * 1.2);
+      // Drop base-curve vertices inside a spike window so each spike is a clean
+      // base -> tip -> base triangle exactly one line width wide (no wall vertex
+      // wedged between the base and the tip narrowing it).
+      if (spk.length) {
+        events = events.filter((e) => !spk.some((uc) => e.u > uc - hwU + 1e-9 && e.u < uc + hwU - 1e-9));
+      }
       spk.forEach((uc) => {
         events.push({ u: uc - hwU, tip: false });
         events.push({ u: uc, tip: true });
@@ -885,11 +891,18 @@
       }
       if (total < 1e-9) return;
 
-      const events = [];
+      let events = [];
       for (let i = 1; i < n1; i++) events.push({ f: cum[i] / total });
       if (spikesMode) {
         const hwF = cfg.lineWidth / 2 / total;
         const spk = (byLoop[L] || []).filter((u) => u > hwF * 1.2 && u < uEnd - hwF * 1.2);
+        // Drop this loop's own (often very dense — 400 pts on a tween) vertices
+        // that fall inside a spike window, so each spike prints as a clean
+        // base -> tip -> base triangle exactly one line width wide instead of a
+        // needle wedged between dense wall points.
+        if (spk.length) {
+          events = events.filter((e) => !spk.some((uc) => e.f > uc - hwF + 1e-9 && e.f < uc + hwF - 1e-9));
+        }
         spk.forEach((uc) => {
           events.push({ f: uc - hwF });
           events.push({ f: uc, tip: true });
@@ -1061,6 +1074,29 @@
         } else {
           weaveLoop(L, uEnd);
         }
+      }
+
+      // Flat ramp-down top (matching the vessel): one final revolution at the
+      // top height with no z gain and the extrusion tapering to zero, so the
+      // rim finishes level and clean instead of on a spiral ramp. Plain wall —
+      // no pattern — for a tidy edge.
+      const topZ = cfg.totalHeight;
+      const f0 = Math.min(1, T - (Lmax - 1)) % 1; // fraction where the spiral ended
+      lines.push('; flat top: no z gain, extrusion ramps to zero for a clean rim');
+      const seqU = [];
+      for (let i = 0; i < uSet.length; i++) if (uSet[i] > f0 + 1e-9) seqU.push(uSet[i]);
+      for (let i = 0; i < uSet.length; i++) if (uSet[i] <= f0 + 1e-9) seqU.push(uSet[i]);
+      seqU.push(f0); // close the revolution back to the start fraction
+      let pf = f0;
+      let trav = 0;
+      for (let k = 0; k < seqU.length; k++) {
+        const u = seqU[k];
+        let d = u - pf;
+        if (d <= 1e-9) d += 1; // forward-wrap the fraction
+        trav = Math.min(1, trav + d);
+        const sp = sampler.at(u);
+        emitSeg({ x: sp.pos.x + cx, y: sp.pos.y + cy, z: topZ }, cfg.printFeed, Math.max(0, 1 - trav));
+        pf = u;
       }
     } else {
       // ---- Bend stool: concentric rings, inner to outer, staircase seam ----
