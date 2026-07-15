@@ -129,6 +129,7 @@
           height: num('ve_height'),
           bottomLayers: Math.max(0, Math.round(num('ve_bottomLayers'))),
           seamStyle: $('ve_seamStyle').value === 'alternating' ? 'alternating' : 'staircase',
+          topStyle: $('ve_topStyle').value === 'spiral' ? 'spiral' : 'flat',
           bottom: num('ve_profBottom'),
           midH: num('ve_profMidH'),
           mid: num('ve_profMid'),

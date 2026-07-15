@@ -55,9 +55,13 @@ keep **fully independent settings** per project:
   profile** — bottom / middle / top scale control points, lofted with a Catmull-Rom
   curve and shown as a live side-silhouette preview — tapers the wall with height
   for cones, bellied vases, and flared trays (all `1` = a straight prism). The wall
-  height snaps to a whole number of layers, and the **last revolution is a flat cap**:
-  it holds `z` constant and ramps the extrusion back down to zero, closing the top
-  cleanly. Separate **brim** settings, like the other projects.
+  height snaps to a whole number of layers. A **top finish** dropdown picks how the
+  wall ends: **flat cap** (default) adds one extra revolution that holds `z` constant
+  and ramps the extrusion back down to zero, closing the top cleanly; **open spiral**
+  adds nothing — the wall simply completes its last revolution at full flow and
+  stops, leaving an even full-width bead all the way to the end (with the spiral's
+  one-layer helical step at the seam). Separate **brim** settings, like the other
+  projects.
 
 The coat hanger is a dead-simple, phone-first tool to generate **vase-mode G-code** for
 **Klipper pellet 3D printing** (or the Bambu P1P in filament mode). Pick a cross-section

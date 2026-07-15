@@ -413,6 +413,7 @@
     let vAlt = false;
     let vBottomLayers = 0;
     let vWallN = 1;
+    let vFlatTop = true;
     if (isVessel) {
       const ve = cfg.vessel || {};
       const cps = [{ h: 0, s: ve.bottom > 0 ? ve.bottom : 1 }];
@@ -425,6 +426,7 @@
       const s0 = vProfile(0);
       vBase = base.map((p) => ({ x: p.x * s0, y: p.y * s0 }));
       vAlt = ve.seamStyle === 'alternating';
+      vFlatTop = ve.topStyle !== 'spiral';
       vBottomLayers = Math.max(0, Math.round(ve.bottomLayers || 0));
       vWallN = Math.max(1, Math.round((ve.height || lh) / lh));
     }
@@ -620,7 +622,8 @@
       const ve = cfg.vessel || {};
       lines.push(
         '; vessel shape=' + cfg.shape + ' wallHeight=' + (vWallN * lh) + ' (snapped) bottomLayers=' +
-          vBottomLayers + ' seam=' + (vAlt ? 'zipper' : 'staircase')
+          vBottomLayers + ' seam=' + (vAlt ? 'zipper' : 'staircase') +
+          ' top=' + (vFlatTop ? 'flat cap' : 'open spiral')
       );
       lines.push(
         '; profile (radius x): bottom=' + (ve.bottom != null ? ve.bottom : 1) +
@@ -956,7 +959,8 @@
     if (isVessel) {
       // Closed bottom (concentric fill, one line width inside the wall so the
       // wall butts its outer edge), then the wall spiral from z=0 up and out
-      // along the radius profile, closed by a flat extrusion-ramp-down loop.
+      // along the radius profile. Top finish: an extra flat extrusion-ramp-down
+      // loop (default), or none — the spiral just ends at full flow.
       const tolV = cfg.tolerance > 0 ? cfg.tolerance : 0.05;
       const wallH = vWallN * lh;
       lines.push(
@@ -1011,26 +1015,33 @@
         pu = 0;
       }
 
-      // Flat top: one revolution at z=wallH with the extrusion ramping 1 -> 0
-      // and no height gain, so the top closes off cleanly on top of the last
-      // loop and tapers to nothing at the seam.
-      lines.push('; flat top: no z gain, extrusion ramps to zero for a clean finish');
-      const sTop = vProfile(1);
-      pu = 0;
-      for (let i = 0; i < uSet.length; i++) {
-        const u = uSet[i];
-        if (u <= 1e-9) continue;
-        const sp = sampler.at(u);
-        const ramp = Math.max(0, Math.min(1, 1 - (pu + u) / 2));
-        emitSeg({ x: sp.pos.x * sTop + cx, y: sp.pos.y * sTop + cy, z: wallH }, cfg.printFeed, ramp);
-        pu = u;
+      // Top finish. Flat cap: one extra revolution at z=wallH with the
+      // extrusion ramping 1 -> 0 and no height gain, so the top closes off
+      // cleanly on top of the last loop and tapers to nothing at the seam.
+      // Open spiral: no extra loop — the wall's last revolution already ends
+      // at full height and full flow, leaving a one-layer helical step at the
+      // seam (an even bead all the way, good for open rims).
+      if (vFlatTop) {
+        lines.push('; flat top: no z gain, extrusion ramps to zero for a clean finish');
+        const sTop = vProfile(1);
+        pu = 0;
+        for (let i = 0; i < uSet.length; i++) {
+          const u = uSet[i];
+          if (u <= 1e-9) continue;
+          const sp = sampler.at(u);
+          const ramp = Math.max(0, Math.min(1, 1 - (pu + u) / 2));
+          emitSeg({ x: sp.pos.x * sTop + cx, y: sp.pos.y * sTop + cy, z: wallH }, cfg.printFeed, ramp);
+          pu = u;
+        }
+        const spTop = sampler.at(0);
+        emitSeg(
+          { x: spTop.pos.x * sTop + cx, y: spTop.pos.y * sTop + cy, z: wallH },
+          cfg.printFeed,
+          Math.max(0, Math.min(1, 1 - (pu + 1) / 2))
+        );
+      } else {
+        lines.push('; open spiral top: wall ends at full flow, no cap loop');
       }
-      const spTop = sampler.at(0);
-      emitSeg(
-        { x: spTop.pos.x * sTop + cx, y: spTop.pos.y * sTop + cy, z: wallH },
-        cfg.printFeed,
-        Math.max(0, Math.min(1, 1 - (pu + 1) / 2))
-      );
     } else if (!isBS) {
       lines.push(
         '; --- vase spiral' + (patternOn ? ' + ' + type : '') + (hangOn ? ' + hanger' : '') + ' ---'
