@@ -748,11 +748,13 @@
     const loops = [];
     if (spiral) {
       // True spiral: one continuous seamless path that never stops or closes.
-      // It opens at the exact center — the first revolution grows from the
-      // centroid point out to the innermost ring, a real spiral start with no
-      // closed circle to crowd — then each revolution morphs radially from
-      // one ring to the next (pitch = exactly one line width; the rings are
-      // radially aligned scaled copies, so any footprint works). Instead of
+      // The opening turn grows from the center out to the innermost ring —
+      // clipped where it would collide with itself: a bead can't turn tighter
+      // than half its own width, so points with radius < lw/2 are dropped and
+      // the path starts where the bead's inner edge just kisses the center
+      // (leaving at most a pinhole). Then each revolution morphs radially
+      // from one ring to the next (pitch = exactly one line width; the rings
+      // are radially aligned scaled copies, so any footprint works). Instead of
       // ending at the fill's edge — a spiral can't end flush all the way
       // around — it keeps going one more revolution onto `wallCurve`, so the
       // wall is simply the next turn of the same line. The footprint's size
@@ -768,7 +770,9 @@
         const q = S[0][j % N];
         const x = cx + (q.x - cx) * t;
         const y = cy + (q.y - cy) * t;
-        poly.push({ x: x, y: y, e: eCov(Math.hypot(x - cx, y - cy)) });
+        const r = Math.hypot(x - cx, y - cy);
+        if (r < lw / 2) continue; // clip the self-overlapping start
+        poly.push({ x: x, y: y, e: eCov(r) });
       }
       for (let k = 0; k < M - 1; k++) {
         for (let j = 1; j <= N; j++) {

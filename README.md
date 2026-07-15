@@ -49,9 +49,10 @@ keep **fully independent settings** per project:
   first as a concentric solid fill of the footprint (scaled inward from a true
   one-line-width offset so its outer edge butts the wall's inner face), in the same
   *staircase* or *zipper* **seam** styles as the bend-stool seat — or as a **true
-  spiral**: one continuous seamless path that never stops or closes. It opens at
-  the exact center — the first revolution grows from the centroid point outward,
-  a real spiral start with no closed circle to crowd — then winds out at exactly
+  spiral**: one continuous seamless path that never stops or closes. It opens near
+  the center — the first turn is clipped where a bead would collide with itself
+  (radius < half a line width), so the path starts with the bead's inner edge
+  kissing the center, at most a pinhole left open — then winds out at exactly
   one line width per revolution (any footprint shape) and — since a spiral can't
   end flush all the way around — simply keeps going one extra revolution onto the
   wall curve. The wall is the next turn of the same line, so the spacing is one
@@ -63,7 +64,7 @@ keep **fully independent settings** per project:
   outward onto the wall (its transition revolutions are the wall's lowest layers)
   and straight into the helix. The whole vessel is therefore a single unbroken
   extrusion with **zero travel moves**, whatever the layer count (odd counts start
-  at the center, even at the rim). All styles print over a configurable
+  at the clipped spiral opening in the middle, even counts at the rim). All styles print over a configurable
   number of **bottom layers**. The **wall** is then a continuous
   vase-mode spiral just outside the bottom; with a ring-style bottom it starts again
   at `z = 0` (so the bottom sits inside it) and ramps extrusion up over the first
