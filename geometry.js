@@ -683,9 +683,12 @@
   // ordered inner -> outer (each traced from the seam, stopping ~one line width
   // before closing so the generator's connector to the next ring lands cleanly)
   // plus the outer closed outline.
-  //   alt=false -> staircase (every ring same direction); alt=true -> zipper
-  //   (alternate direction). seamSide sets the seam axis.
-  function ringFill(outer, lw, tol, alt, seamSide) {
+  //   style: 'staircase' (default; every ring same direction) | 'alternating'
+  //   (zipper: alternate direction; `true` also accepted) | 'spiral' (one
+  //   continuous seamless path, see below). seamSide sets the seam axis.
+  function ringFill(outer, lw, tol, style, seamSide) {
+    const alt = style === true || style === 'alternating';
+    const spiral = style === 'spiral';
     const n = outer.length;
     if (n < 3) return { loops: [], outline: null };
     // Area centroid (not the vertex average, which skews with point density) —
@@ -740,7 +743,41 @@
     });
 
     const loops = [];
-    if (!alt) {
+    if (spiral) {
+      // True spiral: one continuous seamless path. The innermost ring is
+      // traced closed, then each revolution morphs radially from one ring to
+      // the next (pitch = exactly one line width; the rings are radially
+      // aligned scaled copies, so this works for any footprint). A spiral
+      // cannot end flush all the way around, so the outermost ring is traced
+      // closed too — it butts the wall by construction, no gap. Where the
+      // spiral peels off / merges into those closed rings the local line
+      // spacing shrinks below lw; each point carries an extrusion factor
+      // e = (inner gap + outer gap) / 2lw (1 -> 0.5 over those revolutions)
+      // so the flow matches the covered width instead of overfilling.
+      const M = S.length;
+      const poly = [];
+      for (let j = 0; j <= N; j++) {
+        const p = S[0][j % N];
+        poly.push({ x: p.x, y: p.y, e: 1 });
+      }
+      for (let k = 0; k < M - 1; k++) {
+        for (let j = 1; j <= N; j++) {
+          const t = j / N;
+          const a = S[k][j % N];
+          const b = S[k + 1][j % N];
+          const gIn = k === 0 ? t : 1;
+          const gOut = k === M - 2 ? 1 - t : 1;
+          poly.push({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t, e: (gIn + gOut) / 2 });
+        }
+      }
+      if (M > 1) {
+        for (let j = 1; j <= N; j++) {
+          const p = S[M - 1][j % N];
+          poly.push({ x: p.x, y: p.y, e: 1 });
+        }
+      }
+      loops.push(poly);
+    } else if (!alt) {
       // Staircase: innermost anchored at the seam; each ring traces forward and
       // stops one line width before its start, and the next (outer) ring begins
       // exactly where this one ended (same index -> radial connector). The seam

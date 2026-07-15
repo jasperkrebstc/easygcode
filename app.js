@@ -128,7 +128,7 @@
         vessel: {
           height: num('ve_height'),
           bottomLayers: Math.max(0, Math.round(num('ve_bottomLayers'))),
-          seamStyle: $('ve_seamStyle').value === 'alternating' ? 'alternating' : 'staircase',
+          seamStyle: ['alternating', 'spiral'].indexOf($('ve_seamStyle').value) >= 0 ? $('ve_seamStyle').value : 'staircase',
           topStyle: $('ve_topStyle').value === 'spiral' ? 'spiral' : 'flat',
           bottom: num('ve_profBottom'),
           midH: num('ve_profMidH'),
@@ -598,7 +598,8 @@
     $('ve_hint').textContent =
       'wall ' + (nWall * lh).toFixed(1) + ' mm (' + nWall + ' rev' + (nWall === 1 ? '' : 's') + ') · bottom ' +
       ve.bottomLayers + ' layer' + (ve.bottomLayers === 1 ? '' : 's') + ' · ' +
-      (ve.seamStyle === 'alternating' ? 'zipper' : 'staircase') + ' seam · flat ramp-down top';
+      (ve.seamStyle === 'spiral' ? 'true-spiral' : ve.seamStyle === 'alternating' ? 'zipper' : 'staircase') +
+      ' bottom · ' + (ve.topStyle === 'spiral' ? 'open spiral top' : 'flat ramp-down top');
 
     const canvas = $('ve_preview');
     const ctx = canvas.getContext('2d');
@@ -623,7 +624,7 @@
       const tol = isPos(cfg.tolerance) ? cfg.tolerance : 0.05;
       let fill = { loops: [], outline: null };
       try {
-        fill = window.Geo.ringFill(window.Geo.offsetClosed(wall, -lw), lw, tol, ve.seamStyle === 'alternating', cfg.seamSide);
+        fill = window.Geo.ringFill(window.Geo.offsetClosed(wall, -lw), lw, tol, ve.seamStyle, cfg.seamSide);
       } catch (e) {
         fill = { loops: [], outline: null };
       }
