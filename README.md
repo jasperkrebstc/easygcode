@@ -167,7 +167,11 @@ present and future) and **type-specific**:
   as continuous), with the tip at full amplitude. Deterministic per **seed** — change the
   seed to re-roll. Each spike stays a clean base→tip→base triangle exactly one line width
   wide even through the hanger and transition loops (their dense points are dropped inside
-  the spike window so the drop is never pinched narrow).
+  the spike window so the drop is never pinched narrow). An optional **length
+  variation (± mm)** randomizes each spike's length within `amplitude ± var` (e.g.
+  amplitude 50, variation 10 → lengths 40–60), deterministic per seed and drawn from
+  a stream independent of the placement; the base stays one line width, only the
+  length varies. 0 = every spike the same length.
 
 ### Wall hanger
 

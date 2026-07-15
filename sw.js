@@ -1,5 +1,13 @@
-/* Simple offline cache for the static app shell. Bump CACHE on each release. */
-const CACHE = 'easygcode-v28';
+/* Offline cache for the static app shell.
+ *
+ * No version number to bump: the worker is network-first and revalidates every
+ * app asset against the server, so a plain refresh always gets the latest when
+ * online. The cache is only an offline fallback, kept fresh as a side effect of
+ * normal use. A single fixed cache name means there is never a version line for
+ * collaborators to edit — and therefore never a merge conflict here. (Edit
+ * ASSETS only when adding/removing a shipped file.)
+ */
+const CACHE = 'easygcode';
 const ASSETS = [
   './',
   './index.html',
@@ -25,9 +33,10 @@ self.addEventListener('activate', (e) => {
   );
 });
 
-// Network-first for same-origin app assets and navigations: always serve the
-// freshest version when online (so a plain refresh gets the latest code),
-// falling back to the cache only when offline. Everything else is cache-first.
+// Network-first for same-origin app assets and navigations, revalidating past
+// the HTTP cache so a refresh gets the freshest deploy; cache is the offline
+// fallback and is refreshed on every successful fetch. Everything else is
+// cache-first.
 self.addEventListener('fetch', (e) => {
   if (e.request.method !== 'GET') return;
   const url = new URL(e.request.url);
@@ -36,7 +45,7 @@ self.addEventListener('fetch', (e) => {
 
   if (isNav || sameOrigin) {
     e.respondWith(
-      fetch(e.request)
+      fetch(e.request, { cache: 'no-cache' })
         .then((resp) => {
           const copy = resp.clone();
           caches.open(CACHE).then((c) => c.put(e.request, copy)).catch(() => {});
