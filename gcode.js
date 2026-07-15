@@ -982,27 +982,65 @@
       const wallH = vWallN * lh;
       lines.push(
         '; --- vessel: ' + vBottomLayers + '-layer bottom (' +
-          (vBottomStyle === 'spiral' ? 'true spiral' : vAlt ? 'zipper' : 'staircase') +
+          (vBottomStyle === 'spiral' ? 'true spiral, continuous into wall' : vAlt ? 'zipper' : 'staircase') +
           ') + spiral wall to z=' + wallH.toFixed(2) + ' ---'
       );
 
       const innerBase = Geo.offsetClosed(vBase, -cfg.lineWidth);
-      const fill = Geo.ringFill(innerBase, cfg.lineWidth, tolV, vBottomStyle, cfg.seamSide || 'back');
+      const vSpiralB = vBottomStyle === 'spiral';
+      const fill = Geo.ringFill(
+        innerBase, cfg.lineWidth, tolV, vBottomStyle, cfg.seamSide || 'back', vSpiralB ? vBase : null
+      );
       if (!fill.loops.length) {
         warnings.push('Bottom is too small to fill at this line width — the vessel has no closed bottom.');
       }
-      for (let k = 0; k < vBottomLayers && fill.loops.length; k++) {
-        const z = (k + 1) * lh;
-        if (k === 1 && includeStartEnd && fanPWM > 0) {
-          lines.push('M106 S' + fanPWM + ' ; part cooling fan on');
+      // Spiral bottom: one unbroken line through ALL bottom layers and into
+      // the wall — zero travels. The layers alternate direction (out, in,
+      // out, …), each starting where the previous ended; the first layer's
+      // direction is chosen by parity so the LAST always runs outward onto
+      // the wall curve, whose stacked transition revolutions ARE the wall's
+      // lowest layers. The helix then picks up from there (no travel, no bed
+      // ramp). The z step between layers rides on each layer's first segment,
+      // like any spiral layer change.
+      const vContinuous = vSpiralB && vBottomLayers > 0 && fill.loops.length > 0;
+      let wallStartL = 0;
+      if (vContinuous) {
+        wallStartL = Math.min(vBottomLayers, vWallN - 1);
+        if (vBottomLayers >= vWallN) {
+          warnings.push('Wall height gives fewer revolutions than bottom layers — increase wall height for a clean spiral-bottom handoff.');
         }
-        travelAbs({ x: fill.loops[0][0].x + cx, y: fill.loops[0][0].y + cy, z: z });
-        for (let i = 0; i < fill.loops.length; i++) {
-          const lp = fill.loops[i];
-          for (let q = i === 0 ? 1 : 0; q < lp.length; q++) {
-            // Spiral-fill points carry their own extrusion factor (taper where
-            // the spiral meets the closed end rings); ring fills use 1.
-            emitSeg({ x: lp[q].x + cx, y: lp[q].y + cy, z: z }, cfg.printFeed, lp[q].e != null ? lp[q].e : 1);
+      }
+      if (vContinuous) {
+        const poly = fill.loops[0];
+        const startFwd = vBottomLayers % 2 === 1;
+        const first = startFwd ? poly[0] : poly[poly.length - 1];
+        travelAbs({ x: first.x + cx, y: first.y + cy, z: lh });
+        for (let k = 0; k < vBottomLayers; k++) {
+          const z = (k + 1) * lh;
+          const fwd = startFwd ? k % 2 === 0 : k % 2 === 1;
+          if (k === 1 && includeStartEnd && fanPWM > 0) {
+            lines.push('M106 S' + fanPWM + ' ; part cooling fan on');
+          }
+          for (let q = 1; q < poly.length; q++) {
+            // Points carry their own extrusion factor (taper where the spiral
+            // peels off the center ring) — unchanged under reversal, since
+            // the local line spacing is the same in both directions.
+            const p = fwd ? poly[q] : poly[poly.length - 1 - q];
+            emitSeg({ x: p.x + cx, y: p.y + cy, z: z }, cfg.printFeed, p.e != null ? p.e : 1);
+          }
+        }
+      } else {
+        for (let k = 0; k < vBottomLayers && fill.loops.length; k++) {
+          const z = (k + 1) * lh;
+          if (k === 1 && includeStartEnd && fanPWM > 0) {
+            lines.push('M106 S' + fanPWM + ' ; part cooling fan on');
+          }
+          travelAbs({ x: fill.loops[0][0].x + cx, y: fill.loops[0][0].y + cy, z: z });
+          for (let i = 0; i < fill.loops.length; i++) {
+            const lp = fill.loops[i];
+            for (let q = i === 0 ? 1 : 0; q < lp.length; q++) {
+              emitSeg({ x: lp[q].x + cx, y: lp[q].y + cy, z: z }, cfg.printFeed, 1);
+            }
           }
         }
       }
@@ -1014,10 +1052,12 @@
         const s = vProfile(z / wallH);
         return { x: sp.pos.x * s + cx, y: sp.pos.y * s + cy, z: z };
       }
-      const startW = vW(0, 0);
-      travelAbs({ x: startW.x, y: startW.y, z: 0 });
+      if (!vContinuous) {
+        const startW = vW(0, 0);
+        travelAbs({ x: startW.x, y: startW.y, z: 0 });
+      }
       let pu = 0;
-      for (let L = 0; L < vWallN; L++) {
+      for (let L = wallStartL; L < vWallN; L++) {
         if (L === 1 && includeStartEnd && fanPWM > 0 && vBottomLayers < 2) {
           lines.push('M106 S' + fanPWM + ' ; part cooling fan on after ramp loop');
         }

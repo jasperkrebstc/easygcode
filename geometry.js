@@ -686,7 +686,10 @@
   //   style: 'staircase' (default; every ring same direction) | 'alternating'
   //   (zipper: alternate direction; `true` also accepted) | 'spiral' (one
   //   continuous seamless path, see below). seamSide sets the seam axis.
-  function ringFill(outer, lw, tol, style, seamSide) {
+  //   wallCurve (spiral style only): the wall centerline one line width
+  //   outside `outer` — the spiral continues one extra revolution onto it, so
+  //   the fill hands off to the wall as the same unbroken line.
+  function ringFill(outer, lw, tol, style, seamSide, wallCurve) {
     const alt = style === true || style === 'alternating';
     const spiral = style === 'spiral';
     const n = outer.length;
@@ -744,36 +747,54 @@
 
     const loops = [];
     if (spiral) {
-      // True spiral: one continuous seamless path. The innermost ring is
-      // traced closed, then each revolution morphs radially from one ring to
-      // the next (pitch = exactly one line width; the rings are radially
-      // aligned scaled copies, so this works for any footprint). A spiral
-      // cannot end flush all the way around, so the outermost ring is traced
-      // closed too — it butts the wall by construction, no gap. Where the
-      // spiral peels off / merges into those closed rings the local line
-      // spacing shrinks below lw; each point carries an extrusion factor
-      // e = (inner gap + outer gap) / 2lw (1 -> 0.5 over those revolutions)
-      // so the flow matches the covered width instead of overfilling.
+      // True spiral: one continuous seamless path that never stops or closes.
+      // It opens at the exact center — the first revolution grows from the
+      // centroid point out to the innermost ring, a real spiral start with no
+      // closed circle to crowd — then each revolution morphs radially from
+      // one ring to the next (pitch = exactly one line width; the rings are
+      // radially aligned scaled copies, so any footprint works). Instead of
+      // ending at the fill's edge — a spiral can't end flush all the way
+      // around — it keeps going one more revolution onto `wallCurve`, so the
+      // wall is simply the next turn of the same line. The footprint's size
+      // fixes the ring ladder from the outside, so the leftover pitch lands
+      // on the innermost turn; there (opening revolution + the one after it)
+      // extrusion follows the locally covered width, (min(gap,lw)+lw)/2lw,
+      // instead of overfilling where the spacing dips under one line width.
       const M = S.length;
       const poly = [];
+      const eCov = (gap) => (Math.min(gap, lw) + lw) / (2 * lw);
       for (let j = 0; j <= N; j++) {
-        const p = S[0][j % N];
-        poly.push({ x: p.x, y: p.y, e: 1 });
+        const t = j / N;
+        const q = S[0][j % N];
+        const x = cx + (q.x - cx) * t;
+        const y = cy + (q.y - cy) * t;
+        poly.push({ x: x, y: y, e: eCov(Math.hypot(x - cx, y - cy)) });
       }
       for (let k = 0; k < M - 1; k++) {
         for (let j = 1; j <= N; j++) {
           const t = j / N;
           const a = S[k][j % N];
           const b = S[k + 1][j % N];
-          const gIn = k === 0 ? t : 1;
-          const gOut = k === M - 2 ? 1 - t : 1;
-          poly.push({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t, e: (gIn + gOut) / 2 });
+          const x = a.x + (b.x - a.x) * t;
+          const y = a.y + (b.y - a.y) * t;
+          let e = 1;
+          if (k === 0) {
+            // Inner neighbour is the opening revolution at the same angle.
+            const px = cx + (a.x - cx) * t;
+            const py = cy + (a.y - cy) * t;
+            e = eCov(Math.hypot(x - px, y - py));
+          }
+          poly.push({ x: x, y: y, e: e });
         }
       }
-      if (M > 1) {
+      if (wallCurve && wallCurve.length >= 3) {
+        const W = resampleClosed(rotateToSeam(wallCurve, seamSide), N);
+        const src = S[M - 1];
         for (let j = 1; j <= N; j++) {
-          const p = S[M - 1][j % N];
-          poly.push({ x: p.x, y: p.y, e: 1 });
+          const t = j / N;
+          const a = src[j % N];
+          const b = W[j % N];
+          poly.push({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t, e: 1 });
         }
       }
       loops.push(poly);

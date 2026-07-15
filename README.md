@@ -49,15 +49,26 @@ keep **fully independent settings** per project:
   first as a concentric solid fill of the footprint (scaled inward from a true
   one-line-width offset so its outer edge butts the wall's inner face), in the same
   *staircase* or *zipper* **seam** styles as the bend-stool seat — or as a **true
-  spiral**: one continuous seamless path that traces the innermost ring closed,
-  morphs radially outward one line width per revolution (any footprint shape), and
-  closes with the outermost ring so it butts the wall with no gap (a bare spiral
-  can't end flush all the way around). Where the spiral peels off / merges into
-  those closed end rings the line spacing shrinks below one width, so extrusion
-  tapers with the local covered width (100% → 50%) instead of overfilling. All
-  styles print over a configurable number of **bottom layers**. The **wall** is then a continuous
-  vase-mode spiral just outside the bottom, starting again at `z = 0` (so the bottom
-  sits inside it) and ramping extrusion up over the first revolution. A **radius
+  spiral**: one continuous seamless path that never stops or closes. It opens at
+  the exact center — the first revolution grows from the centroid point outward,
+  a real spiral start with no closed circle to crowd — then winds out at exactly
+  one line width per revolution (any footprint shape) and — since a spiral can't
+  end flush all the way around — simply keeps going one extra revolution onto the
+  wall curve. The wall is the next turn of the same line, so the spacing is one
+  line width everywhere except the innermost turn, where the footprint's leftover
+  radius lands (the ring ladder is anchored at the wall); there extrusion follows
+  the locally covered width instead of overfilling. Stacked bottom
+  layers alternate direction — out, in, out, … — each starting where the previous
+  ended, with the first layer's direction chosen by parity so the last always runs
+  outward onto the wall (its transition revolutions are the wall's lowest layers)
+  and straight into the helix. The whole vessel is therefore a single unbroken
+  extrusion with **zero travel moves**, whatever the layer count (odd counts start
+  at the center, even at the rim). All styles print over a configurable
+  number of **bottom layers**. The **wall** is then a continuous
+  vase-mode spiral just outside the bottom; with a ring-style bottom it starts again
+  at `z = 0` (so the bottom sits inside it) and ramps extrusion up over the first
+  revolution, while with the true-spiral bottom it continues from the handoff with
+  no travel and no ramp. A **radius
   profile** — bottom / middle / top scale control points, lofted with a Catmull-Rom
   curve and shown as a live side-silhouette preview — tapers the wall with height
   for cones, bellied vases, and flared trays (all `1` = a straight prism). The wall
