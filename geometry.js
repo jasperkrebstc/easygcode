@@ -754,19 +754,25 @@
         startIdx = (startIdx + cnt) % N;
       }
     } else {
-      // Zipper: the gap is CENTERED on the seam (half a line width on each
-      // side), the SAME two indices on every ring, with every other ring
-      // reversed. Because the cut is split half-and-half instead of taken off
-      // one end, it never alternates sides, and consecutive rings share an
-      // endpoint index -> the connectors are radial, parallel, and fixed
-      // (a clean zipper straddling a stationary seam).
-      const hg = Math.max(1, Math.min(Math.floor((N - 2) / 2), Math.round((lw / outerPer) * N / 2)));
+      // Zipper (matching the bend-stool seat): the gap is a constant CURVE
+      // LENGTH — half a line width of arc on each side (del), not a fixed
+      // angle — so it stays one line width wide on every ring, growing in angle
+      // toward the small inner rings and shrinking toward the rim. The two
+      // sides of each ring's gap use the neighbouring rings' del (dIn from the
+      // inner neighbour, dOut = its own), so consecutive rings share a
+      // connector endpoint and the connectors stay radial; every other ring is
+      // reversed for the alternating zipper. The seam never moves.
+      const del = rings.map((r) =>
+        Math.max(1, Math.min(Math.floor(N / 2) - 1, Math.round(((lw / 2) / perimeter(r)) * N)))
+      );
       for (let i = 0; i < S.length; i++) {
+        const dIn = del[i === 0 ? 0 : i - 1]; // inner-side offset (shared with inner neighbour)
+        const dOut = del[i]; // outer-side offset (shared with outer neighbour)
         const poly = [];
         if (i % 2 === 0) {
-          for (let j = hg; j <= N - hg; j++) poly.push(S[i][j % N]);
+          for (let j = dIn; j <= N - dOut; j++) poly.push(S[i][j % N]);
         } else {
-          for (let j = N - hg; j >= hg; j--) poly.push(S[i][j % N]);
+          for (let j = N - dIn; j >= dOut; j--) poly.push(S[i][j % N]);
         }
         loops.push(poly);
       }
