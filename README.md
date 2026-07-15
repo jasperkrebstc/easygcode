@@ -55,11 +55,13 @@ keep **fully independent settings** per project:
   around — simply keeps going one extra revolution onto the wall curve. The wall is
   the next turn of the same line, so the spacing is one line width everywhere and
   there is no gap and nothing to taper (only the first revolution off the center
-  ring compensates its shrinking spacing, extrusion 50 → 100%). With one bottom
-  layer the whole vessel is a single unbroken extrusion from the center of the
-  bottom to the top of the wall; with more, each bottom layer flows into its own
-  flat wall revolution (these stacked turns are the wall's lowest layers) and the
-  last one runs straight into the wall helix. All styles print over a configurable
+  ring compensates its shrinking spacing, extrusion 50 → 100%). Stacked bottom
+  layers alternate direction — out, in, out, … — each starting where the previous
+  ended, with the first layer's direction chosen by parity so the last always runs
+  outward onto the wall (its transition revolutions are the wall's lowest layers)
+  and straight into the helix. The whole vessel is therefore a single unbroken
+  extrusion with **zero travel moves**, whatever the layer count (odd counts start
+  at the center, even at the rim). All styles print over a configurable
   number of **bottom layers**. The **wall** is then a continuous
   vase-mode spiral just outside the bottom; with a ring-style bottom it starts again
   at `z = 0` (so the bottom sits inside it) and ramps extrusion up over the first
