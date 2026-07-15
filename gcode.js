@@ -681,6 +681,22 @@
       moveCount++;
     }
 
+    // Travel that clears a printed brim: lift straight up to a clearance Z,
+    // move over to the destination XY, then drop to the destination Z — so the
+    // nozzle never drags across the brim (or the part) on its way to the first
+    // wall/body move. Plain travel when no brim was printed (unchanged output).
+    let brimPrinted = false;
+    function travelClear(dest) {
+      if (brimPrinted && prev) {
+        const clearZ = Math.max(prev.z, dest.z, 2 * cfg.brim.layerHeight);
+        if (clearZ > prev.z + 1e-6) travelAbs({ x: prev.x, y: prev.y, z: clearZ });
+        travelAbs({ x: dest.x, y: dest.y, z: clearZ });
+        if (dest.z < clearZ - 1e-6) travelAbs(dest);
+        return;
+      }
+      travelAbs(dest);
+    }
+
     // Core extruding move at an explicit feedrate. E output is scaled by the
     // printer mode (volume vs filament mm) and the extrusion multiplier.
     function emitSeg(cur, feed, ramp, areaOvr) {
@@ -765,6 +781,7 @@
         }
         travelAbs({ x: loop[0].x + cx, y: loop[0].y + cy, z: brim.layerHeight });
         extrudeLoop(loop, brim.layerHeight, bArea, brimFeed);
+        brimPrinted = true;
       }
     }
 
@@ -1014,7 +1031,7 @@
         const poly = fill.loops[0];
         const startFwd = vBottomLayers % 2 === 1;
         const first = startFwd ? poly[0] : poly[poly.length - 1];
-        travelAbs({ x: first.x + cx, y: first.y + cy, z: lh });
+        travelClear({ x: first.x + cx, y: first.y + cy, z: lh });
         for (let k = 0; k < vBottomLayers; k++) {
           const z = (k + 1) * lh;
           const fwd = startFwd ? k % 2 === 0 : k % 2 === 1;
@@ -1035,7 +1052,7 @@
           if (k === 1 && includeStartEnd && fanPWM > 0) {
             lines.push('M106 S' + fanPWM + ' ; part cooling fan on');
           }
-          travelAbs({ x: fill.loops[0][0].x + cx, y: fill.loops[0][0].y + cy, z: z });
+          (k === 0 ? travelClear : travelAbs)({ x: fill.loops[0][0].x + cx, y: fill.loops[0][0].y + cy, z: z });
           for (let i = 0; i < fill.loops.length; i++) {
             const lp = fill.loops[i];
             for (let q = i === 0 ? 1 : 0; q < lp.length; q++) {
@@ -1054,7 +1071,7 @@
       }
       if (!vContinuous) {
         const startW = vW(0, 0);
-        travelAbs({ x: startW.x, y: startW.y, z: 0 });
+        travelClear({ x: startW.x, y: startW.y, z: 0 });
       }
       let pu = 0;
       for (let L = wallStartL; L < vWallN; L++) {
@@ -1108,7 +1125,7 @@
       );
 
       const start = spikesMode ? wallPoint(0, 0) : wpoint(0, 0).p;
-      travelAbs({ x: start.x, y: start.y, z: 0 });
+      travelClear({ x: start.x, y: start.y, z: 0 });
       prevBump = false;
       prevU = 0;
 
@@ -1222,7 +1239,7 @@
             const dc = (dropMult * loopH[i] * (T - 1)) / DmaxA;
             return Math.max(lh, zb - dc * (pt.w || 0));
           };
-          travelAbs({ x: cx + loopsK[0][0].x, y: cy + loopsK[0][0].y, z: zPt(0, loopsK[0][0]) });
+          (k === 0 ? travelClear : travelAbs)({ x: cx + loopsK[0][0].x, y: cy + loopsK[0][0].y, z: zPt(0, loopsK[0][0]) });
           for (let i = 0; i < ringN; i++) {
             const lp = loopsK[i];
             const aOvr = domed && k > 0 ? loopArea[i] : null;
@@ -1240,7 +1257,7 @@
           }
           let a = a0;
           const zRing = (i) => (domed && k > 0 ? lh + k * loopH[i] : z);
-          travelAbs({ x: cx + ringRadii[0] * Math.cos(a), y: cy + ringRadii[0] * Math.sin(a), z: zRing(0) });
+          (k === 0 ? travelClear : travelAbs)({ x: cx + ringRadii[0] * Math.cos(a), y: cy + ringRadii[0] * Math.sin(a), z: zRing(0) });
           for (let i = 0; i < ringN; i++) {
             const r = ringRadii[i];
             const zi = zRing(i);
