@@ -640,7 +640,11 @@
     if (patternOn) {
       let ln = '; pattern=' + type + ' amplitude=' + pat.amplitude + ' zAngle=' + (pat.zAngle || 0) +
         ' coverage=' + pat.coverage + '% plBottom=' + plBottom + ' plTop=' + plTop + ' bumpFeed=' + Math.round(bumpFeed);
-      ln += type === 'weave' ? ' bumps=' + pat.bumps : ' count=' + pat.count + ' seed=' + pat.seed;
+      ln +=
+        type === 'weave'
+          ? ' bumps=' + pat.bumps
+          : ' count=' + pat.count + ' seed=' + pat.seed +
+            (pat.spikeVar > 0 ? ' lengthVar=+/-' + pat.spikeVar + 'mm' : '');
       lines.push(ln);
     }
     if (hangOn) {
@@ -784,17 +788,27 @@
       let placed = 0;
       if (zMax > zMin && oMax > hwU * perim) {
         const spikes = bestCandidate(pat.count, -oMax, oMax, zMin, zMax, (pat.seed | 0) || 1);
+        // Per-spike length variation: each tip's amplitude is amplitude +/- var,
+        // drawn from a separate seeded stream so it is deterministic per seed and
+        // independent of the (also seeded) placement. var=0 -> every spike is the
+        // base amplitude (byte-identical to before).
+        const spikeVar = Math.max(0, pat.spikeVar || 0);
+        const arng = mulberry32((((pat.seed | 0) || 1) ^ 0x9e3779b9) >>> 0);
         spikes.forEach((sp) => {
           const u = (sp.s / perim + 1) % 1;
           let L = Math.round(sp.z / lh);
           if (L < plBottom) L = plBottom;
           if (L > Lmax - 1) L = Lmax - 1;
-          (byLoop[L] = byLoop[L] || []).push(u);
+          const amp = Math.max(0, pat.amplitude + (arng() * 2 - 1) * spikeVar);
+          (byLoop[L] = byLoop[L] || []).push({ u: u, amp: amp });
           placed++;
         });
       }
       if (placed < pat.count) {
         warnings.push('Some spikes could not be placed (pattern area too small for the count).');
+      }
+      if ((pat.spikeVar || 0) > pat.amplitude) {
+        warnings.push('Spike length variation exceeds the amplitude — some spikes will have zero length.');
       }
     }
 
@@ -838,17 +852,17 @@
         if (u >= uEnd - 1e-9) continue;
         events.push({ u, tip: false });
       }
-      const spk = (byLoop[L] || []).filter((u) => u > hwU * 1.2 && u < uEnd - hwU * 1.2);
+      const spk = (byLoop[L] || []).filter((s) => s.u > hwU * 1.2 && s.u < uEnd - hwU * 1.2);
       // Drop base-curve vertices inside a spike window so each spike is a clean
       // base -> tip -> base triangle exactly one line width wide (no wall vertex
       // wedged between the base and the tip narrowing it).
       if (spk.length) {
-        events = events.filter((e) => !spk.some((uc) => e.u > uc - hwU + 1e-9 && e.u < uc + hwU - 1e-9));
+        events = events.filter((e) => !spk.some((s) => e.u > s.u - hwU + 1e-9 && e.u < s.u + hwU - 1e-9));
       }
-      spk.forEach((uc) => {
-        events.push({ u: uc - hwU, tip: false });
-        events.push({ u: uc, tip: true });
-        events.push({ u: uc + hwU, tip: false });
+      spk.forEach((s) => {
+        events.push({ u: s.u - hwU, tip: false });
+        events.push({ u: s.u, tip: true, amp: s.amp });
+        events.push({ u: s.u + hwU, tip: false });
       });
       events.sort((a, b) => a.u - b.u);
       events.push({ u: uEnd, tip: false });
@@ -858,12 +872,13 @@
         let bump = false;
         if (e.tip) {
           const sp = sampler.at(e.u);
-          const lat = pat.amplitude * cosA;
+          const amp = e.amp != null ? e.amp : pat.amplitude;
+          const lat = amp * cosA;
           const baseZ = Math.min(lh * (L + e.u), cfg.totalHeight);
           cur = {
             x: sp.pos.x + sp.tan.y * lat + cx,
             y: sp.pos.y - sp.tan.x * lat + cy,
-            z: baseZ + pat.amplitude * sinA,
+            z: baseZ + amp * sinA,
           };
           bump = true;
         } else {
@@ -895,18 +910,18 @@
       for (let i = 1; i < n1; i++) events.push({ f: cum[i] / total });
       if (spikesMode) {
         const hwF = cfg.lineWidth / 2 / total;
-        const spk = (byLoop[L] || []).filter((u) => u > hwF * 1.2 && u < uEnd - hwF * 1.2);
+        const spk = (byLoop[L] || []).filter((s) => s.u > hwF * 1.2 && s.u < uEnd - hwF * 1.2);
         // Drop this loop's own (often very dense — 400 pts on a tween) vertices
         // that fall inside a spike window, so each spike prints as a clean
         // base -> tip -> base triangle exactly one line width wide instead of a
         // needle wedged between dense wall points.
         if (spk.length) {
-          events = events.filter((e) => !spk.some((uc) => e.f > uc - hwF + 1e-9 && e.f < uc + hwF - 1e-9));
+          events = events.filter((e) => !spk.some((s) => e.f > s.u - hwF + 1e-9 && e.f < s.u + hwF - 1e-9));
         }
-        spk.forEach((uc) => {
-          events.push({ f: uc - hwF });
-          events.push({ f: uc, tip: true });
-          events.push({ f: uc + hwF });
+        spk.forEach((s) => {
+          events.push({ f: s.u - hwF });
+          events.push({ f: s.u, tip: true, amp: s.amp });
+          events.push({ f: s.u + hwF });
         });
         events.sort((a, b) => a.f - b.f);
       }
@@ -943,7 +958,7 @@
         if (!e.tip && patternOn && type === 'weave' && layerPatterned(L) && uInBand(e.f)) {
           m = pat.amplitude * Math.cos(Math.PI * (L + e.f) * pat.bumps);
         }
-        const amp = e.tip ? pat.amplitude : m;
+        const amp = e.tip ? (e.amp != null ? e.amp : pat.amplitude) : m;
         const lat = amp * cosA;
         const z = Math.min(lh * (L + e.f), cfg.totalHeight) + amp * sinA;
         const special = !!e.tip || m !== 0;

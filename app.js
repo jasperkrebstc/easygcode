@@ -174,6 +174,7 @@
         plTop: Math.max(0, Math.round(num('patPlTop'))),
         bumps: Math.max(1, Math.round(num('patBumps'))),
         count: Math.max(1, Math.round(num('patCount'))),
+        spikeVar: Math.max(0, num('patSpikeVar')),
         seed: Math.max(0, Math.round(num('patSeed'))),
       },
     };
@@ -311,6 +312,8 @@
         return 'Weave needs at least 1 bump per revolution.';
       if (cfg.pattern.type === 'spikes' && cfg.pattern.count < 1)
         return 'Spikes need at least 1 point.';
+      if (cfg.pattern.type === 'spikes' && (!Number.isFinite(cfg.pattern.spikeVar) || cfg.pattern.spikeVar < 0))
+        return 'Spike length variation must be 0 or more.';
     }
     return null;
   }

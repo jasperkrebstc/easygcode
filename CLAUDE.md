@@ -47,17 +47,18 @@ edit the **same lines of the same file**. To keep merges clean:
 3. Keep branches **short-lived**; merge small PRs often. Long branches drift
    from main and collide more.
 
-### Hot files (the only recurring conflict points)
+### Hot files (rare conflict points)
 
-- **`sw.js`** — the line `const CACHE = 'easygcode-vNN';`. On a conflict,
-  **keep the higher number.** Bump this on every release (see below).
 - **`README.md`** — when two people add notes near each other; keep both.
+- **`sw.js`** — only if two branches both edit the `ASSETS` list. There is **no
+  version number to bump** (see below), so the old recurring conflict is gone.
 
 ## Conventions
 
-- **Bump the `sw.js` CACHE version (`easygcode-vNN`) on every change to a
-  shipped asset**, so browsers pick up the new files. The SW is network-first
-  with `updateViaCache: 'none'`, so a plain refresh gets the latest when online.
+- **Service worker / caching:** `sw.js` uses a **fixed** cache name and is
+  network-first with `updateViaCache: 'none'`, revalidating every app asset, so
+  a plain refresh gets the latest when online — **nothing to bump per release.**
+  Only touch `sw.js` when adding/removing a shipped file (update `ASSETS`).
 - **Volumetric extrusion:** every `G1 E` is the segment volume in mm³ (pellet)
   or filament mm (filament mode). Absolute positioning (`G90`), relative
   extrusion (`M83`). Bead model: `beadArea(w,h) = (w-h)*h + PI*(h/2)^2`.
