@@ -747,29 +747,44 @@
 
     const loops = [];
     if (spiral) {
-      // True spiral: one continuous seamless path that never stops. A tiny
-      // closed innermost ring bounds the center, then each revolution morphs
-      // radially from one ring to the next (pitch = exactly one line width;
-      // the rings are radially aligned scaled copies, so any footprint
-      // works). Instead of ending at the fill's edge — a spiral can't end
-      // flush all the way around — it keeps going one more revolution onto
-      // `wallCurve`, so the wall is simply the next turn of the same line and
-      // the spacing stays one line width everywhere: no gap, nothing to
-      // taper. Only the first revolution, peeling off the center ring, has
-      // shrinking spacing; its points carry extrusion factors (0.5 -> 1)
-      // matching the covered width.
+      // True spiral: one continuous seamless path that never stops or closes.
+      // It opens at the exact center — the first revolution grows from the
+      // centroid point out to the innermost ring, a real spiral start with no
+      // closed circle to crowd — then each revolution morphs radially from
+      // one ring to the next (pitch = exactly one line width; the rings are
+      // radially aligned scaled copies, so any footprint works). Instead of
+      // ending at the fill's edge — a spiral can't end flush all the way
+      // around — it keeps going one more revolution onto `wallCurve`, so the
+      // wall is simply the next turn of the same line. The footprint's size
+      // fixes the ring ladder from the outside, so the leftover pitch lands
+      // on the innermost turn; there (opening revolution + the one after it)
+      // extrusion follows the locally covered width, (min(gap,lw)+lw)/2lw,
+      // instead of overfilling where the spacing dips under one line width.
       const M = S.length;
       const poly = [];
+      const eCov = (gap) => (Math.min(gap, lw) + lw) / (2 * lw);
       for (let j = 0; j <= N; j++) {
-        const p = S[0][j % N];
-        poly.push({ x: p.x, y: p.y, e: 1 });
+        const t = j / N;
+        const q = S[0][j % N];
+        const x = cx + (q.x - cx) * t;
+        const y = cy + (q.y - cy) * t;
+        poly.push({ x: x, y: y, e: eCov(Math.hypot(x - cx, y - cy)) });
       }
       for (let k = 0; k < M - 1; k++) {
         for (let j = 1; j <= N; j++) {
           const t = j / N;
           const a = S[k][j % N];
           const b = S[k + 1][j % N];
-          poly.push({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t, e: k === 0 ? (1 + t) / 2 : 1 });
+          const x = a.x + (b.x - a.x) * t;
+          const y = a.y + (b.y - a.y) * t;
+          let e = 1;
+          if (k === 0) {
+            // Inner neighbour is the opening revolution at the same angle.
+            const px = cx + (a.x - cx) * t;
+            const py = cy + (a.y - cy) * t;
+            e = eCov(Math.hypot(x - px, y - py));
+          }
+          poly.push({ x: x, y: y, e: e });
         }
       }
       if (wallCurve && wallCurve.length >= 3) {

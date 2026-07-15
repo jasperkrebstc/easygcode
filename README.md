@@ -49,13 +49,15 @@ keep **fully independent settings** per project:
   first as a concentric solid fill of the footprint (scaled inward from a true
   one-line-width offset so its outer edge butts the wall's inner face), in the same
   *staircase* or *zipper* **seam** styles as the bend-stool seat — or as a **true
-  spiral**: one continuous seamless path that never stops. A tiny closed ring
-  bounds the center, then the path spirals outward at exactly one line width per
-  revolution (any footprint shape) and — since a spiral can't end flush all the way
-  around — simply keeps going one extra revolution onto the wall curve. The wall is
-  the next turn of the same line, so the spacing is one line width everywhere and
-  there is no gap and nothing to taper (only the first revolution off the center
-  ring compensates its shrinking spacing, extrusion 50 → 100%). Stacked bottom
+  spiral**: one continuous seamless path that never stops or closes. It opens at
+  the exact center — the first revolution grows from the centroid point outward,
+  a real spiral start with no closed circle to crowd — then winds out at exactly
+  one line width per revolution (any footprint shape) and — since a spiral can't
+  end flush all the way around — simply keeps going one extra revolution onto the
+  wall curve. The wall is the next turn of the same line, so the spacing is one
+  line width everywhere except the innermost turn, where the footprint's leftover
+  radius lands (the ring ladder is anchored at the wall); there extrusion follows
+  the locally covered width instead of overfilling. Stacked bottom
   layers alternate direction — out, in, out, … — each starting where the previous
   ended, with the first layer's direction chosen by parity so the last always runs
   outward onto the wall (its transition revolutions are the wall's lowest layers)
