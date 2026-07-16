@@ -4,7 +4,7 @@
  * Conventions (locked with the user):
  *   - Absolute positioning (G90), relative extrusion (M83).
  *   - Volumetric extrusion: every G1 E is the segment volume in mm^3.
- *   - No start/end G-code (heating/homing) — added later.
+ *   - Optional start/end G-code per printer mode (Klipper pellet / Marlin).
  *
  * Bead cross-section ("stadium"): beadArea(w,h) = (w-h)*h + PI*(h/2)^2
  *

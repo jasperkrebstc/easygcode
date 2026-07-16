@@ -5,12 +5,13 @@ share the same engine (extrusion math, printer modes, start/end G-code, previews
 keep **fully independent settings** per project:
 
 - **Coat hanger** — the vase-mode generator described below.
-- **Bend stool** — (in progress) the seat disc: concentric rings offset inward by one
+- **Bend stool** — the seat disc: concentric rings offset inward by one
   line width, traced inner→outer as one continuous path. Two selectable **seam
   styles**: *staircase* (all rings one direction; each stops one line width before its
-  start, so the seam shifts per ring) or *zipper* (every other ring flips direction and
-  turns around half a line width before the seam line, so the seam stays fixed — at the
-  cost of hard U-turns).
+  start, so the seam shifts per ring) or *zipper* (every other ring flips direction; the
+  seam is a straight slot — the seam line offset both ways by half a line width — and
+  every ring turns around exactly where it crosses those two parallel lines, so all
+  U-turn connectors run along them, parallel and one line width apart, gap-free).
   The diameter snaps to the nearest multiple of `2 × line width` (ties round up) so
   the beads meet half-half in the center. Optional **legs**: three, 120° apart (one
   pointing left, two right), printed flat as nested hairpins radiating from the outer
@@ -222,9 +223,9 @@ the nozzle never drags across the brim on its way in. This applies to all three 
 - **Brim:** enable, outer/inner, number of lines, brim line width, brim layer height,
   brim feedrate.
 
-The **3D preview** orbits at a fixed zoom (drag to rotate, Z-up), and colors the toolpath
-by feedrate — blue = fastest, red = slowest — so brim / wall / bump feed differences are
-visible at a glance.
+The **3D preview** orbits with a drag (Z-up), pinch/wheel zooms, two fingers pan, and a
+double-tap resets. The toolpath is colored by feedrate — blue = fastest, red = slowest —
+so brim / wall / bump feed differences are visible at a glance.
 
 ## Files
 
@@ -234,6 +235,5 @@ icons (PWA).
 
 ## Roadmap
 
-Freehand draw + auto-close → Notes-style shape snapping → AI text-to-shape → vertical
-taper/twist → more surface patterns → speed variation → nonplanar → start/end G-code
-presets + bottom layers.
+Freehand draw + auto-close → Notes-style shape snapping → AI text-to-shape → coat-hanger
+taper/twist → more surface patterns → speed variation.
