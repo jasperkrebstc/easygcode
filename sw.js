@@ -47,12 +47,15 @@ self.addEventListener('fetch', (e) => {
     e.respondWith(
       fetch(e.request, { cache: 'no-cache' })
         .then((resp) => {
-          const copy = resp.clone();
-          caches.open(CACHE).then((c) => c.put(e.request, copy)).catch(() => {});
+          // Never let a 404/500 from a mid-deploy overwrite a good cached copy.
+          if (resp.ok) {
+            const copy = resp.clone();
+            caches.open(CACHE).then((c) => c.put(e.request, copy)).catch(() => {});
+          }
           return resp;
         })
         .catch(() =>
-          caches.match(e.request).then((hit) => hit || caches.match('./index.html'))
+          caches.match(e.request).then((hit) => hit || (isNav ? caches.match('./index.html') : undefined))
         )
     );
     return;
@@ -63,8 +66,10 @@ self.addEventListener('fetch', (e) => {
       (hit) =>
         hit ||
         fetch(e.request).then((resp) => {
-          const copy = resp.clone();
-          caches.open(CACHE).then((c) => c.put(e.request, copy)).catch(() => {});
+          if (resp.ok) {
+            const copy = resp.clone();
+            caches.open(CACHE).then((c) => c.put(e.request, copy)).catch(() => {});
+          }
           return resp;
         })
     )

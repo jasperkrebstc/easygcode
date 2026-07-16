@@ -201,7 +201,7 @@
 
   function validateBrim(brim) {
     if (!brim.enabled) return null;
-    if (brim.lines < 1) return 'Brim needs at least 1 line.';
+    if (!(brim.lines >= 1)) return 'Brim needs at least 1 line.';
     if (!isPos(brim.lineWidth)) return 'Enter a valid brim line width.';
     if (!isPos(brim.layerHeight)) return 'Enter a valid brim layer height.';
     if (!isPos(brim.feed)) return 'Enter a valid brim feedrate.';
@@ -224,7 +224,7 @@
       }
       if (!Number.isFinite(cfg.centerX) || !Number.isFinite(cfg.centerY))
         return 'Enter valid bed center X/Y.';
-      if (cfg.disc.layers < 1) return 'Disc needs at least 1 layer.';
+      if (!(cfg.disc.layers >= 1)) return 'Disc needs at least 1 layer.';
       if (!Number.isFinite(cfg.disc.dome) || cfg.disc.dome <= 0 || cfg.disc.dome > 1)
         return 'Dome multiplier must be between 0 and 1 (1 = flat).';
       if (cfg.disc.legs.enabled) {
@@ -301,16 +301,20 @@
         return 'Hanger gap must be between 1 and 45% of the outline.';
       if (!isPos(cfg.hanger.pocket) || cfg.hanger.pocket > 45)
         return 'Hanger pocket must be between 1 and 45% of the outline.';
+      if (!(cfg.hanger.bottom >= 1) || !(cfg.hanger.transition >= 1))
+        return 'Enter valid hanger bottom/transition loop counts.';
       if (!isPos(cfg.hanger.bridgeFeed)) return 'Enter a valid hanger bridge feedrate.';
     }
     if (cfg.pattern.enabled) {
       if (!Number.isFinite(cfg.pattern.amplitude)) return 'Enter a valid pattern amplitude.';
       if (!Number.isFinite(cfg.pattern.zAngle)) return 'Enter a valid Z-angle.';
       if (!Number.isFinite(cfg.pattern.coverage)) return 'Enter a valid pattern coverage %.';
+      if (!(cfg.pattern.plBottom >= 0) || !(cfg.pattern.plTop >= 0))
+        return 'Enter valid patternless layer counts.';
       if (!isPos(cfg.pattern.bumpFeed)) return 'Enter a valid bump feedrate.';
-      if (cfg.pattern.type === 'weave' && cfg.pattern.bumps < 1)
+      if (cfg.pattern.type === 'weave' && !(cfg.pattern.bumps >= 1))
         return 'Weave needs at least 1 bump per revolution.';
-      if (cfg.pattern.type === 'spikes' && cfg.pattern.count < 1)
+      if (cfg.pattern.type === 'spikes' && !(cfg.pattern.count >= 1))
         return 'Spikes need at least 1 point.';
       if (cfg.pattern.type === 'spikes' && (!Number.isFinite(cfg.pattern.spikeVar) || cfg.pattern.spikeVar < 0))
         return 'Spike length variation must be 0 or more.';
@@ -483,7 +487,7 @@
     let hint =
       'Snapped to Ø' + spec.snappedD + ' mm · ' + n + ' ring' + (n > 1 ? 's' : '') + ' of ' + lw + ' mm';
     if (legs) hint += ' · legs ' + legs.snappedW + ' mm wide (' + legs.m + ' pair' + (legs.m > 1 ? 's' : '') + ')';
-    if (Number.isFinite(cfg.disc.dome) && cfg.disc.dome < 1 && cfg.disc.layers > 1) {
+    if (Number.isFinite(cfg.disc.dome) && cfg.disc.dome < 1 && cfg.disc.layers > 1 && n > 1) {
       const T = cfg.disc.layers;
       hint += ' · dome: top z ' + (cfg.layerHeight * (1 + (T - 1) * cfg.disc.dome)).toFixed(1) +
         ' center / ' + (cfg.layerHeight * T).toFixed(1) + ' edge';
@@ -515,7 +519,6 @@
     const scale = (Math.min(W, H) / 2 - pad) / (maxR || 1);
     const cxp = W / 2;
     const cyp = H / 2;
-    const tol = isPos(cfg.tolerance) ? cfg.tolerance : 0.05;
 
     function strokePoly(pts, close) {
       ctx.beginPath();
@@ -531,14 +534,17 @@
 
     const dl = window.GcodeGen.discLoops(cfg, spec);
 
-    // Brim (dashed): offsets of the outermost outline (legs + spread included).
+    // Brim (dashed): offsets of the outline the GENERATOR brims — the bottom
+    // layer's, which is unspread while the bend-spread gradient is active.
     if (brimExtent > 0) {
+      const brimOutline =
+        dl.attrOn && cfg.disc.layers > 1 ? window.GcodeGen.discLoops(cfg, spec, 0).outline : dl.outline;
       ctx.setLineDash([5 * sf, 4 * sf]);
       ctx.strokeStyle = '#2bd9a0';
       ctx.lineWidth = 1.2 * sf;
       for (let k = 1; k <= cfg.brim.lines; k++) {
         const d = cfg.brim.lineWidth / 2 + lw / 2 + (k - 1) * cfg.brim.lineWidth;
-        strokePoly(window.Geo.offsetClosed(dl.outline, d), true);
+        strokePoly(window.Geo.offsetClosed(brimOutline, d), true);
       }
       ctx.setLineDash([]);
     }
@@ -598,11 +604,15 @@
     const ve = cfg.vessel;
     const lh = cfg.layerHeight;
     const nWall = isPos(lh) && isPos(ve.height) ? Math.max(1, Math.round(ve.height / lh)) : 0;
+    const hasBottom = ve.bottomLayers > 0;
     $('ve_hint').textContent =
-      'wall ' + (nWall * lh).toFixed(1) + ' mm (' + nWall + ' rev' + (nWall === 1 ? '' : 's') + ') · bottom ' +
-      ve.bottomLayers + ' layer' + (ve.bottomLayers === 1 ? '' : 's') + ' · ' +
-      (ve.seamStyle === 'spiral' ? 'true-spiral (continuous into wall)' : ve.seamStyle === 'alternating' ? 'zipper' : 'staircase') +
-      ' bottom · ' + (ve.topStyle === 'spiral' ? 'open spiral top' : 'flat ramp-down top');
+      'wall ' + (nWall * lh).toFixed(1) + ' mm (' + nWall + ' rev' + (nWall === 1 ? '' : 's') + ') · ' +
+      (hasBottom
+        ? 'bottom ' + ve.bottomLayers + ' layer' + (ve.bottomLayers === 1 ? '' : 's') + ' · ' +
+          (ve.seamStyle === 'spiral' ? 'true-spiral (continuous into wall)' : ve.seamStyle === 'alternating' ? 'zipper' : 'staircase') +
+          ' bottom'
+        : 'no bottom (open tube)') +
+      ' · ' + (ve.topStyle === 'spiral' ? 'open spiral top' : 'flat ramp-down top');
 
     const canvas = $('ve_preview');
     const ctx = canvas.getContext('2d');
@@ -626,13 +636,15 @@
       const lw = cfg.lineWidth;
       const tol = isPos(cfg.tolerance) ? cfg.tolerance : 0.05;
       let fill = { loops: [], outline: null };
-      try {
-        fill = window.Geo.ringFill(
-          window.Geo.offsetClosed(wall, -lw), lw, tol, ve.seamStyle, cfg.seamSide,
-          ve.seamStyle === 'spiral' ? wall : null
-        );
-      } catch (e) {
-        fill = { loops: [], outline: null };
+      if (ve.bottomLayers > 0) {
+        try {
+          fill = window.Geo.ringFill(
+            window.Geo.offsetClosed(wall, -lw), lw, tol, ve.seamStyle, cfg.seamSide,
+            ve.seamStyle === 'spiral' ? wall : null
+          );
+        } catch (e) {
+          fill = { loops: [], outline: null };
+        }
       }
       const brimLoops = [];
       if (cfg.brim.enabled && cfg.brim.lines > 0 && isPos(cfg.brim.lineWidth)) {
@@ -1016,8 +1028,7 @@
 
     const err = validate(cfg);
     if (err) {
-      showWarnings([err], true);
-      $('stats').textContent = '';
+      regenFailed([err]);
       return;
     }
 
@@ -1025,7 +1036,7 @@
     try {
       result = window.GcodeGen.generate(cfg);
     } catch (e) {
-      showWarnings(['Generation error: ' + e.message], true);
+      regenFailed(['Generation error: ' + e.message]);
       return;
     }
 
@@ -1040,6 +1051,15 @@
       (s.timeMin > 0 ? ' · ~' + fmtTime(s.timeMin) : '');
 
     showWarnings(result.warnings, false);
+  }
+
+  // A failed regenerate must not leave the PREVIOUS G-code exportable — on a
+  // printing tool that ships the wrong file to the machine. Clear it all.
+  function regenFailed(msgs) {
+    showWarnings(msgs, true);
+    $('stats').textContent = '';
+    lastGcode = '';
+    $('output').value = '';
   }
 
   function showWarnings(list, isError) {
@@ -1061,10 +1081,23 @@
   }
 
   // --- Export ---
+  // Name (and share title) follow the ACTIVE tab, not the coat hanger's
+  // possibly-hidden shape select.
   function filename() {
-    return 'vase_' + $('shape').value + '_' + Date.now() + '.gcode';
+    const p = activeProject();
+    const stem =
+      p === 'bendstool'
+        ? 'stool'
+        : p === 'vessel'
+        ? 'vessel_' + $('ve_shape').value
+        : 'vase_' + $('shape').value;
+    return stem + '_' + Date.now() + '.gcode';
   }
   function download() {
+    if (!lastGcode) {
+      flash($('downloadBtn'), 'No G-code');
+      return;
+    }
     const blob = new Blob([lastGcode], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -1076,10 +1109,14 @@
     setTimeout(() => URL.revokeObjectURL(url), 2000);
   }
   async function share() {
+    if (!lastGcode) {
+      flash($('shareBtn'), 'No G-code');
+      return;
+    }
     const file = new File([lastGcode], filename(), { type: 'text/plain' });
     if (navigator.canShare && navigator.canShare({ files: [file] })) {
       try {
-        await navigator.share({ files: [file], title: 'Vase G-code' });
+        await navigator.share({ files: [file], title: 'EasyGCode ' + activeProject() });
         return;
       } catch (e) {
         /* cancelled / unsupported — fall through */
@@ -1088,6 +1125,10 @@
     download();
   }
   async function copy() {
+    if (!lastGcode) {
+      flash($('copyBtn'), 'No G-code');
+      return;
+    }
     try {
       await navigator.clipboard.writeText(lastGcode);
     } catch (e) {

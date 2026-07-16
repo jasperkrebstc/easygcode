@@ -4,7 +4,7 @@
  * Conventions (locked with the user):
  *   - Absolute positioning (G90), relative extrusion (M83).
  *   - Volumetric extrusion: every G1 E is the segment volume in mm^3.
- *   - No start/end G-code (heating/homing) — added later.
+ *   - Optional start/end G-code per printer mode (Klipper pellet / Marlin).
  *
  * Bead cross-section ("stadium"): beadArea(w,h) = (w-h)*h + PI*(h/2)^2
  *
@@ -318,22 +318,26 @@
 
     const loops = [];
     if (alt) {
-      let pPrev = 0;
+      // Zipper: the seam gap is a straight SLOT — the seam ray offset both
+      // ways by half a line width. Each ring turns around where it crosses
+      // those two parallel lines: at angle asin((lw/2)/r) off the seam, whose
+      // perpendicular distance from the seam ray is exactly lw/2 on every
+      // ring. All turnaround points sit on the two lines, so the U-turn
+      // connectors run along them — parallel, one line width apart, filling
+      // the slot with no gaps. Every other ring is reversed; the seam is fixed.
       for (let i = 0; i < n; i++) {
-        const del = lw / 2 / spec.radii[i]; // turn around half a line width early
-        const pIn = i === 0 ? del : pPrev;
+        const del = Math.asin(Math.min(1, lw / 2 / spec.radii[i]));
         const cw = i % 2 === 1;
         const pts = Geo.stoolLoop({
           r: spec.radii[i],
           tol: tol,
-          aStart: cw ? s0 + del : s0 + pIn,
-          gapAng: pIn + del,
+          aStart: s0 + del,
+          gapAng: 2 * del,
           leg: legFor(i),
           attr: attrFor(i),
         });
         if (cw) pts.reverse();
         loops.push(pts);
-        pPrev = del;
       }
     } else {
       const starts = new Array(n);
