@@ -812,26 +812,42 @@
         startIdx = (startIdx + cnt) % N;
       }
     } else {
-      // Zipper (matching the bend-stool seat): the gap is a constant CURVE
-      // LENGTH — half a line width of arc on each side (del), not a fixed
-      // angle — so it stays one line width wide on every ring, growing in angle
-      // toward the small inner rings and shrinking toward the rim. The two
-      // sides of each ring's gap use the neighbouring rings' del (dIn from the
-      // inner neighbour, dOut = its own), so consecutive rings share a
-      // connector endpoint and the connectors stay radial; every other ring is
-      // reversed for the alternating zipper. The seam never moves.
-      const del = rings.map((r) =>
-        Math.max(1, Math.min(Math.floor(N / 2) - 1, Math.round(((lw / 2) / perimeter(r)) * N)))
-      );
+      // Zipper: the seam gap is a straight SLOT. Take the seam line (the world
+      // axis through all rings' seam points), offset it both ways by half a
+      // line width, and cut every ring where it crosses those two parallel
+      // lines — everything between them (on the seam side) is removed, with
+      // the exact crossings interpolated in. All turnaround points therefore
+      // sit on the two lines, one line width apart, and the U-turn connectors
+      // run ALONG them: parallel, evenly spaced, filling the slot edge to edge
+      // with no gaps. Every other ring is reversed; the seam never moves.
+      const hw = lw / 2;
+      // Seam frame from the seam axis: s = signed distance across the seam
+      // line, t = distance along it toward the seam side.
+      const horiz = seamSide === 'right' || seamSide === 'left';
+      const tSign = seamSide === 'front' || seamSide === 'left' ? -1 : 1;
+      const sOf = (p) => (horiz ? p.y : p.x);
+      const tOf = (p) => (horiz ? p.x : p.y) * tSign;
+      const inSlot = (p) => tOf(p) > 0 && Math.abs(sOf(p)) < hw;
+      // Crossing of segment a->b with the line |s| = hw it exits through.
+      const crossing = (a, b) => {
+        const sa = sOf(a);
+        const sb = sOf(b);
+        const target = (sb >= 0 ? 1 : -1) * hw;
+        const den = sb - sa;
+        const f = Math.abs(den) < 1e-12 ? 0.5 : Math.max(0, Math.min(1, (target - sa) / den));
+        return { x: a.x + (b.x - a.x) * f, y: a.y + (b.y - a.y) * f };
+      };
       for (let i = 0; i < S.length; i++) {
-        const dIn = del[i === 0 ? 0 : i - 1]; // inner-side offset (shared with inner neighbour)
-        const dOut = del[i]; // outer-side offset (shared with outer neighbour)
-        const poly = [];
-        if (i % 2 === 0) {
-          for (let j = dIn; j <= N - dOut; j++) poly.push(S[i][j % N]);
-        } else {
-          for (let j = N - dIn; j >= dOut; j--) poly.push(S[i][j % N]);
-        }
+        const M = S[i]; // point 0 sits on the seam axis, inside the slot
+        let A = 1;
+        while (A < N && inSlot(M[A])) A++;
+        let B = N - 1;
+        while (B > 0 && inSlot(M[B])) B--;
+        if (A >= N || B <= 0 || B < A) continue; // ring swallowed by the slot
+        const poly = [crossing(M[A - 1], M[A])];
+        for (let j = A; j <= B; j++) poly.push(M[j]);
+        poly.push(crossing(M[(B + 1) % N], M[B]));
+        if (i % 2 === 1) poly.reverse();
         loops.push(poly);
       }
     }
