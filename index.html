@@ -291,6 +291,29 @@
 
       <section class="card" data-project="bendstool" hidden>
         <h2>
+          Foaming
+          <label class="toggle"><input type="checkbox" id="bs_foamEnabled" /> enable</label>
+        </h2>
+        <p class="hint" id="bs_foamModeHint"></p>
+        <div id="bs_foamFields" class="grid" hidden>
+          <div class="field"><label>Foam temperature (°C)</label><input type="number" id="bs_foamTemp" value="230" min="0" step="5" /></div>
+          <div class="field"><label>Foam extrusion (%)</label><input type="number" id="bs_foamExtrusionPct" value="38" min="1" max="100" step="1" /></div>
+        </div>
+        <p class="hint" id="bs_foamHint"></p>
+        <div id="bs_foamPrimerFields" class="grid" hidden>
+          <div class="field"><label>Enter-foam primer length (mm)</label><input type="number" id="bs_primer1Length" value="40" min="0.1" step="1" /></div>
+          <div class="field"><label>Enter-foam primer line width (mm)</label><input type="number" id="bs_primer1Width" value="2" min="0.1" step="0.1" /></div>
+          <div class="field"><label>Enter-foam primer layer height (mm)</label><input type="number" id="bs_primer1LayerHeight" value="0.3" min="0.05" step="0.05" /></div>
+          <div class="field"><label>Enter-foam primer feed (mm/min)</label><input type="number" id="bs_primer1Feed" value="600" min="1" step="50" /></div>
+          <div class="field"><label>Exit-foam primer length (mm)</label><input type="number" id="bs_primer2Length" value="60" min="0.1" step="1" /></div>
+          <div class="field"><label>Exit-foam primer line width (mm)</label><input type="number" id="bs_primer2Width" value="2" min="0.1" step="0.1" /></div>
+          <div class="field"><label>Exit-foam primer layer height (mm)</label><input type="number" id="bs_primer2LayerHeight" value="0.3" min="0.05" step="0.05" /></div>
+          <div class="field"><label>Exit-foam primer feed (mm/min)</label><input type="number" id="bs_primer2Feed" value="600" min="1" step="50" /></div>
+        </div>
+      </section>
+
+      <section class="card" data-project="bendstool" hidden>
+        <h2>
           Brim
           <label class="toggle"><input type="checkbox" id="bs_brimEnabled" /> enable</label>
         </h2>

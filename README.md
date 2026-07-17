@@ -42,7 +42,22 @@ keep **fully independent settings** per project:
   loop's layer height is bezier-eased from `dome × lh` at the innermost circle (slow
   start, fast middle, tiny end falloff) up to the full `lh` at the outermost leg
   curve — heights accumulate into a dished, curvy seat, the legs get a U-profile,
-  and extrusion follows each loop's actual bead height.
+  and extrusion follows each loop's actual bead height. Optional **foaming** (Klipper
+  pellet mode only, needs ≥3 layers): the first and last layers print at the normal
+  pellet zone temps; every layer between prints at a separate **foam temperature**,
+  which expands the material, so only a **foam extrusion %** is exposed — the
+  matching **speed %** is derived (`10000/extrusionPct`) to keep flow constant rather
+  than being a second number to keep in sync by hand. Entering/exiting foam, the disc
+  pauses at the end of a layer, lifts clear (of whatever is currently tallest — the
+  part or the prime line — plus a safety margin), travels to machine **X0 Y0**, waits
+  for the new zone temps, and prints a short straight **prime line** (its own length /
+  line width / layer height / feed — independent settings for the entering and
+  exiting primer, since exiting typically needs to flush more) before continuing. Both
+  primers always print at 100 % speed/extrusion: entering, the `M220`/`M221` overrides
+  are applied *after* the prime line; exiting, they're reverted to 100/100 *before* it
+  — so neither primer ever needs its own override math. Enabling foaming outside
+  Pellet mode, or with fewer than 3 layers, is ignored with a warning rather than
+  blocked, since testing shape/scale in filament mode with foaming left on is normal.
 
 - **Vessel** — simple trays, vases and cylinders. Reuses the same base **shapes**
   (circle, rounded rectangle, ellipse, polygon, star, squircle) and **print

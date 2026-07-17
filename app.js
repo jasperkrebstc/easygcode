@@ -105,6 +105,23 @@
             gap: num('bs_attrGap'),
             drop: num('bs_attrDrop'),
           },
+          foam: {
+            enabled: $('bs_foamEnabled').checked,
+            temp: num('bs_foamTemp'),
+            extrusionPct: num('bs_foamExtrusionPct'),
+            primer1: {
+              length: num('bs_primer1Length'),
+              lineWidth: num('bs_primer1Width'),
+              layerHeight: num('bs_primer1LayerHeight'),
+              feed: num('bs_primer1Feed'),
+            },
+            primer2: {
+              length: num('bs_primer2Length'),
+              lineWidth: num('bs_primer2Width'),
+              layerHeight: num('bs_primer2LayerHeight'),
+              feed: num('bs_primer2Feed'),
+            },
+          },
         },
         brim: readBrim('bs_'),
       };
@@ -240,6 +257,23 @@
           if (!isPos(a.gap)) return 'Spread gap must be greater than 0.';
           if (!Number.isFinite(a.drop) || a.drop < 0 || a.drop > 1)
             return 'Overhang drop must be between 0 and 1.';
+        }
+      }
+      if (cfg.disc.foam.enabled) {
+        // Mode/layer-count mismatches are NOT blocked here: switching to
+        // filament mode to test shape/scale on a smaller printer with foam
+        // left enabled is normal, and generate() already warns + skips foam
+        // gracefully in that case rather than refusing to generate at all.
+        const fm = cfg.disc.foam;
+        if (!isPos(fm.temp)) return 'Enter a valid foam temperature.';
+        if (!Number.isFinite(fm.extrusionPct) || fm.extrusionPct <= 0 || fm.extrusionPct > 100)
+          return 'Foam extrusion % must be between 1 and 100.';
+        for (const key of ['primer1', 'primer2']) {
+          const pr = fm[key];
+          if (!isPos(pr.length) || !isPos(pr.lineWidth) || !isPos(pr.layerHeight) || !isPos(pr.feed)) {
+            return 'Enter valid ' + (key === 'primer1' ? 'enter-foam' : 'exit-foam') +
+              ' primer length/line width/layer height/feed.';
+          }
         }
       }
       return validatePrinter(cfg) || validateBrim(cfg.brim);
@@ -1009,8 +1043,32 @@
       showPatternParams(cfg.pattern.type);
     } else if (cfg.project === 'vessel') {
       showShapeParams(cfg.shape, 've-shape-params');
+    } else if (cfg.project === 'bendstool') {
+      syncFoamHint(cfg);
     }
     syncPrinterCards();
+  }
+
+  // Live status for the foaming card: mode/layer mismatches (which the
+  // generator itself just warns about and skips, rather than blocking), and
+  // the derived speed% so the extrusion/speed relationship stays visible
+  // without being a second field someone has to keep in sync by hand.
+  function syncFoamHint(cfg) {
+    const fm = cfg.disc.foam;
+    $('bs_foamModeHint').textContent =
+      cfg.printer.mode !== 'pellet'
+        ? 'Foaming only applies in Pellet (Klipper) mode — currently inactive.'
+        : cfg.disc.layers < 3
+        ? 'Foaming needs at least 3 layers (first + a foam layer + last) — currently inactive.'
+        : '';
+    if (!fm.enabled || !isPos(fm.extrusionPct)) {
+      $('bs_foamHint').textContent = '';
+      return;
+    }
+    const speedPct = Math.round(10000 / fm.extrusionPct);
+    $('bs_foamHint').textContent =
+      'Speed follows extrusion to keep flow constant: ' + fm.extrusionPct + '% extrusion → ' +
+      speedPct + '% speed (M220/M221). Both primers always print at 100%/100%.';
   }
 
   function updateShapeUI() {
@@ -1195,6 +1253,8 @@
     $('hangFields').hidden = !$('hangEnabled').checked;
     $('bs_brimFields').hidden = !$('bs_brimEnabled').checked;
     $('bs_legFields').hidden = !$('bs_legsEnabled').checked;
+    $('bs_foamFields').hidden = !$('bs_foamEnabled').checked;
+    $('bs_foamPrimerFields').hidden = !$('bs_foamEnabled').checked;
     $('ve_brimFields').hidden = !$('ve_brimEnabled').checked;
     showProject(activeProject());
   }
@@ -1372,6 +1432,12 @@
 
   $('bs_legsEnabled').addEventListener('change', () => {
     $('bs_legFields').hidden = !$('bs_legsEnabled').checked;
+    updateShapeUI();
+  });
+
+  $('bs_foamEnabled').addEventListener('change', () => {
+    $('bs_foamFields').hidden = !$('bs_foamEnabled').checked;
+    $('bs_foamPrimerFields').hidden = !$('bs_foamEnabled').checked;
     updateShapeUI();
   });
 
