@@ -685,20 +685,24 @@
       moveCount++;
     }
 
-    // Travel that clears a printed brim: lift straight up to a clearance Z,
-    // move over to the destination XY, then drop to the destination Z — so the
-    // nozzle never drags across the brim (or the part) on its way to the first
-    // wall/body move. Plain travel when no brim was printed (unchanged output).
+    // General clearance hop: lift straight up to a safe Z (at least clearMargin,
+    // and at least as high as both the current and destination Z), move over to
+    // the destination XY at that height, then drop to the destination Z — so
+    // the nozzle never drags across whatever was just printed (a brim, a prime
+    // line) on its way to resume elsewhere.
+    function hopTravel(dest, clearMargin) {
+      const clearZ = Math.max(prev.z, dest.z, clearMargin);
+      if (clearZ > prev.z + 1e-6) travelAbs({ x: prev.x, y: prev.y, z: clearZ });
+      travelAbs({ x: dest.x, y: dest.y, z: clearZ });
+      if (dest.z < clearZ - 1e-6) travelAbs(dest);
+    }
+
+    // Travel that clears a printed brim. Plain travel when no brim was printed
+    // (unchanged output).
     let brimPrinted = false;
     function travelClear(dest) {
-      if (brimPrinted && prev) {
-        const clearZ = Math.max(prev.z, dest.z, 2 * cfg.brim.layerHeight);
-        if (clearZ > prev.z + 1e-6) travelAbs({ x: prev.x, y: prev.y, z: clearZ });
-        travelAbs({ x: dest.x, y: dest.y, z: clearZ });
-        if (dest.z < clearZ - 1e-6) travelAbs(dest);
-        return;
-      }
-      travelAbs(dest);
+      if (brimPrinted && prev) hopTravel(dest, 2 * cfg.brim.layerHeight);
+      else travelAbs(dest);
     }
 
     // Core extruding move at an explicit feedrate. E output is scaled by the
@@ -728,6 +732,88 @@
     function emit(cur, curBump, ramp) {
       emitSeg(cur, curBump || prevBump ? bumpFeed : cfg.printFeed, ramp);
       prevBump = curBump;
+    }
+
+    // ---- Bend stool: foaming (Klipper pellet only) ----
+    // Low-density foaming PLA: the first and last printed layers stay at the
+    // normal (pellet zone) temperature; every layer between them prints hotter
+    // so the material foams and expands, which needs LESS extruded volume at
+    // HIGHER speed to keep the actual material flow rate constant. Only one
+    // number is exposed for that (foam extrusion %) — the matching speed % is
+    // DERIVED (100*100/extrusionPct) rather than a second independent input,
+    // so the two can never drift out of the flow-matched relationship.
+    //
+    // Both the entering and exiting prime lines always print at 100%/100%:
+    // entering, the M220/M221 foam overrides are applied AFTER the prime line;
+    // exiting, they are reverted to 100/100 BEFORE the prime line. That fixed
+    // rule is what makes "prime before overriding" (entering) and "prime after
+    // reverting" (exiting) simultaneously true without special-casing either
+    // primer's own flow.
+    const foamCfg = cfg.disc && cfg.disc.foam;
+    let foamOn = isBS && !!(foamCfg && foamCfg.enabled);
+    if (foamOn && mode !== 'pellet') {
+      warnings.push('Foaming requires Pellet (Klipper) mode — ignored.');
+      foamOn = false;
+    }
+    if (foamOn && T < 3) {
+      warnings.push('Foaming needs at least 3 layers (first + a foam layer + last) — ignored.');
+      foamOn = false;
+    }
+    let foamSpeedPct = 100;
+    let primer1Area = 0;
+    let primer2Area = 0;
+    if (foamOn) {
+      foamSpeedPct = Math.round(10000 / Math.max(1, foamCfg.extrusionPct));
+      primer1Area = beadArea(foamCfg.primer1.lineWidth, foamCfg.primer1.layerHeight);
+      primer2Area = beadArea(foamCfg.primer2.lineWidth, foamCfg.primer2.layerHeight);
+    }
+    // A prime line at machine X0/Y0 (independent of the part's bed position),
+    // its own layer height/line width/feed, always at the current 100%/100%
+    // override. dir: 'enter' (heat up, prime, THEN apply the foam overrides) |
+    // 'exit' (revert overrides FIRST, cool down, THEN prime). dest is the next
+    // point on the part (absolute machine coords) to resume printing at.
+    function emitFoamTransition(dir, dest) {
+      const entering = dir === 'enter';
+      const primer = entering ? foamCfg.primer1 : foamCfg.primer2;
+      const primerArea = entering ? primer1Area : primer2Area;
+      const primerStart = { x: 0, y: 0, z: primer.layerHeight };
+      const primerEnd = { x: primer.length, y: 0, z: primer.layerHeight };
+      lines.push(
+        '; --- foam ' + (entering ? 'ENTER' : 'EXIT') + ': ' +
+          (entering ? 'heat to ' + foamCfg.temp + 'C' : 'cool to normal temps') + ' + prime ---'
+      );
+      if (!entering) {
+        lines.push('M220 S100 ; foam exit: restore speed factor before priming');
+        lines.push('M221 S100 ; foam exit: restore extrude factor before priming');
+      }
+      const tUp = entering ? foamCfg.temp : pel.up;
+      const tMid = entering ? foamCfg.temp : pel.mid;
+      const tDown = entering ? foamCfg.temp : pel.down;
+      lines.push('_GINGER_EXTRUDER_SET_UP S=' + tUp);
+      lines.push('_GINGER_EXTRUDER_SET_MID S=' + tMid);
+      lines.push('_GINGER_EXTRUDER_SET_DOWN S=' + tDown);
+      hopTravel(primerStart, 2 * lh);
+      lines.push('_GINGER_EXTRUDER_WAIT_UP S=' + tUp);
+      lines.push('_GINGER_EXTRUDER_WAIT_MID S=' + tMid);
+      lines.push('_GINGER_EXTRUDER_WAIT_DOWN S=' + tDown);
+      emitSeg(primerEnd, primer.feed, 1, primerArea);
+      if (entering) {
+        lines.push('M221 S' + foamCfg.extrusionPct + ' ; foam: reduced extrusion');
+        lines.push('M220 S' + foamSpeedPct + ' ; foam: increased speed (flow-matched)');
+      }
+      hopTravel(dest, 2 * lh);
+    }
+    if (foamOn) {
+      lines.push(
+        '; foam mode: temp ' + foamCfg.temp + 'C on layers 2..' + (T - 1) + ' of ' + T +
+          ', extrusion ' + foamCfg.extrusionPct + '% / speed ' + foamSpeedPct + '% (flow-matched)'
+      );
+      lines.push(
+        '; foam primers: enter ' + foamCfg.primer1.length + 'mm @ ' + foamCfg.primer1.lineWidth + 'x' +
+          foamCfg.primer1.layerHeight + 'mm F' + Math.round(foamCfg.primer1.feed) + ' | exit ' +
+          foamCfg.primer2.length + 'mm @ ' + foamCfg.primer2.lineWidth + 'x' + foamCfg.primer2.layerHeight +
+          'mm F' + Math.round(foamCfg.primer2.feed)
+      );
     }
 
     // Wall point (no displacement) at loop L, fraction u.
@@ -1227,44 +1313,67 @@
         const dropMult = attrGrad ? Math.max(0, Math.min(1, at3.drop || 0)) : 0;
         const DmaxA = legs ? ((2 * (legs.m - 1) + 1) * (at3.gap || 1) * lw) / 2 : 0;
         const dropOn = dropMult > 0 && DmaxA > 0;
+        function loopsAt(kk) {
+          return attrGrad
+            ? kk === T - 1
+              ? legLoops
+              : discLoops(cfg, discSpecMemo, kk / (T - 1)).loops
+            : legLoops;
+        }
+        function zAt(kk, i, pt) {
+          const zb = domed && kk > 0 ? lh + kk * loopH[i] : (kk + 1) * lh;
+          if (!dropOn) return zb;
+          const dc = (dropMult * loopH[i] * (T - 1)) / DmaxA;
+          return Math.max(lh, zb - dc * (pt.w || 0));
+        }
+        let afterFoam = false;
         for (let k = 0; k < T; k++) {
-          const z = (k + 1) * lh;
           if (k === 1 && includeStartEnd && fanPWM > 0) {
             lines.push('M106 S' + fanPWM + ' ; part cooling fan on after first layer');
           }
-          const loopsK = attrGrad
-            ? k === T - 1
-              ? legLoops
-              : discLoops(cfg, discSpecMemo, k / (T - 1)).loops
-            : legLoops;
-          const zPt = (i, pt) => {
-            const zb = domed && k > 0 ? lh + k * loopH[i] : z;
-            if (!dropOn) return zb;
-            const dc = (dropMult * loopH[i] * (T - 1)) / DmaxA;
-            return Math.max(lh, zb - dc * (pt.w || 0));
-          };
-          (k === 0 ? travelClear : travelAbs)({ x: cx + loopsK[0][0].x, y: cy + loopsK[0][0].y, z: zPt(0, loopsK[0][0]) });
+          const loopsK = loopsAt(k);
+          if (!afterFoam) {
+            (k === 0 ? travelClear : travelAbs)({
+              x: cx + loopsK[0][0].x, y: cy + loopsK[0][0].y, z: zAt(k, 0, loopsK[0][0]),
+            });
+          }
+          afterFoam = false;
           for (let i = 0; i < ringN; i++) {
             const lp = loopsK[i];
             const aOvr = domed && k > 0 ? loopArea[i] : null;
             for (let q = i === 0 ? 1 : 0; q < lp.length; q++) {
-              emitSeg({ x: cx + lp[q].x, y: cy + lp[q].y, z: zPt(i, lp[q]) }, cfg.printFeed, 1, aOvr);
+              emitSeg({ x: cx + lp[q].x, y: cy + lp[q].y, z: zAt(k, i, lp[q]) }, cfg.printFeed, 1, aOvr);
             }
+          }
+          if (foamOn && (k === 0 || k === T - 2)) {
+            const loopsNext = loopsAt(k + 1);
+            const dest = {
+              x: cx + loopsNext[0][0].x, y: cy + loopsNext[0][0].y, z: zAt(k + 1, 0, loopsNext[0][0]),
+            };
+            emitFoamTransition(k === 0 ? 'enter' : 'exit', dest);
+            afterFoam = true;
           }
         }
       } else {
         const a0 = Math.PI / 2;
+        function zRingAt(kk, i) {
+          return domed && kk > 0 ? lh + kk * loopH[i] : (kk + 1) * lh;
+        }
+        let afterFoam = false;
         for (let k = 0; k < T; k++) {
-          const z = (k + 1) * lh;
           if (k === 1 && includeStartEnd && fanPWM > 0) {
             lines.push('M106 S' + fanPWM + ' ; part cooling fan on after first layer');
           }
           let a = a0;
-          const zRing = (i) => (domed && k > 0 ? lh + k * loopH[i] : z);
-          (k === 0 ? travelClear : travelAbs)({ x: cx + ringRadii[0] * Math.cos(a), y: cy + ringRadii[0] * Math.sin(a), z: zRing(0) });
+          if (!afterFoam) {
+            (k === 0 ? travelClear : travelAbs)({
+              x: cx + ringRadii[0] * Math.cos(a), y: cy + ringRadii[0] * Math.sin(a), z: zRingAt(k, 0),
+            });
+          }
+          afterFoam = false;
           for (let i = 0; i < ringN; i++) {
             const r = ringRadii[i];
-            const zi = zRing(i);
+            const zi = zRingAt(k, i);
             const aOvr = domed && k > 0 ? loopArea[i] : null;
             const sweep = 2 * Math.PI - lw / r; // stop one line width short of the start
             let dth = 2 * Math.acos(Math.max(-1, 1 - tol / r));
@@ -1278,13 +1387,20 @@
             if (i < ringN - 1) {
               // radial connector out to the next ring (extruded, length = lw)
               emitSeg(
-                { x: cx + ringRadii[i + 1] * Math.cos(aEnd), y: cy + ringRadii[i + 1] * Math.sin(aEnd), z: zRing(i + 1) },
+                { x: cx + ringRadii[i + 1] * Math.cos(aEnd), y: cy + ringRadii[i + 1] * Math.sin(aEnd), z: zRingAt(k, i + 1) },
                 cfg.printFeed,
                 1,
                 domed && k > 0 ? loopArea[i + 1] : null
               );
             }
             a = aEnd;
+          }
+          if (foamOn && (k === 0 || k === T - 2)) {
+            const dest = {
+              x: cx + ringRadii[0] * Math.cos(a0), y: cy + ringRadii[0] * Math.sin(a0), z: zRingAt(k + 1, 0),
+            };
+            emitFoamTransition(k === 0 ? 'enter' : 'exit', dest);
+            afterFoam = true;
           }
         }
       }
