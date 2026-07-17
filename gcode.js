@@ -780,15 +780,17 @@
       const primerEnd = { x: primer.length, y: 0, z: primer.layerHeight };
       lines.push(
         '; --- foam ' + (entering ? 'ENTER' : 'EXIT') + ': ' +
-          (entering ? 'heat to ' + foamCfg.temp + 'C' : 'cool to normal temps') + ' + prime ---'
+          (entering
+            ? 'heat to ' + foamCfg.tempUp + '/' + foamCfg.tempMid + '/' + foamCfg.tempDown + 'C'
+            : 'cool to normal temps') + ' + prime ---'
       );
       if (!entering) {
         lines.push('M220 S100 ; foam exit: restore speed factor before priming');
         lines.push('M221 S100 ; foam exit: restore extrude factor before priming');
       }
-      const tUp = entering ? foamCfg.temp : pel.up;
-      const tMid = entering ? foamCfg.temp : pel.mid;
-      const tDown = entering ? foamCfg.temp : pel.down;
+      const tUp = entering ? foamCfg.tempUp : pel.up;
+      const tMid = entering ? foamCfg.tempMid : pel.mid;
+      const tDown = entering ? foamCfg.tempDown : pel.down;
       lines.push('_GINGER_EXTRUDER_SET_UP S=' + tUp);
       lines.push('_GINGER_EXTRUDER_SET_MID S=' + tMid);
       lines.push('_GINGER_EXTRUDER_SET_DOWN S=' + tDown);
@@ -805,7 +807,8 @@
     }
     if (foamOn) {
       lines.push(
-        '; foam mode: temp ' + foamCfg.temp + 'C on layers 2..' + (T - 1) + ' of ' + T +
+        '; foam mode: temps up=' + foamCfg.tempUp + ' mid=' + foamCfg.tempMid + ' down=' + foamCfg.tempDown +
+          'C on layers 2..' + (T - 1) + ' of ' + T +
           ', extrusion ' + foamCfg.extrusionPct + '% / speed ' + foamSpeedPct + '% (flow-matched)'
       );
       lines.push(
@@ -1288,10 +1291,14 @@
         loopArea.push(domed ? beadArea(lw, h) : area);
       }
       if (domed) {
+        // The top layer always adds a full lh everywhere (see zAt/zRingAt),
+        // so "top z at center" is one full lh higher than a naive continuation
+        // of the eased eash-layer step would give.
+        const topZCenter = T > 1 ? 2 * lh + Math.max(0, T - 2) * dm * lh : lh;
         lines.push(
           '; dome: center x' + dm + ' (' + (dm * lh).toFixed(2) + 'mm/layer) -> edge ' + lh +
-            'mm/layer; top z ' + (lh + (T - 1) * dm * lh).toFixed(2) + ' center vs ' +
-            (T * lh).toFixed(2) + ' edge'
+            'mm/layer, full height on the top layer everywhere; top z ' + topZCenter.toFixed(2) +
+            ' center vs ' + (T * lh).toFixed(2) + ' edge'
         );
       }
       if (legLoops) {
@@ -1320,8 +1327,16 @@
               : discLoops(cfg, discSpecMemo, kk / (T - 1)).loops
             : legLoops;
         }
+        // Standard domed z at ring i, layer kk: the eased loopH[i] accumulates
+        // every layer from the (uniform, full-height) base up. The TOP layer
+        // is a special case (see zAt): it always adds a full lh on top of
+        // whatever's underneath, so the print finishes with a full-strength
+        // top skin even though the surface it sits on is still domed.
+        function zBase(kk, i) {
+          return domed && kk > 0 ? lh + kk * loopH[i] : (kk + 1) * lh;
+        }
         function zAt(kk, i, pt) {
-          const zb = domed && kk > 0 ? lh + kk * loopH[i] : (kk + 1) * lh;
+          const zb = domed && kk === T - 1 && kk > 0 ? zBase(kk - 1, i) + lh : zBase(kk, i);
           if (!dropOn) return zb;
           const dc = (dropMult * loopH[i] * (T - 1)) / DmaxA;
           return Math.max(lh, zb - dc * (pt.w || 0));
@@ -1340,7 +1355,7 @@
           afterFoam = false;
           for (let i = 0; i < ringN; i++) {
             const lp = loopsK[i];
-            const aOvr = domed && k > 0 ? loopArea[i] : null;
+            const aOvr = domed && k > 0 && k !== T - 1 ? loopArea[i] : null;
             for (let q = i === 0 ? 1 : 0; q < lp.length; q++) {
               emitSeg({ x: cx + lp[q].x, y: cy + lp[q].y, z: zAt(k, i, lp[q]) }, cfg.printFeed, 1, aOvr);
             }
@@ -1356,8 +1371,14 @@
         }
       } else {
         const a0 = Math.PI / 2;
-        function zRingAt(kk, i) {
+        function zRingBase(kk, i) {
           return domed && kk > 0 ? lh + kk * loopH[i] : (kk + 1) * lh;
+        }
+        // Top layer: always a full lh on top of whatever's underneath (still
+        // domed), rather than the eased loopH[i] — see zAt in the legLoops
+        // branch for the full reasoning.
+        function zRingAt(kk, i) {
+          return domed && kk === T - 1 && kk > 0 ? zRingBase(kk - 1, i) + lh : zRingBase(kk, i);
         }
         let afterFoam = false;
         for (let k = 0; k < T; k++) {
@@ -1374,7 +1395,7 @@
           for (let i = 0; i < ringN; i++) {
             const r = ringRadii[i];
             const zi = zRingAt(k, i);
-            const aOvr = domed && k > 0 ? loopArea[i] : null;
+            const aOvr = domed && k > 0 && k !== T - 1 ? loopArea[i] : null;
             const sweep = 2 * Math.PI - lw / r; // stop one line width short of the start
             let dth = 2 * Math.acos(Math.max(-1, 1 - tol / r));
             if (!isFinite(dth) || dth <= 0) dth = 0.2;
@@ -1390,7 +1411,7 @@
                 { x: cx + ringRadii[i + 1] * Math.cos(aEnd), y: cy + ringRadii[i + 1] * Math.sin(aEnd), z: zRingAt(k, i + 1) },
                 cfg.printFeed,
                 1,
-                domed && k > 0 ? loopArea[i + 1] : null
+                domed && k > 0 && k !== T - 1 ? loopArea[i + 1] : null
               );
             }
             a = aEnd;

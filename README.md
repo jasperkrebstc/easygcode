@@ -42,10 +42,15 @@ keep **fully independent settings** per project:
   loop's layer height is bezier-eased from `dome × lh` at the innermost circle (slow
   start, fast middle, tiny end falloff) up to the full `lh` at the outermost leg
   curve — heights accumulate into a dished, curvy seat, the legs get a U-profile,
-  and extrusion follows each loop's actual bead height. Optional **foaming** (Klipper
+  and extrusion follows each loop's actual bead height. The very last (topmost) layer is
+  always a FULL lh everywhere, even over a domed center — it still follows the domed
+  surface below it (so the disc stays non-planar there), but its own thickness and
+  extrusion are the full nominal layer, giving the print a full-strength top skin.
+  Optional **foaming** (Klipper
   pellet mode only, needs ≥3 layers): the first and last layers print at the normal
-  pellet zone temps; every layer between prints at a separate **foam temperature**,
-  which expands the material, so only a **foam extrusion %** is exposed — the
+  pellet zone temps; every layer between prints at separate **foam zone up/mid/down temperatures**
+  (mirroring the base pellet zone temps, so a temperature ramp across the zones is
+  possible), which expand the material, so only a **foam extrusion %** is exposed — the
   matching **speed %** is derived (`10000/extrusionPct`) to keep flow constant rather
   than being a second number to keep in sync by hand. Entering/exiting foam, the disc
   pauses at the end of a layer, lifts clear (of whatever is currently tallest — the

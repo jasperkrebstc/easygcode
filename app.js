@@ -107,7 +107,9 @@
           },
           foam: {
             enabled: $('bs_foamEnabled').checked,
-            temp: num('bs_foamTemp'),
+            tempUp: num('bs_foamTempUp'),
+            tempMid: num('bs_foamTempMid'),
+            tempDown: num('bs_foamTempDown'),
             extrusionPct: num('bs_foamExtrusionPct'),
             primer1: {
               length: num('bs_primer1Length'),
@@ -265,7 +267,8 @@
         // left enabled is normal, and generate() already warns + skips foam
         // gracefully in that case rather than refusing to generate at all.
         const fm = cfg.disc.foam;
-        if (!isPos(fm.temp)) return 'Enter a valid foam temperature.';
+        if (!isPos(fm.tempUp) || !isPos(fm.tempMid) || !isPos(fm.tempDown))
+          return 'Enter valid foam zone up/mid/down temperatures.';
         if (!Number.isFinite(fm.extrusionPct) || fm.extrusionPct <= 0 || fm.extrusionPct > 100)
           return 'Foam extrusion % must be between 1 and 100.';
         for (const key of ['primer1', 'primer2']) {
@@ -523,8 +526,11 @@
     if (legs) hint += ' · legs ' + legs.snappedW + ' mm wide (' + legs.m + ' pair' + (legs.m > 1 ? 's' : '') + ')';
     if (Number.isFinite(cfg.disc.dome) && cfg.disc.dome < 1 && cfg.disc.layers > 1 && n > 1) {
       const T = cfg.disc.layers;
-      hint += ' · dome: top z ' + (cfg.layerHeight * (1 + (T - 1) * cfg.disc.dome)).toFixed(1) +
-        ' center / ' + (cfg.layerHeight * T).toFixed(1) + ' edge';
+      const lh = cfg.layerHeight;
+      // Top layer always adds a full lh everywhere (see gcode.js zAt/zRingAt),
+      // one full lh higher than a naive continuation of the eased step.
+      const topZCenter = 2 * lh + Math.max(0, T - 2) * cfg.disc.dome * lh;
+      hint += ' · dome: top z ' + topZCenter.toFixed(1) + ' center / ' + (lh * T).toFixed(1) + ' edge';
     }
     if (legs && cfg.disc.attractor.enabled && isPos(cfg.disc.attractor.gap)) {
       const T = cfg.disc.layers;
