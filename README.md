@@ -63,6 +63,24 @@ keep **fully independent settings** per project:
   — so neither primer ever needs its own override math. Enabling foaming outside
   Pellet mode, or with fewer than 3 layers, is ignored with a warning rather than
   blocked, since testing shape/scale in filament mode with foaming left on is normal.
+  The **first layer prints outside-in** (outermost ring/legs inward to the seat
+  center) — every other layer stays inside-out — led in by a straight **entrance
+  primer**: a fixed-length radial line (25% of the seat diameter, so it scales with
+  size; same line width/layer height as the print itself) ending exactly at the
+  outermost ring's own seam point, so the corner from primer to ring is a real 90°
+  turn (radial into tangential). The reversed ring order reuses each ring's own
+  already-built points (just walked backwards) rather than new geometry, since the
+  forward chaining already guarantees ring i's start equals ring i-1's end. Always
+  applied when legs are enabled or the zipper seam is on; the plain legless-staircase
+  disc keeps its ordinary inside-out first layer. Finally, the disc is always
+  **rotated 15°** and the rotated bounding box is **recentered on the bed-center
+  input** — the 3-leg layout is roughly triangular, and this fits a rectangular bed
+  better than printing it axis-aligned (a legless circular disc is rotationally
+  symmetric, so only its seam position visibly shifts). The resulting bounding box
+  size — pure centerline coordinates, no line-width margin added, since the bed has
+  room to spare beyond where the head travels — is shown live in the hint and in the
+  G-code header, computed by the same shared function in both places so the numbers
+  always match exactly.
 
 - **Vessel** — simple trays, vases and cylinders. Reuses the same base **shapes**
   (circle, rounded rectangle, ellipse, polygon, star, squircle) and **print
