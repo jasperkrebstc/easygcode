@@ -203,6 +203,39 @@
   // so the seam at 0 deg (right) sits in the gap between the two right legs.
   const LEG_ANGLES = [Math.PI, Math.PI / 3, -Math.PI / 3];
 
+  // Fixed bed-fit rotation for the bend stool: the 3-leg layout is roughly
+  // triangular, and 15 deg fits a rectangular bed noticeably better than
+  // printing it axis-aligned. See the bsFit/bsShiftX/Y setup in generate().
+  const BS_ROTATION_DEG = 15;
+
+  // Rotated + bed-centered bounding box of a bend-stool outline (disc-centered
+  // input points). Shared by generate() and the 2D preview so both agree on
+  // exactly the same numbers. Returns the box size and the shift that recenters
+  // it on (centerX, centerY) — apply as: rotate(p) + {shiftX, shiftY} + {centerX, centerY}.
+  function discBedFit(outline, centerX, centerY) {
+    const rotRad = (BS_ROTATION_DEG * Math.PI) / 180;
+    const cosR = Math.cos(rotRad);
+    const sinR = Math.sin(rotRad);
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    (outline || []).forEach((p) => {
+      const rx = p.x * cosR - p.y * sinR;
+      const ry = p.x * sinR + p.y * cosR;
+      if (rx < minX) minX = rx;
+      if (rx > maxX) maxX = rx;
+      if (ry < minY) minY = ry;
+      if (ry > maxY) maxY = ry;
+    });
+    if (!isFinite(minX)) return { width: 0, height: 0, cosR: cosR, sinR: sinR, shiftX: 0, shiftY: 0 };
+    return {
+      width: maxX - minX,
+      height: maxY - minY,
+      cosR: cosR,
+      sinR: sinR,
+      shiftX: -(minX + maxX) / 2,
+      shiftY: -(minY + maxY) / 2,
+    };
+  }
+
   // Shared disc + legs parameter derivation (used by the generator and the 2D
   // preview). Returns ring layout, snapped values, and leg spec or null.
   function discSpec(cfg) {
@@ -459,6 +492,24 @@
     let attrGrad = false; // bottom->top spread gradient active
     let discSpecMemo = null;
     let discOuterLoop = null;
+    // Bend-stool bed-fit transform: a fixed rotation (the 3-leg layout is
+    // roughly triangular, so tilting it fits a rectangular bed better than
+    // printing it axis-aligned) plus a recenter so the ROTATED bounding box —
+    // not the raw, unrotated disc — sits on the bed-center input. Applied as a
+    // post-hoc rigid transform on the already-fully-built geometry (legs,
+    // fillets, bend-spread, everything), so nothing about how the shape is
+    // constructed has to change — only where its points finally land. Hoisted
+    // to this scope (rather than local to the isBS block) so the per-layer
+    // loopsAt() recompute inside the body-emission section can reuse it too.
+    // A legless disc is a circle, rotationally symmetric, so bsShiftX/Y stay
+    // exactly 0 there — only the seam position visibly rotates.
+    let bsCosR = 1;
+    let bsSinR = 0;
+    let bsShiftX = 0;
+    let bsShiftY = 0;
+    function bsFit(p) {
+      return { x: p.x * bsCosR - p.y * bsSinR + bsShiftX, y: p.x * bsSinR + p.y * bsCosR + bsShiftY, w: p.w };
+    }
     if (isBS) {
       const spec = discSpec(cfg);
       spec.warnings.forEach((w) => warnings.push(w));
@@ -469,11 +520,14 @@
       const lw = cfg.lineWidth;
       const tolBS = cfg.tolerance > 0 ? cfg.tolerance : 0.05;
       const altSeam = cfg.disc.seamStyle === 'alternating';
-      let dl = null;
+      const rotRad = (BS_ROTATION_DEG * Math.PI) / 180;
+      bsCosR = Math.cos(rotRad);
+      bsSinR = Math.sin(rotRad);
+
+      let dlRaw = null;
       if (legs || altSeam) {
         // Precompute each ring's polyline once (identical every layer).
-        dl = discLoops(cfg, spec);
-        legLoops = dl.loops;
+        dlRaw = discLoops(cfg, spec);
         if (legs && !altSeam) {
           // Staircase drift within the legged rings (seam is anchored at the
           // outermost ring; inner plain rings absorb the rest).
@@ -487,23 +541,39 @@
       // Vertical spread gradient: with more than one layer, the bottom layer
       // prints with the lines collected (scale 0) and the spread grows
       // linearly to the maximum at the top layer.
-      attrGrad = !!(dl && dl.attrOn && T > 1);
+      attrGrad = !!(dlRaw && dlRaw.attrOn && T > 1);
       discSpecMemo = spec;
+
+      let rawOuterLoop;
       if (legs) {
         // Brim base: the outermost combined outline of the BOTTOM layer (the
         // brim hugs what actually prints first — unspread when gradient is on).
-        discOuterLoop = attrGrad ? discLoops(cfg, spec, 0).outline : dl.outline;
+        rawOuterLoop = attrGrad ? discLoops(cfg, spec, 0).outline : dlRaw.outline;
       } else {
         // Outermost bead centerline circle doubles as the brim's base loop.
         const rOut = ringRadii[ringN - 1];
         const dth0 = 2 * Math.acos(Math.max(-1, 1 - tolBS / rOut));
         const steps0 = Math.max(24, Math.ceil((2 * Math.PI) / (isFinite(dth0) && dth0 > 0 ? dth0 : 0.2)));
-        discOuterLoop = [];
+        rawOuterLoop = [];
         for (let s = 0; s < steps0; s++) {
           const ang = (2 * Math.PI * s) / steps0;
-          discOuterLoop.push({ x: rOut * Math.cos(ang), y: rOut * Math.sin(ang) });
+          rawOuterLoop.push({ x: rOut * Math.cos(ang), y: rOut * Math.sin(ang) });
         }
       }
+
+      // Shared with the 2D preview, so both agree on the exact same numbers.
+      const fit = discBedFit(rawOuterLoop, cfg.centerX, cfg.centerY);
+      bsShiftX = fit.shiftX;
+      bsShiftY = fit.shiftY;
+
+      legLoops = dlRaw ? dlRaw.loops.map((lp) => lp.map(bsFit)) : null;
+      discOuterLoop = rawOuterLoop.map(bsFit);
+
+      lines.push(
+        '; bend stool bed-fit: rotated ' + BS_ROTATION_DEG + ' deg, bounding box ' + fit.width.toFixed(1) +
+          ' x ' + fit.height.toFixed(1) + ' mm, centered at bed (' + cfg.centerX + ', ' + cfg.centerY + ')' +
+          ' — pure coordinates, no line-width margin'
+      );
     }
 
     // ---- Printer / extrusion mode ----
@@ -1321,11 +1391,10 @@
         const DmaxA = legs ? ((2 * (legs.m - 1) + 1) * (at3.gap || 1) * lw) / 2 : 0;
         const dropOn = dropMult > 0 && DmaxA > 0;
         function loopsAt(kk) {
-          return attrGrad
-            ? kk === T - 1
-              ? legLoops
-              : discLoops(cfg, discSpecMemo, kk / (T - 1)).loops
-            : legLoops;
+          if (!attrGrad || kk === T - 1) return legLoops;
+          // Fresh per-layer recompute (bend-spread gradient): legLoops is
+          // already bsFit'd once above, but this fresh build isn't yet.
+          return discLoops(cfg, discSpecMemo, kk / (T - 1)).loops.map((lp) => lp.map(bsFit));
         }
         // Standard domed z at ring i, layer kk: the eased loopH[i] accumulates
         // every layer from the (uniform, full-height) base up. The TOP layer
@@ -1347,17 +1416,52 @@
             lines.push('M106 S' + fanPWM + ' ; part cooling fan on after first layer');
           }
           const loopsK = loopsAt(k);
-          if (!afterFoam) {
-            (k === 0 ? travelClear : travelAbs)({
-              x: cx + loopsK[0][0].x, y: cy + loopsK[0][0].y, z: zAt(k, 0, loopsK[0][0]),
-            });
-          }
-          afterFoam = false;
-          for (let i = 0; i < ringN; i++) {
-            const lp = loopsK[i];
-            const aOvr = domed && k > 0 && k !== T - 1 ? loopArea[i] : null;
-            for (let q = i === 0 ? 1 : 0; q < lp.length; q++) {
-              emitSeg({ x: cx + lp[q].x, y: cy + lp[q].y, z: zAt(k, i, lp[q]) }, cfg.printFeed, 1, aOvr);
+          if (k === 0) {
+            // First layer prints OUTSIDE-IN (outermost ring/legs inward to the
+            // seat center) so an ENTRANCE PRIMER can lead cleanly into it: a
+            // straight radial line ending exactly at the outermost ring's own
+            // seam point, so the corner from primer to ring is a real 90 deg
+            // turn (radial into tangential) rather than an arbitrary jump.
+            // Reusing each ring's own array reversed (instead of building new
+            // geometry) works because the forward chaining already guarantees
+            // ring i's original START equals ring i-1's original END — so
+            // ring i's REVERSED end (= original start) lines up exactly with
+            // ring i-1's REVERSED start (= original end), the same short
+            // radial connector, just walked from the outside in.
+            const outerRing = loopsK[ringN - 1];
+            const seamPt = outerRing[outerRing.length - 1];
+            const dx = seamPt.x - bsShiftX;
+            const dy = seamPt.y - bsShiftY;
+            const rOuter = Math.hypot(dx, dy) || 1;
+            const primerLen = 0.25 * snappedD;
+            const primerStart = {
+              x: cx + seamPt.x + (dx / rOuter) * primerLen,
+              y: cy + seamPt.y + (dy / rOuter) * primerLen,
+              z: lh,
+            };
+            lines.push(
+              '; entrance primer: ' + primerLen.toFixed(1) + 'mm radial lead-in (25% of seat diameter) ' +
+                'to the outer seam, then layer 1 outside-in'
+            );
+            travelClear(primerStart);
+            emitSeg({ x: cx + seamPt.x, y: cy + seamPt.y, z: lh }, cfg.printFeed, 1, null);
+            for (let i = ringN - 1; i >= 0; i--) {
+              const lp = loopsK[i].slice().reverse();
+              for (let q = i === ringN - 1 ? 1 : 0; q < lp.length; q++) {
+                emitSeg({ x: cx + lp[q].x, y: cy + lp[q].y, z: zAt(0, i, lp[q]) }, cfg.printFeed, 1, null);
+              }
+            }
+          } else {
+            if (!afterFoam) {
+              travelAbs({ x: cx + loopsK[0][0].x, y: cy + loopsK[0][0].y, z: zAt(k, 0, loopsK[0][0]) });
+            }
+            afterFoam = false;
+            for (let i = 0; i < ringN; i++) {
+              const lp = loopsK[i];
+              const aOvr = domed && k > 0 && k !== T - 1 ? loopArea[i] : null;
+              for (let q = i === 0 ? 1 : 0; q < lp.length; q++) {
+                emitSeg({ x: cx + lp[q].x, y: cy + lp[q].y, z: zAt(k, i, lp[q]) }, cfg.printFeed, 1, aOvr);
+              }
             }
           }
           if (foamOn && (k === 0 || k === T - 2)) {
@@ -1380,46 +1484,102 @@
         function zRingAt(kk, i) {
           return domed && kk === T - 1 && kk > 0 ? zRingBase(kk - 1, i) + lh : zRingBase(kk, i);
         }
+        function ringPt(i, ang) {
+          return bsFit({ x: ringRadii[i] * Math.cos(ang), y: ringRadii[i] * Math.sin(ang) });
+        }
+        // Build ring i's own swept points (bsFit'd), starting at angle aStart;
+        // optionally prefixed with a connector point (ring i's own radius, at
+        // the angle the previous ring left off) — mirrors the legLoops
+        // convention where ring i>0's first array point IS that connector, so
+        // the same reversal trick (see the k===0 branch below) applies here too.
+        function buildRing(i, aStart, withConnector) {
+          const r = ringRadii[i];
+          const sweep = 2 * Math.PI - lw / r;
+          let dth = 2 * Math.acos(Math.max(-1, 1 - tol / r));
+          if (!isFinite(dth) || dth <= 0) dth = 0.2;
+          const steps = Math.max(12, Math.ceil(sweep / dth));
+          const pts = [];
+          if (withConnector) pts.push(ringPt(i, aStart));
+          for (let s = 1; s <= steps; s++) pts.push(ringPt(i, aStart + (sweep * s) / steps));
+          return { pts: pts, aEnd: (aStart + sweep) % (2 * Math.PI) };
+        }
         let afterFoam = false;
         for (let k = 0; k < T; k++) {
           if (k === 1 && includeStartEnd && fanPWM > 0) {
             lines.push('M106 S' + fanPWM + ' ; part cooling fan on after first layer');
           }
-          let a = a0;
-          if (!afterFoam) {
-            (k === 0 ? travelClear : travelAbs)({
-              x: cx + ringRadii[0] * Math.cos(a), y: cy + ringRadii[0] * Math.sin(a), z: zRingAt(k, 0),
-            });
-          }
-          afterFoam = false;
-          for (let i = 0; i < ringN; i++) {
-            const r = ringRadii[i];
-            const zi = zRingAt(k, i);
-            const aOvr = domed && k > 0 && k !== T - 1 ? loopArea[i] : null;
-            const sweep = 2 * Math.PI - lw / r; // stop one line width short of the start
-            let dth = 2 * Math.acos(Math.max(-1, 1 - tol / r));
-            if (!isFinite(dth) || dth <= 0) dth = 0.2;
-            const steps = Math.max(12, Math.ceil(sweep / dth));
-            for (let s = 1; s <= steps; s++) {
-              const ang = a + (sweep * s) / steps;
-              emitSeg({ x: cx + r * Math.cos(ang), y: cy + r * Math.sin(ang), z: zi }, cfg.printFeed, 1, aOvr);
+          if (k === 0) {
+            // Same outside-in + entrance-primer treatment as the legLoops
+            // branch (see there for the full reasoning): materialize each
+            // ring's own points (forward order) first, then reverse and walk
+            // outermost -> innermost, led in by a radial primer to the
+            // outermost ring's own seam point.
+            const rings0 = [];
+            let aCur = a0;
+            for (let i = 0; i < ringN; i++) {
+              const built = buildRing(i, aCur, i > 0);
+              rings0.push(built.pts);
+              aCur = built.aEnd;
             }
-            const aEnd = (a + sweep) % (2 * Math.PI);
-            if (i < ringN - 1) {
-              // radial connector out to the next ring (extruded, length = lw)
-              emitSeg(
-                { x: cx + ringRadii[i + 1] * Math.cos(aEnd), y: cy + ringRadii[i + 1] * Math.sin(aEnd), z: zRingAt(k, i + 1) },
-                cfg.printFeed,
-                1,
-                domed && k > 0 && k !== T - 1 ? loopArea[i + 1] : null
-              );
+            const outerRing = rings0[ringN - 1];
+            const seamPt = outerRing[outerRing.length - 1];
+            const dx = seamPt.x - bsShiftX;
+            const dy = seamPt.y - bsShiftY;
+            const rOuter = Math.hypot(dx, dy) || 1;
+            const primerLen = 0.25 * snappedD;
+            const primerStart = {
+              x: cx + seamPt.x + (dx / rOuter) * primerLen,
+              y: cy + seamPt.y + (dy / rOuter) * primerLen,
+              z: lh,
+            };
+            lines.push(
+              '; entrance primer: ' + primerLen.toFixed(1) + 'mm radial lead-in (25% of seat diameter) ' +
+                'to the outer seam, then layer 1 outside-in'
+            );
+            travelClear(primerStart);
+            emitSeg({ x: cx + seamPt.x, y: cy + seamPt.y, z: lh }, cfg.printFeed, 1, null);
+            for (let i = ringN - 1; i >= 0; i--) {
+              const lp = rings0[i].slice().reverse();
+              for (let q = i === ringN - 1 ? 1 : 0; q < lp.length; q++) {
+                emitSeg({ x: cx + lp[q].x, y: cy + lp[q].y, z: zRingAt(0, i) }, cfg.printFeed, 1, null);
+              }
             }
-            a = aEnd;
+          } else {
+            let a = a0;
+            if (!afterFoam) {
+              const p0 = ringPt(0, a);
+              travelAbs({ x: cx + p0.x, y: cy + p0.y, z: zRingAt(k, 0) });
+            }
+            afterFoam = false;
+            for (let i = 0; i < ringN; i++) {
+              const r = ringRadii[i];
+              const zi = zRingAt(k, i);
+              const aOvr = domed && k > 0 && k !== T - 1 ? loopArea[i] : null;
+              const sweep = 2 * Math.PI - lw / r; // stop one line width short of the start
+              let dth = 2 * Math.acos(Math.max(-1, 1 - tol / r));
+              if (!isFinite(dth) || dth <= 0) dth = 0.2;
+              const steps = Math.max(12, Math.ceil(sweep / dth));
+              for (let s = 1; s <= steps; s++) {
+                const p = ringPt(i, a + (sweep * s) / steps);
+                emitSeg({ x: cx + p.x, y: cy + p.y, z: zi }, cfg.printFeed, 1, aOvr);
+              }
+              const aEnd = (a + sweep) % (2 * Math.PI);
+              if (i < ringN - 1) {
+                // radial connector out to the next ring (extruded, length = lw)
+                const pNext = ringPt(i + 1, aEnd);
+                emitSeg(
+                  { x: cx + pNext.x, y: cy + pNext.y, z: zRingAt(k, i + 1) },
+                  cfg.printFeed,
+                  1,
+                  domed && k > 0 && k !== T - 1 ? loopArea[i + 1] : null
+                );
+              }
+              a = aEnd;
+            }
           }
           if (foamOn && (k === 0 || k === T - 2)) {
-            const dest = {
-              x: cx + ringRadii[0] * Math.cos(a0), y: cy + ringRadii[0] * Math.sin(a0), z: zRingAt(k + 1, 0),
-            };
+            const p0 = ringPt(0, a0);
+            const dest = { x: cx + p0.x, y: cy + p0.y, z: zRingAt(k + 1, 0) };
             emitFoamTransition(k === 0 ? 'enter' : 'exit', dest);
             afterFoam = true;
           }
@@ -1442,5 +1602,14 @@
     return { gcode: lines.join('\n') + '\n', warnings, stats, path };
   }
 
-  window.GcodeGen = { generate, beadArea, discSpec, discLoops, LEG_ANGLES, makeProfile };
+  window.GcodeGen = {
+    generate,
+    beadArea,
+    discSpec,
+    discLoops,
+    LEG_ANGLES,
+    makeProfile,
+    BS_ROTATION_DEG,
+    discBedFit,
+  };
 })();

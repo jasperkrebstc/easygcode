@@ -546,6 +546,22 @@
       }
     }
     if (cfg.disc.legs && cfg.disc.legs.enabled && !legs) hint += ' · ' + (spec.warnings[spec.warnings.length - 1] || 'legs invalid');
+
+    // Bed fit: the generator always rotates the disc 15° and recenters the
+    // ROTATED bounding box on the bed-center input (the 3-leg layout is
+    // roughly triangular, so this fits a rectangular bed better than printing
+    // it axis-aligned) — computed here with the SAME shared helper the
+    // generator uses, on the SAME (bottom-layer, unspread) outline it brims,
+    // so the numbers always match the actual G-code exactly. Pure centerline
+    // coordinates, no line-width margin — the bed has room to spare outside
+    // where the head can travel.
+    const dlForFit = window.GcodeGen.discLoops(cfg, spec);
+    const fitOutline =
+      dlForFit.attrOn && cfg.disc.layers > 1 ? window.GcodeGen.discLoops(cfg, spec, 0).outline : dlForFit.outline;
+    const fit = window.GcodeGen.discBedFit(fitOutline, cfg.centerX, cfg.centerY);
+    hint += ' · bed fit: rotated ' + window.GcodeGen.BS_ROTATION_DEG + '° → ' + fit.width.toFixed(1) + ' × ' +
+      fit.height.toFixed(1) + ' mm, centered at (' + cfg.centerX + ', ' + cfg.centerY + ')';
+
     $('bs_discHint').textContent = hint;
 
     let maxR = spec.snappedD / 2;
