@@ -124,6 +124,10 @@
               feed: num('bs_primer2Feed'),
             },
           },
+          flowFeed: {
+            enabled: $('bs_flowFeedEnabled').checked,
+            rate: num('bs_flowFeedRate'),
+          },
         },
         brim: readBrim('bs_'),
       };
@@ -278,6 +282,9 @@
               ' primer length/line width/layer height/feed.';
           }
         }
+      }
+      if (cfg.disc.flowFeed.enabled && !isPos(cfg.disc.flowFeed.rate)) {
+        return 'Enter a valid target volumetric flow (mm³/s).';
       }
       return validatePrinter(cfg) || validateBrim(cfg.brim);
     }
@@ -1067,6 +1074,7 @@
       showShapeParams(cfg.shape, 've-shape-params');
     } else if (cfg.project === 'bendstool') {
       syncFoamHint(cfg);
+      syncFlowFeedHint(cfg);
     }
     syncPrinterCards();
   }
@@ -1091,6 +1099,41 @@
     $('bs_foamHint').textContent =
       'Speed follows extrusion to keep flow constant: ' + fm.extrusionPct + '% extrusion → ' +
       speedPct + '% speed (M220/M221). Both primers always print at 100%/100%.';
+  }
+
+  // Live status for the feed-mode card: shows whichever number the CURRENT
+  // mode doesn't already fix — feed range while in constant-flow mode (since
+  // that's what varies), or the resulting flow range while in constant-feed
+  // mode (since the dome makes bead area, and therefore flow, vary) — using
+  // the SAME shared helper the generator uses, so the numbers always match.
+  function syncFlowFeedHint(cfg) {
+    if (!isPos(cfg.lineWidth) || !isPos(cfg.layerHeight) || !isPos(cfg.disc.diameter)) {
+      $('bs_flowFeedHint').textContent = '';
+      return;
+    }
+    const range = window.GcodeGen.domeHeightRange(cfg);
+    const areaMin = window.GcodeGen.beadArea(cfg.lineWidth, range.hMin);
+    const areaMax = window.GcodeGen.beadArea(cfg.lineWidth, range.hMax);
+    const ff = cfg.disc.flowFeed;
+    if (ff.enabled && isPos(ff.rate)) {
+      const feedAtMin = (ff.rate * 60) / areaMin; // smallest area -> fastest feed
+      const feedAtMax = (ff.rate * 60) / areaMax; // largest area -> slowest feed
+      $('bs_flowFeedHint').textContent =
+        'Feed varies ' + feedAtMax.toFixed(0) + '–' + feedAtMin.toFixed(0) + ' mm/min ' +
+        '(bead area ' + areaMin.toFixed(2) + '–' + areaMax.toFixed(2) + ' mm² across the dome) to hold ' +
+        ff.rate + ' mm³/s.';
+    } else if (isPos(cfg.printFeed)) {
+      const flowAtMin = (cfg.printFeed * areaMin) / 60;
+      const flowAtMax = (cfg.printFeed * areaMax) / 60;
+      $('bs_flowFeedHint').textContent = range.domed
+        ? 'At a constant ' + cfg.printFeed + ' mm/min, volumetric flow varies ' + flowAtMin.toFixed(2) +
+          '–' + flowAtMax.toFixed(2) + ' mm³/s across the dome (bead area ' + areaMin.toFixed(2) + '–' +
+          areaMax.toFixed(2) + ' mm²).'
+        : 'At a constant ' + cfg.printFeed + ' mm/min: ' + flowAtMax.toFixed(2) +
+          ' mm³/s (undomed — bead area is uniform, so flow is too).';
+    } else {
+      $('bs_flowFeedHint').textContent = '';
+    }
   }
 
   function updateShapeUI() {
@@ -1277,6 +1320,7 @@
     $('bs_legFields').hidden = !$('bs_legsEnabled').checked;
     $('bs_foamFields').hidden = !$('bs_foamEnabled').checked;
     $('bs_foamPrimerFields').hidden = !$('bs_foamEnabled').checked;
+    $('bs_flowFeedFields').hidden = !$('bs_flowFeedEnabled').checked;
     $('ve_brimFields').hidden = !$('ve_brimEnabled').checked;
     showProject(activeProject());
   }
@@ -1460,6 +1504,11 @@
   $('bs_foamEnabled').addEventListener('change', () => {
     $('bs_foamFields').hidden = !$('bs_foamEnabled').checked;
     $('bs_foamPrimerFields').hidden = !$('bs_foamEnabled').checked;
+    updateShapeUI();
+  });
+
+  $('bs_flowFeedEnabled').addEventListener('change', () => {
+    $('bs_flowFeedFields').hidden = !$('bs_flowFeedEnabled').checked;
     updateShapeUI();
   });
 
