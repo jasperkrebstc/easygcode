@@ -1417,6 +1417,24 @@
             areaMax.toFixed(2) + ' mm2)'
         );
       }
+
+      // Layer-to-layer travel safety margin. A domed disc's inner rings sit
+      // LOWER than the current layer's (taller) outer rings — and, more
+      // generally, the overhang drop can locally sink points below their
+      // nominal height too — so a direct travel from where one layer ends to
+      // where the next starts can dip through material already printed at a
+      // different radius (verified: 0.3-0.6mm descents on a domed disc without
+      // this). A full lift-in-place-then-move (like the brim/foam clearance
+      // hop) would leave a small blob of oozed material sitting on the print —
+      // worse, especially with foaming active. Instead: one diagonal move
+      // aimed at a point 2 layer heights ABOVE the real target (still a single
+      // straight line, just higher), then one straight vertical drop to the
+      // actual start — two moves, wiping clear without idling in place.
+      function travelWipe(dest) {
+        travelAbs({ x: dest.x, y: dest.y, z: dest.z + 2 * lh });
+        travelAbs(dest);
+      }
+
       if (legLoops) {
         // Chained precomputed loops: each loop starts at the previous loop's
         // end angle, so the first point of loop i+1 IS the radial connector.
@@ -1499,7 +1517,7 @@
             }
           } else {
             if (!afterFoam) {
-              travelAbs({ x: cx + loopsK[0][0].x, y: cy + loopsK[0][0].y, z: zAt(k, 0, loopsK[0][0]) });
+              travelWipe({ x: cx + loopsK[0][0].x, y: cy + loopsK[0][0].y, z: zAt(k, 0, loopsK[0][0]) });
             }
             afterFoam = false;
             for (let i = 0; i < ringN; i++) {
@@ -1595,7 +1613,7 @@
             let a = a0;
             if (!afterFoam) {
               const p0 = ringPt(0, a);
-              travelAbs({ x: cx + p0.x, y: cy + p0.y, z: zRingAt(k, 0) });
+              travelWipe({ x: cx + p0.x, y: cy + p0.y, z: zRingAt(k, 0) });
             }
             afterFoam = false;
             for (let i = 0; i < ringN; i++) {
