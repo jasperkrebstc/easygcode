@@ -759,6 +759,19 @@
     let prevU = 0;
     let lastFeed = null;
     let firstExtrude = true;
+    // Tallest Z of any EXTRUDED (printed) point so far — tracks emitSeg and
+    // extrudeLoop only, deliberately excluding travel moves. A clearance hop
+    // based only on prev.z/dest.z can still crash through printed geometry
+    // elsewhere on the part that is taller than either of those two points (a
+    // domed disc's outer rings vs. an inner dest point, an attractor-drop
+    // dip, etc.) — margins meant to clear "the print so far" need this
+    // running max. Excluding travel Z matters: a hop's own clearance height
+    // must not itself become the new "tallest Z" and double again on the
+    // very next hop back down.
+    let maxZEver = 0;
+    function noteZ(z) {
+      if (z > maxZEver) maxZEver = z;
+    }
 
     function travelAbs(cur) {
       lines.push('G0 X' + f3(cur.x) + ' Y' + f3(cur.y) + ' Z' + f3(cur.z) + ' F' + Math.round(cfg.travelFeed));
@@ -809,6 +822,7 @@
       firstExtrude = false;
       moveCount++;
       prev = cur;
+      noteZ(cur.z);
     }
 
     // Pattern-aware move (bump segments use the bump feedrate).
@@ -877,7 +891,12 @@
       lines.push('_GINGER_EXTRUDER_SET_UP S=' + tUp);
       lines.push('_GINGER_EXTRUDER_SET_MID S=' + tMid);
       lines.push('_GINGER_EXTRUDER_SET_DOWN S=' + tDown);
-      hopTravel(primerStart, 2 * lh);
+      // Clear by double the tallest Z printed anywhere so far, not just a
+      // couple of layer heights — the transition travels clear across the
+      // bed to X0/Y0, and a margin based only on the current point can still
+      // clip taller geometry elsewhere on the part (dome edges, un-dropped
+      // rings) that this specific point never reached.
+      hopTravel(primerStart, 2 * maxZEver);
       // TEMPERATURE_WAIT with an exact-match wait (the _GINGER_EXTRUDER_WAIT_*
       // macros) can hang forever on this printer's PID zones, which settle
       // near but never exactly on the setpoint. Use a tolerant threshold
@@ -897,7 +916,7 @@
         lines.push('M221 S' + foamCfg.extrusionPct + ' ; foam: reduced extrusion');
         lines.push('M220 S' + foamSpeedPct + ' ; foam: increased speed (flow-matched)');
       }
-      hopTravel(dest, 2 * lh);
+      hopTravel(dest, 2 * maxZEver);
     }
     if (foamOn) {
       lines.push(
@@ -937,6 +956,7 @@
         lines.push(line);
         path.push({ x: B.x + cx, y: B.y + cy, z: z, travel: false, feed: feed });
         moveCount++;
+        noteZ(z);
       }
     }
 
