@@ -53,9 +53,12 @@ keep **fully independent settings** per project:
   possible), which expand the material, so only a **foam extrusion %** is exposed — the
   matching **speed %** is derived (`10000/extrusionPct`) to keep flow constant rather
   than being a second number to keep in sync by hand. Entering/exiting foam, the disc
-  pauses at the end of a layer, lifts clear (of whatever is currently tallest — the
-  part or the prime line — plus a safety margin), travels to machine **X0 Y0**, waits
-  for the new zone temps, and prints a short straight **prime line** (its own length /
+  pauses at the end of a layer, lifts clear to **double the tallest point printed
+  anywhere so far** (not just the current point's own Z — a domed disc's outer rings
+  can already be taller than wherever the transition happens to trigger, so clearance
+  is measured against the print's running max, not the local height), travels to
+  machine **X0 Y0**, waits for the new zone temps, and prints a short straight **prime
+  line** (its own length /
   line width / layer height / feed — independent settings for the entering and
   exiting primer, since exiting typically needs to flush more) before continuing. The
   wait itself is a tolerant `TEMPERATURE_WAIT` (Klipper's own gcode, `SENSOR=extruder` /
