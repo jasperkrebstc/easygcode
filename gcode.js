@@ -236,6 +236,19 @@
     };
   }
 
+  // Dome layer-height range (used by the generator and the 2D preview, so both
+  // agree on exactly the same numbers) — the smallest bead height is the
+  // domed innermost ring (dome x lh), the largest is the nominal lh (every
+  // edge ring, plus the always-full-height first/top layers). Undomed discs
+  // have a single uniform height (hMin === hMax).
+  function domeHeightRange(cfg) {
+    const spec = discSpec(cfg);
+    const lh = cfg.layerHeight;
+    const dm = Math.max(0.05, Math.min(1, cfg.disc.dome != null ? cfg.disc.dome : 1));
+    const domed = spec.ringN > 1 && dm < 1 - 1e-9;
+    return { hMin: domed ? lh * dm : lh, hMax: lh, domed: domed };
+  }
+
   // Shared disc + legs parameter derivation (used by the generator and the 2D
   // preview). Returns ring layout, snapped values, and leg spec or null.
   function discSpec(cfg) {
@@ -1371,6 +1384,39 @@
             ' center vs ' + (T * lh).toFixed(2) + ' edge'
         );
       }
+
+      // ---- Volumetric flow feed mode ----
+      // Constant printFeed makes the actual material flow (area x speed) vary
+      // wherever the dome shrinks the bead height. This mode inverts that: hold
+      // a target volumetric flow (mm^3/s) and derive the feed per segment from
+      // its OWN bead area, so thinner (domed) beads print faster and full-height
+      // beads print slower, at a constant flow throughout. Off by default
+      // (byte-identical to a fixed printFeed).
+      const flowCfg = cfg.disc.flowFeed || {};
+      const flowOn = !!flowCfg.enabled && flowCfg.rate > 0;
+      const areaMin = domed ? beadArea(lw, dm * lh) : area;
+      const areaMax = area; // every edge ring, plus the always-full-height first/top layers
+      function feedForArea(a) {
+        if (!flowOn) return cfg.printFeed;
+        return (flowCfg.rate * 60) / Math.max(a, 1e-6); // mm^3/s -> mm/min
+      }
+      if (flowOn) {
+        const feedAtMin = feedForArea(areaMin); // smallest area -> fastest feed
+        const feedAtMax = feedForArea(areaMax); // largest area -> slowest feed
+        lines.push(
+          '; volumetric flow mode: target ' + flowCfg.rate + ' mm3/s -> feed ' + feedAtMax.toFixed(0) +
+            '..' + feedAtMin.toFixed(0) + ' mm/min (bead area ' + areaMin.toFixed(2) + '..' +
+            areaMax.toFixed(2) + ' mm2, slowest..fastest)'
+        );
+      } else {
+        const flowAtMin = (cfg.printFeed * areaMin) / 60;
+        const flowAtMax = (cfg.printFeed * areaMax) / 60;
+        lines.push(
+          '; constant feed ' + cfg.printFeed + ' mm/min -> volumetric flow ' + flowAtMin.toFixed(2) +
+            '..' + flowAtMax.toFixed(2) + ' mm3/s (bead area ' + areaMin.toFixed(2) + '..' +
+            areaMax.toFixed(2) + ' mm2)'
+        );
+      }
       if (legLoops) {
         // Chained precomputed loops: each loop starts at the previous loop's
         // end angle, so the first point of loop i+1 IS the radial connector.
@@ -1444,11 +1490,11 @@
                 'to the outer seam, then layer 1 outside-in'
             );
             travelClear(primerStart);
-            emitSeg({ x: cx + seamPt.x, y: cy + seamPt.y, z: lh }, cfg.printFeed, 1, null);
+            emitSeg({ x: cx + seamPt.x, y: cy + seamPt.y, z: lh }, feedForArea(area), 1, null);
             for (let i = ringN - 1; i >= 0; i--) {
               const lp = loopsK[i].slice().reverse();
               for (let q = i === ringN - 1 ? 1 : 0; q < lp.length; q++) {
-                emitSeg({ x: cx + lp[q].x, y: cy + lp[q].y, z: zAt(0, i, lp[q]) }, cfg.printFeed, 1, null);
+                emitSeg({ x: cx + lp[q].x, y: cy + lp[q].y, z: zAt(0, i, lp[q]) }, feedForArea(area), 1, null);
               }
             }
           } else {
@@ -1459,8 +1505,9 @@
             for (let i = 0; i < ringN; i++) {
               const lp = loopsK[i];
               const aOvr = domed && k > 0 && k !== T - 1 ? loopArea[i] : null;
+              const ringFeed = feedForArea(aOvr || area);
               for (let q = i === 0 ? 1 : 0; q < lp.length; q++) {
-                emitSeg({ x: cx + lp[q].x, y: cy + lp[q].y, z: zAt(k, i, lp[q]) }, cfg.printFeed, 1, aOvr);
+                emitSeg({ x: cx + lp[q].x, y: cy + lp[q].y, z: zAt(k, i, lp[q]) }, ringFeed, 1, aOvr);
               }
             }
           }
@@ -1537,11 +1584,11 @@
                 'to the outer seam, then layer 1 outside-in'
             );
             travelClear(primerStart);
-            emitSeg({ x: cx + seamPt.x, y: cy + seamPt.y, z: lh }, cfg.printFeed, 1, null);
+            emitSeg({ x: cx + seamPt.x, y: cy + seamPt.y, z: lh }, feedForArea(area), 1, null);
             for (let i = ringN - 1; i >= 0; i--) {
               const lp = rings0[i].slice().reverse();
               for (let q = i === ringN - 1 ? 1 : 0; q < lp.length; q++) {
-                emitSeg({ x: cx + lp[q].x, y: cy + lp[q].y, z: zRingAt(0, i) }, cfg.printFeed, 1, null);
+                emitSeg({ x: cx + lp[q].x, y: cy + lp[q].y, z: zRingAt(0, i) }, feedForArea(area), 1, null);
               }
             }
           } else {
@@ -1555,23 +1602,26 @@
               const r = ringRadii[i];
               const zi = zRingAt(k, i);
               const aOvr = domed && k > 0 && k !== T - 1 ? loopArea[i] : null;
+              const ringFeed = feedForArea(aOvr || area);
               const sweep = 2 * Math.PI - lw / r; // stop one line width short of the start
               let dth = 2 * Math.acos(Math.max(-1, 1 - tol / r));
               if (!isFinite(dth) || dth <= 0) dth = 0.2;
               const steps = Math.max(12, Math.ceil(sweep / dth));
               for (let s = 1; s <= steps; s++) {
                 const p = ringPt(i, a + (sweep * s) / steps);
-                emitSeg({ x: cx + p.x, y: cy + p.y, z: zi }, cfg.printFeed, 1, aOvr);
+                emitSeg({ x: cx + p.x, y: cy + p.y, z: zi }, ringFeed, 1, aOvr);
               }
               const aEnd = (a + sweep) % (2 * Math.PI);
               if (i < ringN - 1) {
-                // radial connector out to the next ring (extruded, length = lw)
+                // radial connector out to the next ring (extruded, length = lw);
+                // uses the NEXT ring's own area/feed, since that's the height it travels at.
+                const connArea = domed && k > 0 && k !== T - 1 ? loopArea[i + 1] : null;
                 const pNext = ringPt(i + 1, aEnd);
                 emitSeg(
                   { x: cx + pNext.x, y: cy + pNext.y, z: zRingAt(k, i + 1) },
-                  cfg.printFeed,
+                  feedForArea(connArea || area),
                   1,
-                  domed && k > 0 && k !== T - 1 ? loopArea[i + 1] : null
+                  connArea
                 );
               }
               a = aEnd;
@@ -1611,5 +1661,6 @@
     makeProfile,
     BS_ROTATION_DEG,
     discBedFit,
+    domeHeightRange,
   };
 })();

@@ -80,7 +80,16 @@ keep **fully independent settings** per project:
   size — pure centerline coordinates, no line-width margin added, since the bed has
   room to spare beyond where the head travels — is shown live in the hint and in the
   G-code header, computed by the same shared function in both places so the numbers
-  always match exactly.
+  always match exactly. Optional **constant volumetric flow** feed mode: instead of
+  a fixed print feed, set a target flow (mm³/s) and the feed is derived per segment
+  from its own bead cross-section (`flow × 60 ÷ area`), so the dome's thinner center
+  beads print faster and full-height beads print slower, holding flow constant
+  throughout — an `F` value is only re-emitted when it changes, exactly like normal.
+  The primer lines (entrance, foam) keep their own dedicated feeds regardless of this
+  mode. Whichever number isn't already fixed by the current mode is shown live and in
+  the G-code header — the resulting feed range in flow mode, or the resulting flow
+  range at the fixed feed in constant mode — both from the same shared bead-height
+  range the generator itself uses, so preview and output always agree.
 
 - **Vessel** — simple trays, vases and cylinders. Reuses the same base **shapes**
   (circle, rounded rectangle, ellipse, polygon, star, squircle) and **print
