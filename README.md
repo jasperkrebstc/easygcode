@@ -72,7 +72,11 @@ keep **fully independent settings** per project:
   already-built points (just walked backwards) rather than new geometry, since the
   forward chaining already guarantees ring i's start equals ring i-1's end. Always
   applied when legs are enabled or the zipper seam is on; the plain legless-staircase
-  disc keeps its ordinary inside-out first layer. Finally, the disc is always
+  disc keeps its ordinary inside-out first layer. With a **brim enabled**, the
+  entrance primer is skipped automatically — the brim already primes the nozzle,
+  and the primer's outward radial lead-in would otherwise sit right where the
+  brim's own rings are — while the first layer still prints outside-in and travels
+  straight to the seam point (brim-clearance aware). Finally, the disc is always
   **rotated 15°** and the rotated bounding box is **recentered on the bed-center
   input** — the 3-leg layout is roughly triangular, and this fits a rectangular bed
   better than printing it axis-aligned (a legless circular disc is rotationally

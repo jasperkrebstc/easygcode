@@ -1494,21 +1494,29 @@
             // radial connector, just walked from the outside in.
             const outerRing = loopsK[ringN - 1];
             const seamPt = outerRing[outerRing.length - 1];
-            const dx = seamPt.x - bsShiftX;
-            const dy = seamPt.y - bsShiftY;
-            const rOuter = Math.hypot(dx, dy) || 1;
-            const primerLen = 0.25 * snappedD;
-            const primerStart = {
-              x: cx + seamPt.x + (dx / rOuter) * primerLen,
-              y: cy + seamPt.y + (dy / rOuter) * primerLen,
-              z: lh,
-            };
-            lines.push(
-              '; entrance primer: ' + primerLen.toFixed(1) + 'mm radial lead-in (25% of seat diameter) ' +
-                'to the outer seam, then layer 1 outside-in'
-            );
-            travelClear(primerStart);
-            emitSeg({ x: cx + seamPt.x, y: cy + seamPt.y, z: lh }, feedForArea(area), 1, null);
+            // With a brim, the entrance primer is both redundant (the brim
+            // already primes the nozzle) and physically in the way (its
+            // outward radial lead-in sits right where the brim's own rings
+            // are) - skip it and travel (brim-aware) straight to the seam.
+            if (brimPrinted) {
+              travelClear({ x: cx + seamPt.x, y: cy + seamPt.y, z: lh });
+            } else {
+              const dx = seamPt.x - bsShiftX;
+              const dy = seamPt.y - bsShiftY;
+              const rOuter = Math.hypot(dx, dy) || 1;
+              const primerLen = 0.25 * snappedD;
+              const primerStart = {
+                x: cx + seamPt.x + (dx / rOuter) * primerLen,
+                y: cy + seamPt.y + (dy / rOuter) * primerLen,
+                z: lh,
+              };
+              lines.push(
+                '; entrance primer: ' + primerLen.toFixed(1) + 'mm radial lead-in (25% of seat diameter) ' +
+                  'to the outer seam, then layer 1 outside-in'
+              );
+              travelClear(primerStart);
+              emitSeg({ x: cx + seamPt.x, y: cy + seamPt.y, z: lh }, feedForArea(area), 1, null);
+            }
             for (let i = ringN - 1; i >= 0; i--) {
               const lp = loopsK[i].slice().reverse();
               for (let q = i === ringN - 1 ? 1 : 0; q < lp.length; q++) {
@@ -1588,21 +1596,29 @@
             }
             const outerRing = rings0[ringN - 1];
             const seamPt = outerRing[outerRing.length - 1];
-            const dx = seamPt.x - bsShiftX;
-            const dy = seamPt.y - bsShiftY;
-            const rOuter = Math.hypot(dx, dy) || 1;
-            const primerLen = 0.25 * snappedD;
-            const primerStart = {
-              x: cx + seamPt.x + (dx / rOuter) * primerLen,
-              y: cy + seamPt.y + (dy / rOuter) * primerLen,
-              z: lh,
-            };
-            lines.push(
-              '; entrance primer: ' + primerLen.toFixed(1) + 'mm radial lead-in (25% of seat diameter) ' +
-                'to the outer seam, then layer 1 outside-in'
-            );
-            travelClear(primerStart);
-            emitSeg({ x: cx + seamPt.x, y: cy + seamPt.y, z: lh }, feedForArea(area), 1, null);
+            // With a brim, the entrance primer is both redundant (the brim
+            // already primes the nozzle) and physically in the way (its
+            // outward radial lead-in sits right where the brim's own rings
+            // are) - skip it and travel (brim-aware) straight to the seam.
+            if (brimPrinted) {
+              travelClear({ x: cx + seamPt.x, y: cy + seamPt.y, z: lh });
+            } else {
+              const dx = seamPt.x - bsShiftX;
+              const dy = seamPt.y - bsShiftY;
+              const rOuter = Math.hypot(dx, dy) || 1;
+              const primerLen = 0.25 * snappedD;
+              const primerStart = {
+                x: cx + seamPt.x + (dx / rOuter) * primerLen,
+                y: cy + seamPt.y + (dy / rOuter) * primerLen,
+                z: lh,
+              };
+              lines.push(
+                '; entrance primer: ' + primerLen.toFixed(1) + 'mm radial lead-in (25% of seat diameter) ' +
+                  'to the outer seam, then layer 1 outside-in'
+              );
+              travelClear(primerStart);
+              emitSeg({ x: cx + seamPt.x, y: cy + seamPt.y, z: lh }, feedForArea(area), 1, null);
+            }
             for (let i = ringN - 1; i >= 0; i--) {
               const lp = rings0[i].slice().reverse();
               for (let q = i === ringN - 1 ? 1 : 0; q < lp.length; q++) {
