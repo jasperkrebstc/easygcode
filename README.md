@@ -267,6 +267,10 @@ height). The first brim line sits `brimWidth/2 + lineWidth/2` from the base wall
 (gap-free); each additional line is one brim width further out (**outer**) or in
 (**inner**). A travel move (at the travel feedrate) connects each loop. Inner brim lines
 that would exceed the shape's size are skipped with a warning, so over-specifying is safe.
+A **print order** setting (shared across all three projects) picks *in → out* (default —
+the line adjacent to the part prints first) or *out → in* (the farthest line prints
+first, moving inward toward the part last). Only the printed ORDER changes — the same
+lines, at the same offsets — so switching it is always safe.
 When a brim is printed, the first travel to the body (wall / disc / bottom) **clears the
 brim**: it lifts to twice the brim layer height, moves over, then drops to the start Z, so
 the nozzle never drags across the brim on its way in. This applies to all three projects.
