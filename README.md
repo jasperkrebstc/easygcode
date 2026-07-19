@@ -89,7 +89,18 @@ keep **fully independent settings** per project:
   mode. Whichever number isn't already fixed by the current mode is shown live and in
   the G-code header — the resulting feed range in flow mode, or the resulting flow
   range at the fixed feed in constant mode — both from the same shared bead-height
-  range the generator itself uses, so preview and output always agree.
+  range the generator itself uses, so preview and output always agree. Every
+  layer-to-layer travel (not just under the dome — the overhang drop can locally
+  sink points below their nominal height too) goes through a two-move safety margin
+  instead of a direct line: one diagonal move aimed 2 layer heights ABOVE the next
+  layer's actual start (still one straight line, just higher), then one straight
+  drop down to the real start. A domed disc's inner rings sit lower than the current
+  layer's taller outer rings, so a direct travel can otherwise cut down through
+  material already printed at a different radius; a full lift-in-place-and-move
+  (like the brim/foam clearance hops) would instead leave a small blob of oozed
+  material sitting on the print, worse under foaming — so this stays to exactly the
+  two moves, always applied (harmless — two quick non-extruding moves — even on a
+  flat, undomed disc where it isn't strictly needed).
 
 - **Vessel** — simple trays, vases and cylinders. Reuses the same base **shapes**
   (circle, rounded rectangle, ellipse, polygon, star, squircle) and **print
