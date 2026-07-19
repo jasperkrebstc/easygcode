@@ -67,6 +67,7 @@
     return {
       enabled: $(pre + 'brimEnabled').checked,
       outer: $(pre + 'brimOuter').value === 'outer',
+      outIn: $(pre + 'brimOrder').value === 'outIn',
       lines: Math.max(0, Math.round(num(pre + 'brimLines'))),
       lineWidth: num(pre + 'brimLineWidth'),
       layerHeight: num(pre + 'brimLayerHeight'),

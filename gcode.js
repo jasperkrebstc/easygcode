@@ -943,8 +943,13 @@
       centroid.x /= brimBase.length;
       centroid.y /= brimBase.length;
       const inradius = brimBase.reduce((m, p) => Math.min(m, Geo.dist(p, centroid)), Infinity);
-      lines.push('; --- brim (' + (brim.outer ? 'outer' : 'inner') + ') ---');
-      for (let k = 1; k <= brim.lines; k++) {
+      lines.push(
+        '; --- brim (' + (brim.outer ? 'outer' : 'inner') + ', ' + (brim.outIn ? 'out->in' : 'in->out') + ') ---'
+      );
+      const kOrder = [];
+      for (let k = 1; k <= brim.lines; k++) kOrder.push(k);
+      if (brim.outIn) kOrder.reverse();
+      for (const k of kOrder) {
         const d = brim.lineWidth / 2 + cfg.lineWidth / 2 + (k - 1) * brim.lineWidth;
         if (!brim.outer && d >= inradius) {
           warnings.push('Inner brim line ' + k + ' skipped (offset exceeds shape size).');
