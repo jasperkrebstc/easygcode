@@ -878,9 +878,20 @@
       lines.push('_GINGER_EXTRUDER_SET_MID S=' + tMid);
       lines.push('_GINGER_EXTRUDER_SET_DOWN S=' + tDown);
       hopTravel(primerStart, 2 * lh);
-      lines.push('_GINGER_EXTRUDER_WAIT_UP S=' + tUp);
-      lines.push('_GINGER_EXTRUDER_WAIT_MID S=' + tMid);
-      lines.push('_GINGER_EXTRUDER_WAIT_DOWN S=' + tDown);
+      // TEMPERATURE_WAIT with an exact-match wait (the _GINGER_EXTRUDER_WAIT_*
+      // macros) can hang forever on this printer's PID zones, which settle
+      // near but never exactly on the setpoint. Use a tolerant threshold
+      // instead: entering foam (heating up), only the LAST zone (down =
+      // extruder2, closest to the nozzle) needs to actually be hot, so wait
+      // for it to reach at least target-2; exiting foam (cooling down), wait
+      // for ALL THREE zones to have dropped to at most their target+2.
+      if (entering) {
+        lines.push('TEMPERATURE_WAIT SENSOR=extruder2 MINIMUM=' + (tDown - 2));
+      } else {
+        lines.push('TEMPERATURE_WAIT SENSOR=extruder MAXIMUM=' + (tUp + 2));
+        lines.push('TEMPERATURE_WAIT SENSOR=extruder1 MAXIMUM=' + (tMid + 2));
+        lines.push('TEMPERATURE_WAIT SENSOR=extruder2 MAXIMUM=' + (tDown + 2));
+      }
       emitSeg(primerEnd, primer.feed, 1, primerArea);
       if (entering) {
         lines.push('M221 S' + foamCfg.extrusionPct + ' ; foam: reduced extrusion');

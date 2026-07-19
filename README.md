@@ -57,7 +57,14 @@ keep **fully independent settings** per project:
   part or the prime line — plus a safety margin), travels to machine **X0 Y0**, waits
   for the new zone temps, and prints a short straight **prime line** (its own length /
   line width / layer height / feed — independent settings for the entering and
-  exiting primer, since exiting typically needs to flush more) before continuing. Both
+  exiting primer, since exiting typically needs to flush more) before continuing. The
+  wait itself is a tolerant `TEMPERATURE_WAIT` (Klipper's own gcode, `SENSOR=extruder` /
+  `extruder1` / `extruder2` for the up/mid/down zones) rather than an exact-match wait —
+  a PID-controlled zone settles *near* its setpoint but often never hits it exactly, so
+  an exact wait can stall the print indefinitely. Entering foam only the **down zone**
+  (closest to the nozzle, doing the actual expansion) has to be up to temperature, so it
+  waits for `MINIMUM=target-2`; exiting foam all **three zones** need to have cooled back
+  down, so each waits for `MAXIMUM=target+2`. Both
   primers always print at 100 % speed/extrusion: entering, the `M220`/`M221` overrides
   are applied *after* the prime line; exiting, they're reverted to 100/100 *before* it
   — so neither primer ever needs its own override math. Enabling foaming outside
