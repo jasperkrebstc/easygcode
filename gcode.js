@@ -131,14 +131,13 @@
     ];
   }
 
-  function marlinEnd() {
+  function marlinEnd(zLift) {
     return [
       '; --- end G-code (filament / Marlin) ---',
       'M83',
       'G1 E-0.8 F3000 ; retract',
-      'G91 ; relative coordinates',
-      'G0 Z5 F8000 ; lift nozzle',
       'G90 ; absolute coordinates',
+      'G0 Z' + f3(zLift) + ' F8000 ; lift clear (5x tallest print height) for finishing',
       'M106 S0 ; fan off',
       'M140 S0 ; bed off',
       'M104 S0 ; hotend off',
@@ -186,13 +185,12 @@
     ];
   }
 
-  function klipperEnd() {
+  function klipperEnd(zLift) {
     return [
       '; --- end G-code (pellet / Klipper) ---',
       'M83',
-      'G91 ; relative coordinates',
-      'G0 Z10 F3000 ; lift',
       'G90 ; absolute coordinates',
+      'G0 Z' + f3(zLift) + ' F3000 ; lift clear (5x tallest print height) for finishing',
       'TURN_OFF_HEATERS ; zones + bed off',
       'M106 S0 ; fan off',
       'M84 ; disable steppers',
@@ -1708,7 +1706,13 @@
     }
 
     if (includeStartEnd) {
-      (mode === 'filament' ? marlinEnd() : klipperEnd()).forEach((l) => lines.push(l));
+      // Final clearance lift: 5x the tallest point actually printed, so
+      // there's real room to finish the part by hand (trim drooping
+      // filament/oozing, etc.) rather than the old fixed 5-10mm bump, which
+      // wasn't enough headroom above a print of any real height. Floored at
+      // the old fixed value so a trivial/near-zero-height job still lifts.
+      const endLift = Math.max(5 * maxZEver, mode === 'filament' ? 5 : 10);
+      (mode === 'filament' ? marlinEnd(endLift) : klipperEnd(endLift)).forEach((l) => lines.push(l));
     }
 
     // Estimated print time from the actual path and feeds.

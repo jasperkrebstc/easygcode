@@ -205,6 +205,12 @@ Toggleable per print. Each mode ships a cleaned-up version of the user's proven 
   temp (min = bed − 10, max = bed + 40). End G-code is a basic explicit block (lift,
   `TURN_OFF_HEATERS`, fan off, motors off) instead of `END_PRINT`.
 
+The final lift in both end blocks clears to **5x the tallest point actually printed**
+(an absolute move, not a small fixed bump) — enough real headroom to reach in and finish
+the part by hand (trim drooping filament/oozing, etc.) once it's done, rather than the
+head parking just a few mm above the print. Floored at the old fixed value (10 mm
+pellet / 5 mm filament) so a trivial near-zero-height job still lifts.
+
 The part-cooling fan turns on **after the first (ramp) loop** so it bonds unfanned
 (filament default 100%, pellet default 0%).
 
