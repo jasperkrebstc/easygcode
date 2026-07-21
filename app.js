@@ -186,6 +186,8 @@
         bottom: Math.max(1, Math.round(num('hangBottom'))),
         transition: Math.max(1, Math.round(num('hangTransition'))),
         bridgeFeed: num('hangBridgeFeed'),
+        overhangAngle: num('hangOverhangAngle'),
+        overhangFeed: num('hangOverhangFeed'),
       },
       pattern: {
         enabled: $('patternEnabled').checked,
@@ -349,6 +351,9 @@
       if (!(cfg.hanger.bottom >= 1) || !(cfg.hanger.transition >= 1))
         return 'Enter valid hanger bottom/transition loop counts.';
       if (!isPos(cfg.hanger.bridgeFeed)) return 'Enter a valid hanger bridge feedrate.';
+      if (!(cfg.hanger.overhangAngle > 0 && cfg.hanger.overhangAngle < 90))
+        return 'Overhang angle must be between 1 and 89 degrees.';
+      if (!isPos(cfg.hanger.overhangFeed)) return 'Enter a valid hanger overhang feedrate.';
     }
     if (cfg.pattern.enabled) {
       if (!Number.isFinite(cfg.pattern.amplitude)) return 'Enter a valid pattern amplitude.';
@@ -1232,6 +1237,74 @@
     document.body.removeChild(a);
     setTimeout(() => URL.revokeObjectURL(url), 2000);
   }
+
+  // Hanger profile, for bringing the pocket shape into a CAD tool to design a
+  // mating bracket. buildHangerLoop's own return value already IS the curve
+  // the user needs — one closed loop made of the unaltered wall arcs (seam to
+  // the gap edges) plus the new bezier/pocket sections in between — so no
+  // merge with the plain base curve is needed on top of it. Offset inward by
+  // half a line width to the wall's inner face.
+  function hangerCombinedOutline(cfg) {
+    const base = window.Geo.rotateToSeam(
+      window.Geo.adaptiveShape(cfg.shape, cfg.shapeParams, isPos(cfg.tolerance) ? cfg.tolerance : 0.05),
+      cfg.seamSide
+    );
+    const hangerLoop = window.Geo.buildHangerLoop(base, cfg.hanger.size / 100, cfg.hanger.pocket / 100, cfg.lineWidth);
+    return window.Geo.offsetClosed(hangerLoop.slice(0, -1), -cfg.lineWidth / 2);
+  }
+
+  function exportHangerSvg() {
+    const btn = $('hangExportSvgBtn');
+    const cfg = readConfig();
+    if (cfg.project !== 'cordhanger' || !cfg.hanger.enabled) {
+      flash(btn, 'Enable the hanger first');
+      return;
+    }
+    if (
+      !isPos(cfg.hanger.size) || cfg.hanger.size > 45 ||
+      !isPos(cfg.hanger.pocket) || cfg.hanger.pocket > 45 || !isPos(cfg.lineWidth)
+    ) {
+      flash(btn, 'Fix hanger settings first');
+      return;
+    }
+    let outline;
+    try {
+      outline = hangerCombinedOutline(cfg);
+    } catch (e) {
+      flash(btn, 'Export failed');
+      return;
+    }
+
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    outline.forEach((p) => {
+      if (p.x < minX) minX = p.x;
+      if (p.x > maxX) maxX = p.x;
+      if (p.y < minY) minY = p.y;
+      if (p.y > maxY) maxY = p.y;
+    });
+    const margin = 2;
+    const w = maxX - minX + 2 * margin;
+    const h = maxY - minY + 2 * margin;
+    // SVG Y is down-positive; flip to match the app's own 2D preview orientation.
+    const d = outline.map((p, i) => (i === 0 ? 'M' : 'L') + p.x.toFixed(4) + ',' + (-p.y).toFixed(4)).join(' ') + ' Z';
+    const svg =
+      '<?xml version="1.0" encoding="UTF-8"?>\n' +
+      '<svg xmlns="http://www.w3.org/2000/svg" width="' + w.toFixed(2) + 'mm" height="' + h.toFixed(2) + 'mm" ' +
+      'viewBox="' + (minX - margin).toFixed(4) + ' ' + (-maxY - margin).toFixed(4) + ' ' + w.toFixed(2) + ' ' + h.toFixed(2) + '">\n' +
+      '<path d="' + d + '" fill="none" stroke="#000" stroke-width="0.1"/>\n' +
+      '</svg>\n';
+
+    const blob = new Blob([svg], { type: 'image/svg+xml' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'hanger_profile_' + Date.now() + '.svg';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+  }
+
   async function share() {
     if (!lastGcode) {
       flash($('shareBtn'), 'No G-code');
@@ -1491,6 +1564,7 @@
     $('hangFields').hidden = !$('hangEnabled').checked;
     updateShapeUI();
   });
+  $('hangExportSvgBtn').addEventListener('click', exportHangerSvg);
 
   $('bs_brimEnabled').addEventListener('change', () => {
     $('bs_brimFields').hidden = !$('bs_brimEnabled').checked;

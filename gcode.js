@@ -638,6 +638,17 @@
     const hStart = Math.max(1, Math.round(hang.bottom || 1));
     const hTween = Math.max(1, Math.round(hang.transition || 1));
     const hBridgeFeed = hang.bridgeFeed > 0 ? hang.bridgeFeed : cfg.printFeed;
+    // Overhang compensation for the tween zone: layers there aren't stacked
+    // directly on top of each other — each vertex slides sideways toward the
+    // plain profile as the hanger shape washes out — so a steep tween (few
+    // transition loops, or a big hanger/base gap) is a real overhang, prone to
+    // sagging, with no slowdown of its own (bridgeFeed above only covers the
+    // one bridging loop, not what comes after it). Any segment whose sideways
+    // shift from the layer below exceeds what the overhang angle allows for
+    // this layer height prints at the overhang feedrate instead.
+    const hOverhangOn = hangOn && hang.overhangFeed > 0;
+    const hOverhangFeed = hang.overhangFeed > 0 ? hang.overhangFeed : cfg.printFeed;
+    const hOverhangMaxHoriz = lh * Math.tan(((hang.overhangAngle > 0 ? hang.overhangAngle : 15) * Math.PI) / 180);
     if (hangOn && hStart >= Lmax) {
       warnings.push('Hanger disabled: not enough loops below the top (bottom loops >= total loops).');
       hangOn = false;
@@ -672,6 +683,20 @@
       }
       out.push({ x: out[0].x, y: out[0].y, isNew: false });
       return out;
+    }
+
+    // Flags each vertex in `pts` (a tween layer) whose sideways move from the
+    // SAME index on `prevPts` (the layer directly below it) is steeper than
+    // the overhang angle allows — both arrays share the identical TWEEN_N
+    // index parameterization (tweenLoopPts/hangRes/baseRes all resample to
+    // the same N points), so index i on one layer is the same wall feature as
+    // index i on the layer below it.
+    function tagOverhang(pts, prevPts) {
+      for (let i = 0; i < pts.length; i++) {
+        const p = prevPts[i % prevPts.length];
+        pts[i].hot = Math.hypot(pts[i].x - p.x, pts[i].y - p.y) > hOverhangMaxHoriz;
+      }
+      return pts;
     }
 
     // ---- Header ----
@@ -737,6 +762,13 @@
         '; hanger: gap=' + hang.size + '% pocket=' + Math.round(pocketFrac * 100) + '% bottomLoops=' +
           hStart + ' transition=' + hTween + ' bridgeFeed=' + Math.round(hBridgeFeed)
       );
+      if (hOverhangOn) {
+        lines.push(
+          '; hanger overhang: >' + (hang.overhangAngle > 0 ? hang.overhangAngle : 15) +
+            'deg from vertical (>' + hOverhangMaxHoriz.toFixed(2) + 'mm sideways/layer) prints at F' +
+            Math.round(hOverhangFeed)
+        );
+      }
     }
     lines.push('; printFeed=' + cfg.printFeed + ' travelFeed=' + cfg.travelFeed + ' (mm/min)');
     lines.push(
@@ -1171,12 +1203,14 @@
           tx: dx / len,
           ty: dy / len,
           isNew: !!(a.isNew || b.isNew),
+          hot: !!(a.hot || b.hot),
         };
       }
 
       prevBump = false;
       let prevSpecial = false;
       let prevNew = false;
+      let prevHot = false;
       for (let i = 0; i <= events.length; i++) {
         const endCut = i === events.length || events[i].f >= uEnd - 1e-12;
         const e = endCut ? { f: uEnd } : events[i];
@@ -1191,10 +1225,12 @@
         const special = !!e.tip || m !== 0;
         let feed = cfg.printFeed;
         if (bridge && (q.isNew || prevNew)) feed = hBridgeFeed;
+        else if (hOverhangOn && (q.hot || prevHot)) feed = hOverhangFeed;
         else if (special || prevSpecial) feed = bumpFeed;
         emitSeg({ x: q.x + q.ty * lat + cx, y: q.y - q.tx * lat + cy, z: z }, feed, 1);
         prevSpecial = special;
         prevNew = q.isNew;
+        prevHot = q.hot;
         if (endCut) break;
       }
     }
@@ -1349,7 +1385,10 @@
             lines.push('; hanger loop (bridging sections at F' + Math.round(hBridgeFeed) + ')');
             polyLoop(L, hangerPts, true, uEnd);
           } else {
-            polyLoop(L, tweenLoopPts(L - hStart), false, uEnd);
+            const t = L - hStart;
+            const curPts = tweenLoopPts(t);
+            if (hOverhangOn) tagOverhang(curPts, tweenLoopPts(t - 1));
+            polyLoop(L, curPts, false, uEnd);
           }
         } else if (spikesMode) {
           spikesLoop(L, uEnd);
