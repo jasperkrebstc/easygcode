@@ -1238,19 +1238,49 @@
     setTimeout(() => URL.revokeObjectURL(url), 2000);
   }
 
-  // Hanger profile, for bringing the pocket shape into a CAD tool to design a
-  // mating bracket. buildHangerLoop's own return value already IS the curve
-  // the user needs — one closed loop made of the unaltered wall arcs (seam to
-  // the gap edges) plus the new bezier/pocket sections in between — so no
-  // merge with the plain base curve is needed on top of it. Offset inward by
-  // half a line width to the wall's inner face.
-  function hangerCombinedOutline(cfg) {
+  // The GAP OPENING itself — not the wall outline. Bounded on one side by the
+  // bridging loop's new bezier/pocket path (A to B, the innermost extent —
+  // where the wall sits at the bottom of the gap) and on the other by the
+  // plain base curve's own back arc between the same two points A/B (the
+  // outermost extent — where the wall sits once the transition has fully
+  // closed the gap back up). Both curves already meet exactly at A and B (both
+  // are literally base points sampled at the same u — buildHangerLoop uses
+  // them as its own bezier endpoints), so stitching bridging-path-forward +
+  // base-arc-backward is already a closed loop with no gap of its own.
+  function hangerGapOutline(cfg) {
     const base = window.Geo.rotateToSeam(
       window.Geo.adaptiveShape(cfg.shape, cfg.shapeParams, isPos(cfg.tolerance) ? cfg.tolerance : 0.05),
       cfg.seamSide
     );
-    const hangerLoop = window.Geo.buildHangerLoop(base, cfg.hanger.size / 100, cfg.hanger.pocket / 100, cfg.lineWidth);
-    return window.Geo.offsetClosed(hangerLoop.slice(0, -1), -cfg.lineWidth / 2);
+    const gapFrac = cfg.hanger.size / 100;
+    const hangerLoop = window.Geo.buildHangerLoop(base, gapFrac, cfg.hanger.pocket / 100, cfg.lineWidth);
+
+    let firstNew = -1, lastNew = -1;
+    for (let i = 0; i < hangerLoop.length; i++) {
+      if (hangerLoop[i].isNew) {
+        if (firstNew < 0) firstNew = i;
+        lastNew = i;
+      }
+    }
+    if (firstNew < 0) throw new Error('no bezier/pocket section found');
+    const bridgingPath = hangerLoop.slice(firstNew - 1, lastNew + 2); // A .. B inclusive
+
+    const uA = 0.5 - gapFrac / 2;
+    const uB = 0.5 + gapFrac / 2;
+    const s = window.Geo.makeSampler(base);
+    const baseArc = [];
+    for (let i = 0; i < base.length; i++) {
+      const u = s.uOf(i);
+      if (u > uA && u < uB) baseArc.push(base[i]);
+    }
+
+    const gapLoop = bridgingPath.concat(baseArc.slice().reverse());
+    // offsetClosed assumes CCW-positive-outward; this loop's winding direction
+    // depends on the gap/pocket parameters, so pick whichever sign actually
+    // shrinks it (accounting for the bead's material width on both sides of
+    // the opening) rather than assuming one.
+    const sign = window.Geo.signedArea(gapLoop) >= 0 ? -1 : 1;
+    return window.Geo.offsetClosed(gapLoop, sign * cfg.lineWidth);
   }
 
   function exportHangerSvg() {
@@ -1269,7 +1299,7 @@
     }
     let outline;
     try {
-      outline = hangerCombinedOutline(cfg);
+      outline = hangerGapOutline(cfg);
     } catch (e) {
       flash(btn, 'Export failed');
       return;

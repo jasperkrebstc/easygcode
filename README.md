@@ -284,12 +284,16 @@ top of the single bridging loop above. An **overhang angle** (degrees from verti
 the loop directly below it exceeds what the angle allows for the current layer height
 prints at the overhang feedrate instead of the normal print feed.
 
-An **export profile SVG** button (next to the hanger inputs) downloads the hanger loop's
-own outline — already one closed curve combining the unaltered wall arcs with the new
-bezier/pocket sections, exactly as printed on the bridging loop — offset inward by half a
-line width to the wall's inner face, in part-local mm coordinates (centered on the shape,
-independent of bed position) for bringing straight into a CAD tool to design a mating
-bracket.
+An **export profile SVG** button (next to the hanger inputs) downloads the **gap opening
+itself** — not the wall outline, but the actual hole a bracket needs to hook through. It's
+bounded on one side by the bridging loop's new bezier/pocket path (the innermost extent,
+where the wall sits at the bottom of the gap) and on the other by the plain base curve's
+own back arc between those same two points (the outermost extent, where the wall sits
+once the transition has fully closed the gap back up) — both curves already meet exactly
+there, so stitching bridging-path-forward + base-arc-backward is already a closed loop.
+Offset inward by one full line width (accounting for the bead's material width on both
+sides of the opening), in part-local mm coordinates (centered on the shape, independent
+of bed position), for bringing straight into a CAD tool to design a mating bracket.
 
 ### Brim
 
