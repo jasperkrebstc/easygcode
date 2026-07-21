@@ -276,6 +276,21 @@ bridges over air, so only its new sections (beziers + pocket) print at this slow
 Patterns (weave/spikes) stay active through the hanger and transition loops. The 2D
 preview shows the hanger loop dashed.
 
+The transition loops aren't stacked directly on top of each other — each point slides
+sideways toward the plain profile as the hanger shape washes out — so a steep transition
+(few transition loops, or a big gap %) is a real overhang with its own sagging risk, on
+top of the single bridging loop above. An **overhang angle** (degrees from vertical) and
+**overhang feedrate** cover this: any transition-loop segment whose sideways shift from
+the loop directly below it exceeds what the angle allows for the current layer height
+prints at the overhang feedrate instead of the normal print feed.
+
+An **export profile SVG** button (next to the hanger inputs) downloads the hanger loop's
+own outline — already one closed curve combining the unaltered wall arcs with the new
+bezier/pocket sections, exactly as printed on the bridging loop — offset inward by half a
+line width to the wall's inner face, in part-local mm coordinates (centered on the shape,
+independent of bed position) for bringing straight into a CAD tool to design a mating
+bracket.
+
 ### Brim
 
 An optional brim prints first as flat offset loops of the base shape (at the brim layer
