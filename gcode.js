@@ -617,6 +617,10 @@
     const bumpFeed = pat.bumpFeed > 0 ? pat.bumpFeed : cfg.printFeed;
     const plBottom = patternOn ? pat.plBottom : 0;
     const plTop = patternOn ? pat.plTop : 0;
+    // Spike tip dwell: G4 pauses right at the tip, after the slow move out and
+    // before heading back in at normal feed (P is milliseconds — supported by
+    // both Marlin and Klipper, unlike Marlin's S-in-seconds extension).
+    const spikeDwellMs = type === 'spikes' && pat.spikeDwell > 0 ? Math.round(pat.spikeDwell * 1000) : 0;
 
     function layerPatterned(L) {
       return !(L < plBottom || L >= T - plTop);
@@ -754,8 +758,12 @@
         type === 'weave'
           ? ' bumps=' + pat.bumps
           : ' count=' + pat.count + ' seed=' + pat.seed +
-            (pat.spikeVar > 0 ? ' lengthVar=+/-' + pat.spikeVar + 'mm' : '');
+            (pat.spikeVar > 0 ? ' lengthVar=+/-' + pat.spikeVar + 'mm' : '') +
+            (spikeDwellMs > 0 ? ' tipDwell=' + pat.spikeDwell + 's' : '');
       lines.push(ln);
+      if (type === 'spikes') {
+        lines.push('; spikes: bump feed only on the way OUT to the tip — the way back in is normal print feed');
+      }
     }
     if (hangOn) {
       lines.push(
@@ -1128,7 +1136,6 @@
       for (let i = 0; i < events.length; i++) {
         const e = events[i];
         let cur;
-        let bump = false;
         if (e.tip) {
           const sp = sampler.at(e.u);
           const amp = e.amp != null ? e.amp : pat.amplitude;
@@ -1139,12 +1146,16 @@
             y: sp.pos.y - sp.tan.x * lat + cy,
             z: baseZ + amp * sinA,
           };
-          bump = true;
         } else {
           cur = wallPoint(L, e.u);
         }
         const ramp = L === 0 ? Math.max(0, Math.min(1, (prevU + e.u) / 2)) : 1;
-        emit(cur, bump, ramp);
+        // Only the move OUT to the tip (the segment landing on it) gets the
+        // bump feed; the move back in afterward is normal print feed — no
+        // hysteresis carrying the slow feed past the tip like the shared
+        // emit() helper does for weave.
+        emitSeg(cur, e.tip ? bumpFeed : cfg.printFeed, ramp);
+        if (e.tip && spikeDwellMs > 0) lines.push('G4 P' + spikeDwellMs + ' ; spike tip dwell');
         prevU = e.u;
       }
     }
@@ -1208,7 +1219,7 @@
       }
 
       prevBump = false;
-      let prevSpecial = false;
+      let prevWeaveSpecial = false;
       let prevNew = false;
       let prevHot = false;
       for (let i = 0; i <= events.length; i++) {
@@ -1222,13 +1233,18 @@
         const amp = e.tip ? (e.amp != null ? e.amp : pat.amplitude) : m;
         const lat = amp * cosA;
         const z = Math.min(lh * (L + e.f), cfg.totalHeight) + amp * sinA;
-        const special = !!e.tip || m !== 0;
+        const weaveSpecial = m !== 0;
         let feed = cfg.printFeed;
         if (bridge && (q.isNew || prevNew)) feed = hBridgeFeed;
         else if (hOverhangOn && (q.hot || prevHot)) feed = hOverhangFeed;
-        else if (special || prevSpecial) feed = bumpFeed;
+        // Spike tip: bump feed only for the move OUT (landing on the tip) — no
+        // hysteresis carrying it into the move back in, unlike weave's smooth
+        // (both-directions) bump zone below.
+        else if (e.tip) feed = bumpFeed;
+        else if (weaveSpecial || prevWeaveSpecial) feed = bumpFeed;
         emitSeg({ x: q.x + q.ty * lat + cx, y: q.y - q.tx * lat + cy, z: z }, feed, 1);
-        prevSpecial = special;
+        if (e.tip && spikeDwellMs > 0) lines.push('G4 P' + spikeDwellMs + ' ; spike tip dwell');
+        prevWeaveSpecial = weaveSpecial;
         prevNew = q.isNew;
         prevHot = q.hot;
         if (endCut) break;

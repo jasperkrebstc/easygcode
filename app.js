@@ -202,6 +202,7 @@
         count: Math.max(1, Math.round(num('patCount'))),
         spikeVar: Math.max(0, num('patSpikeVar')),
         seed: Math.max(0, Math.round(num('patSeed'))),
+        spikeDwell: Math.max(0, num('patSpikeDwell')),
       },
     };
   }
@@ -368,6 +369,8 @@
         return 'Spikes need at least 1 point.';
       if (cfg.pattern.type === 'spikes' && (!Number.isFinite(cfg.pattern.spikeVar) || cfg.pattern.spikeVar < 0))
         return 'Spike length variation must be 0 or more.';
+      if (cfg.pattern.type === 'spikes' && (!Number.isFinite(cfg.pattern.spikeDwell) || cfg.pattern.spikeDwell < 0))
+        return 'Spike tip dwell must be 0 or more.';
     }
     return null;
   }
@@ -412,7 +415,9 @@
     });
     $('patternHint').textContent =
       type === 'spikes'
-        ? 'Spikes: blue-noise outward pokes, base width = line width. Change seed to re-roll.'
+        ? 'Spikes: blue-noise outward pokes, base width = line width. Change seed to re-roll. ' +
+          'Bump feedrate only slows the way OUT to the tip — the way back in is normal print feed. ' +
+          'An optional tip dwell (G4) pauses at the tip before heading back in.'
         : 'Weave: even bumps/rev = flutes · odd = woven';
   }
 

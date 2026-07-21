@@ -261,7 +261,12 @@ present and future) and **type-specific**:
   variation (± mm)** randomizes each spike's length within `amplitude ± var` (e.g.
   amplitude 50, variation 10 → lengths 40–60), deterministic per seed and drawn from
   a stream independent of the placement; the base stays one line width, only the
-  length varies. 0 = every spike the same length.
+  length varies. 0 = every spike the same length. The **bump feedrate** only slows the
+  move OUT to the tip — the move back in prints at the normal print feed, not the bump
+  feed — since a slow approach with a fast retreat gave cleaner spikes in practice than
+  slowing both directions. An optional **tip dwell (s)** inserts a `G4` pause right at
+  the tip, after the slow move out and before heading back in at normal speed (e.g. very
+  slow out + a few seconds dwell + fast back in).
 
 ### Wall hanger
 
