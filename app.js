@@ -1252,6 +1252,8 @@
   // are literally base points sampled at the same u — buildHangerLoop uses
   // them as its own bezier endpoints), so stitching bridging-path-forward +
   // base-arc-backward is already a closed loop with no gap of its own.
+  // Returned at the raw toolpath centerline, unoffset — offsetting is left to
+  // the user's own CAD tool.
   function hangerGapOutline(cfg) {
     const base = window.Geo.rotateToSeam(
       window.Geo.adaptiveShape(cfg.shape, cfg.shapeParams, isPos(cfg.tolerance) ? cfg.tolerance : 0.05),
@@ -1279,13 +1281,9 @@
       if (u > uA && u < uB) baseArc.push(base[i]);
     }
 
-    const gapLoop = bridgingPath.concat(baseArc.slice().reverse());
-    // offsetClosed assumes CCW-positive-outward; this loop's winding direction
-    // depends on the gap/pocket parameters, so pick whichever sign actually
-    // shrinks it (accounting for the bead's material width on both sides of
-    // the opening) rather than assuming one.
-    const sign = window.Geo.signedArea(gapLoop) >= 0 ? -1 : 1;
-    return window.Geo.offsetClosed(gapLoop, sign * cfg.lineWidth);
+    // No offset here — exported at the raw toolpath centerline so it can be
+    // offset by hand in Rhino instead.
+    return bridgingPath.concat(baseArc.slice().reverse());
   }
 
   function exportHangerSvg() {

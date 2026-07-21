@@ -296,9 +296,10 @@ where the wall sits at the bottom of the gap) and on the other by the plain base
 own back arc between those same two points (the outermost extent, where the wall sits
 once the transition has fully closed the gap back up) — both curves already meet exactly
 there, so stitching bridging-path-forward + base-arc-backward is already a closed loop.
-Offset inward by one full line width (accounting for the bead's material width on both
-sides of the opening), in part-local mm coordinates (centered on the shape, independent
-of bed position), for bringing straight into a CAD tool to design a mating bracket.
+Exported at the raw toolpath centerline (unoffset — offsetting for the bead's material
+width is left to the CAD tool), in part-local mm coordinates (centered on the shape,
+independent of bed position), for bringing straight into a CAD tool to design a mating
+bracket.
 
 ### Brim
 
