@@ -263,22 +263,25 @@ present and future) and **type-specific**:
   odd = woven**. The bump feedrate is used on bump moves both ways; plain wall moves
   keep the print feed.
 - **Random spikes (type-specific: number of spikes, seed):** blue-noise (Mitchell
-  best-candidate) outward pokes distributed evenly-but-random across the confined area.
-  Each spike is a triangle whose base width equals the line width (so the inner wall reads
-  as continuous), with the tip at full amplitude. Deterministic per **seed** — change the
-  seed to re-roll. Each spike stays a clean base→tip→base triangle exactly one line width
-  wide even through the hanger and transition loops (their dense points are dropped inside
-  the spike window so the drop is never pinched narrow). An optional **length
-  variation (± mm)** randomizes each spike's length within `amplitude ± var` (e.g.
-  amplitude 50, variation 10 → lengths 40–60), deterministic per seed and drawn from
-  a stream independent of the placement; the base stays one line width, only the
-  length varies. 0 = every spike the same length. **Feedrate out** and **feedrate in**
-  are two fully independent inputs — the move out to the tip and the move back in each
-  use their own value, so slow-out/fast-back-in, slow both ways, or anything else is
-  just a matter of what's typed in, not a fixed asymmetric rule. An optional **tip dwell
-  (s)** inserts a `G4` pause right at the tip, after the move out and before heading back
-  in — leave it at 0 for a plain back-and-forth with no pause (e.g. slow out, slow back
-  in, no dwell at all).
+  best-candidate) outward "staples" distributed evenly-but-random across the confined
+  area — not a taper to a point. The stretch of wall each one replaces is pushed straight
+  out (a 90° turn away from the wall), continues at that height for exactly the width it
+  cut away (the same stretch of wall, just displaced outward — flat, not tapered, since
+  both ends sit at the same amplitude), then turns 90° straight back in to rejoin the
+  wall. Four 90° turns total: out, along, in, and back onto the wall's own direction. Base
+  width = line width (so the inner wall reads as continuous). Deterministic per **seed** —
+  change the seed to re-roll. Stays a clean shape even through the hanger and transition
+  loops (their dense points are dropped inside the window so it never gets pinched
+  narrow). An optional **length variation (± mm)** randomizes each one's length within
+  `amplitude ± var` (e.g. amplitude 50, variation 10 → lengths 40–60), deterministic per
+  seed and drawn from a stream independent of the placement; the base stays one line
+  width, only the length varies. 0 = every one the same length. **Feedrate out** and
+  **feedrate in** are two fully independent inputs — the move out (both the initial 90°
+  push and the pushed-out stretch itself) and the move back in each use their own value,
+  so slow-out/fast-back-in, slow both ways, or anything else is just a matter of what's
+  typed in, not a fixed asymmetric rule. An optional **tip dwell (s)** inserts a `G4`
+  pause right before heading back in — leave it at 0 for a plain back-and-forth with no
+  pause (e.g. slow out, slow back in, no dwell at all).
 
 ### Wall hanger
 

@@ -1313,18 +1313,26 @@
         events.push({ u, tip: false });
       }
       const spk = (byLoop[L] || []).filter((s) => s.u > hwU * 1.2 && s.u < uEnd - hwU * 1.2);
-      // Drop base-curve vertices inside a spike window so each spike is a clean
-      // base -> tip -> base triangle exactly one line width wide (no wall vertex
-      // wedged between the base and the tip narrowing it).
+      // Drop base-curve vertices inside a spike window — each spike replaces
+      // that stretch of wall entirely, not just narrows it.
       if (spk.length) {
         events = events.filter((e) => !spk.some((s) => e.u > s.u - hwU + 1e-9 && e.u < s.u + hwU - 1e-9));
       }
+      // Not a spike anymore: a "staple" — take the exact stretch of wall the
+      // window cut away, push it straight out (90° turn away from the wall),
+      // then straight back in (90° turn) to rejoin. The two ends of that
+      // pushed-out stretch (both at u=s.u-hwU and u=s.u+hwU, same amplitude,
+      // so it's flat, not tapered to a point) share their own u with the
+      // on-wall anchor at that boundary, so an explicit tiebreak orders them:
+      // on-wall -> pushed-out at the START boundary, pushed-out -> on-wall at
+      // the END boundary.
       spk.forEach((s) => {
-        events.push({ u: s.u - hwU, tip: false });
-        events.push({ u: s.u, tip: true, amp: s.amp });
-        events.push({ u: s.u + hwU, tip: false });
+        events.push({ u: s.u - hwU, tip: false, order: 0 });
+        events.push({ u: s.u - hwU, tip: true, amp: s.amp, order: 1 });
+        events.push({ u: s.u + hwU, tip: true, amp: s.amp, order: 0, dwellAfter: true });
+        events.push({ u: s.u + hwU, tip: false, order: 1 });
       });
-      events.sort((a, b) => a.u - b.u);
+      events.sort((a, b) => a.u - b.u || (a.order || 0) - (b.order || 0));
       events.push({ u: uEnd, tip: false });
       let prevTipFan = false;
       for (let i = 0; i < events.length; i++) {
@@ -1344,15 +1352,16 @@
           cur = wallPoint(L, e.u);
         }
         const ramp = L === 0 ? Math.max(0, Math.min(1, (prevU + e.u) / 2)) : 1;
-        // The move OUT to the tip and the move back IN each have their own
-        // dedicated feed — no hysteresis carrying one into further segments,
-        // unlike the shared emit() helper's symmetric bump zone for weave.
-        // Fan stays on through BOTH legs though (out, dwell, AND back in) —
-        // it only turns off once fully back at the wall — so it needs its
-        // own, separately-tracked hysteresis.
+        // The move OUT (both the initial 90° push and the pushed-out stretch
+        // itself) and the move back IN each have their own dedicated feed —
+        // no hysteresis carrying one into further segments, unlike the
+        // shared emit() helper's symmetric bump zone for weave. Fan stays on
+        // through the whole excursion (out, dwell, AND back in) — it only
+        // turns off once fully back at the wall — so it needs its own,
+        // separately-tracked hysteresis.
         syncFan(e.tip || prevTipFan);
         emitSeg(cur, e.tip ? spikeFeedOut : prevTipFan ? spikeFeedIn : baseFeedAt(L), ramp);
-        if (e.tip && spikeDwellMs > 0) lines.push('G4 P' + spikeDwellMs + ' ; spike tip dwell');
+        if (e.dwellAfter && spikeDwellMs > 0) lines.push('G4 P' + spikeDwellMs + ' ; spike tip dwell');
         prevTipFan = !!e.tip;
         prevU = e.u;
       }
@@ -1380,18 +1389,20 @@
         const hwF = cfg.lineWidth / 2 / total;
         const spk = (byLoop[L] || []).filter((s) => s.u > hwF * 1.2 && s.u < uEnd - hwF * 1.2);
         // Drop this loop's own (often very dense — 400 pts on a tween) vertices
-        // that fall inside a spike window, so each spike prints as a clean
-        // base -> tip -> base triangle exactly one line width wide instead of a
-        // needle wedged between dense wall points.
+        // that fall inside a spike window — each spike replaces that stretch
+        // of wall entirely, not just narrows it.
         if (spk.length) {
           events = events.filter((e) => !spk.some((s) => e.f > s.u - hwF + 1e-9 && e.f < s.u + hwF - 1e-9));
         }
+        // Not a spike anymore: a "staple" — see spikesLoop for the full
+        // explanation. Same on-wall/pushed-out tiebreak at each boundary.
         spk.forEach((s) => {
-          events.push({ f: s.u - hwF });
-          events.push({ f: s.u, tip: true, amp: s.amp });
-          events.push({ f: s.u + hwF });
+          events.push({ f: s.u - hwF, order: 0 });
+          events.push({ f: s.u - hwF, tip: true, amp: s.amp, order: 1 });
+          events.push({ f: s.u + hwF, tip: true, amp: s.amp, order: 0, dwellAfter: true });
+          events.push({ f: s.u + hwF, order: 1 });
         });
-        events.sort((a, b) => a.f - b.f);
+        events.sort((a, b) => a.f - b.f || (a.order || 0) - (b.order || 0));
       }
 
       // Rolling-cursor point lookup (events are sorted by f, so this is O(n)).
@@ -1450,7 +1461,7 @@
         // unlike its feed, which is deliberately asymmetric above.
         syncFan(bridgeNow || overhangNow || weaveSpecial || prevWeaveSpecial || e.tip || prevTipFan);
         emitSeg({ x: q.x + q.ty * lat + cx, y: q.y - q.tx * lat + cy, z: z }, feed, 1);
-        if (e.tip && spikeDwellMs > 0) lines.push('G4 P' + spikeDwellMs + ' ; spike tip dwell');
+        if (e.dwellAfter && spikeDwellMs > 0) lines.push('G4 P' + spikeDwellMs + ' ; spike tip dwell');
         prevWeaveSpecial = weaveSpecial;
         prevNew = q.isNew;
         prevHot = q.hot;

@@ -428,9 +428,11 @@
     });
     $('patternHint').textContent =
       (type === 'spikes'
-        ? 'Spikes: blue-noise outward pokes, base width = line width. Change seed to re-roll. ' +
-          'Feedrate out and feedrate in are fully independent — slow out / fast back in, slow ' +
-          'both ways, or anything else. An optional tip dwell (G4) pauses at the tip before ' +
+        ? 'Spikes: blue-noise outward "staples" — the stretch of wall each one replaces is ' +
+          'pushed straight out (90°), continues at that height, then straight back in (90°) to ' +
+          'rejoin, rather than tapering to a point. Base width = line width. Change seed to ' +
+          're-roll. Feedrate out and feedrate in are fully independent — slow out / fast back ' +
+          'in, slow both ways, or anything else. An optional tip dwell (G4) pauses right before ' +
           'heading back in; leave it at 0 for a plain back-and-forth with no pause.'
         : 'Weave: even bumps/rev = flutes · odd = woven') +
       ' Bottom feedrate (0 = use the normal print feed) applies only to the patternless bottom ' +
