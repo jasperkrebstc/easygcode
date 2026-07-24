@@ -212,7 +212,15 @@ head parking just a few mm above the print. Floored at the old fixed value (10 m
 pellet / 5 mm filament) so a trivial near-zero-height job still lifts.
 
 The part-cooling fan turns on **after the first (ramp) loop** so it bonds unfanned
-(filament default 100%, pellet default 0%).
+(filament default 100%, pellet default 0%) — this is the coat hanger's default **fan
+mode**. The alternative, **fan only during bumps / bridging**, keeps the fan off
+otherwise and switches it on/off around exactly the segments that need cooling to hold
+their shape: a spike's full out+dwell+in sequence (not just the slow move out — the fan
+stays on through the move back in too, only turning off once fully back at the wall),
+weave's own bump zones, and the wall hanger's slow bridging (bezier/pocket) and
+overhang-triggered segments. Useful when the fan has to stay off elsewhere to avoid
+warping the base (long thin shapes especially) but the bumps still need to solidify
+rigid enough to hold their shape.
 
 ### Vase spiral + ramp-up
 
@@ -244,8 +252,11 @@ present and future) and **type-specific**:
   vector in the vertical plane so bumps rise/fall on the way out and reverse on the way
   back — 0° = flat, ±90° = straight up/down), **coverage %** (the patterned band is
   centered on the seam and grows both directions — 100% = whole loop), **patternless
-  layers top/bottom**, and **bump feedrate** (used on bump moves; plain wall moves keep
-  the print feed).
+  layers top/bottom**, **bump feedrate** (used on bump moves; plain wall moves keep
+  the print feed), and a **bottom feedrate** (0 = use the normal print feed) that applies
+  only to the patternless bottom revolutions, independent of the main print feed — e.g.
+  a much slower start for extra first-layers-out adhesion time without slowing the rest
+  of the print.
 - **Weave (type-specific: bumps/revolution):** continuous displacement
   `amplitude · cos(π · (L + u) · bumps)`. Emitted points are the union of base-curve
   vertices (shape fidelity) and bump positions, so the weave is smooth and accurate.
@@ -304,17 +315,35 @@ bracket.
 ### Brim
 
 An optional brim prints first as flat offset loops of the base shape (at the brim layer
-height). The first brim line sits `brimWidth/2 + lineWidth/2` from the base wall
-(gap-free); each additional line is one brim width further out (**outer**) or in
-(**inner**). A travel move (at the travel feedrate) connects each loop. Inner brim lines
-that would exceed the shape's size are skipped with a warning, so over-specifying is safe.
-A **print order** setting (shared across all three projects) picks *in → out* (default —
-the line adjacent to the part prints first) or *out → in* (the farthest line prints
-first, moving inward toward the part last). Only the printed ORDER changes — the same
-lines, at the same offsets — so switching it is always safe.
+height). **Outer** and **inner line counts** are independent — either or both can be
+nonzero, so a single brim can ring both sides of the wall at once. The first line on
+each side sits `brimWidth/2 + lineWidth/2` from the base wall (gap-free — exactly one
+line width of clearance for the wall itself); each additional line is one brim width
+further from the wall on its own side. Print order is fixed, not a choice: each side
+always starts at its own far end (outer at the outermost line, inner at the innermost)
+and prints TOWARD the wall — the far end is the least supported, so it's laid down
+first, with each subsequent line anchoring progressively closer to the already-adhered
+wall. Inner brim lines that would exceed the shape's size are skipped with a warning, so
+over-specifying is safe. On the bend stool, inner lines are always skipped (with a
+warning) since the disc is solid at the center — only outer applies there.
 When a brim is printed, the first travel to the body (wall / disc / bottom) **clears the
 brim**: it lifts to twice the brim layer height, moves over, then drops to the start Z, so
 the nozzle never drags across the brim on its way in. This applies to all three projects.
+
+An **outer style** setting picks between the plain offset loops above and a **mouse-ear**
+brim (coat hanger project, rounded-rectangle shape only): only the corner arcs of the
+offset loops survive — the straight sides are dropped — completed into full circles
+centered on each fillet's own center (deduplicated, so a "stadium" shape whose fillet
+equals half the width gets one merged half-circle ear per end instead of two coincident
+ones), then clipped to whatever falls outside the wall (offset out by one full line
+width, so the ear material never touches it). All N rings for a given corner are chained
+outer-to-inner into one continuous path instead of separate travel-linked loops — same
+far-to-near direction as a normal brim, just following the clipped arc instead of the
+full loop. Sharp corners (fillet = 0) work too — the circles just center on the point
+corner, same as how real slicers' mouse-ear brim targets sharp corners specifically.
+Selecting mouse-ear anywhere it doesn't apply (bend stool; vessel, whose wall is
+rescaled by its own bottom radius profile; any non-rounded-rectangle shape) falls back to
+a normal outer brim with a warning rather than failing.
 
 ## Inputs
 
@@ -326,9 +355,9 @@ the nozzle never drags across the brim on its way in. This applies to all three 
 - **Print:** layer height, line width, total height, print feed, travel feed,
   chord tolerance, seam side, bed center X/Y.
 - **Pattern:** enable, amplitude, bumps/revolution, coverage %, patternless layers
-  top/bottom.
-- **Brim:** enable, outer/inner, number of lines, brim line width, brim layer height,
-  brim feedrate.
+  top/bottom, bottom feedrate.
+- **Brim:** enable, outer style (normal/mouse ear), outer lines, inner lines, brim line
+  width, brim layer height, brim feedrate.
 
 The **3D preview** orbits with a drag (Z-up), pinch/wheel zooms, two fingers pan, and a
 double-tap resets. The toolpath is colored by feedrate — blue = fastest, red = slowest —

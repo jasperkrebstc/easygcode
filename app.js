@@ -66,9 +66,9 @@
   function readBrim(pre) {
     return {
       enabled: $(pre + 'brimEnabled').checked,
-      outer: $(pre + 'brimOuter').value === 'outer',
-      outIn: $(pre + 'brimOrder').value === 'outIn',
-      lines: Math.max(0, Math.round(num(pre + 'brimLines'))),
+      outerStyle: $(pre + 'brimOuterStyle').value === 'mouseEar' ? 'mouseEar' : 'normal',
+      linesOuter: Math.max(0, Math.round(num(pre + 'brimLinesOuter'))),
+      linesInner: Math.max(0, Math.round(num(pre + 'brimLinesInner'))),
       lineWidth: num(pre + 'brimLineWidth'),
       layerHeight: num(pre + 'brimLayerHeight'),
       feed: num(pre + 'brimFeed'),
@@ -178,6 +178,7 @@
       seamSide: $('seamSide').value,
       centerX: num('centerX'),
       centerY: num('centerY'),
+      fanMode: $('fanMode').value === 'bumps' ? 'bumps' : 'always',
       brim: readBrim(''),
       hanger: {
         enabled: $('hangEnabled').checked,
@@ -196,6 +197,7 @@
         zAngle: num('patZAngle'),
         coverage: num('patCoverage'),
         bumpFeed: num('patBumpFeed'),
+        bottomFeed: num('patBottomFeed'),
         plBottom: Math.max(0, Math.round(num('patPlBottom'))),
         plTop: Math.max(0, Math.round(num('patPlTop'))),
         bumps: Math.max(1, Math.round(num('patBumps'))),
@@ -228,7 +230,10 @@
 
   function validateBrim(brim) {
     if (!brim.enabled) return null;
-    if (!(brim.lines >= 1)) return 'Brim needs at least 1 line.';
+    if (!(brim.linesOuter >= 0) || !(brim.linesInner >= 0))
+      return 'Enter valid outer/inner brim line counts.';
+    if (brim.linesOuter < 1 && brim.linesInner < 1)
+      return 'Brim needs at least 1 outer or inner line.';
     if (!isPos(brim.lineWidth)) return 'Enter a valid brim line width.';
     if (!isPos(brim.layerHeight)) return 'Enter a valid brim layer height.';
     if (!isPos(brim.feed)) return 'Enter a valid brim feedrate.';
@@ -363,6 +368,8 @@
       if (!(cfg.pattern.plBottom >= 0) || !(cfg.pattern.plTop >= 0))
         return 'Enter valid patternless layer counts.';
       if (!isPos(cfg.pattern.bumpFeed)) return 'Enter a valid bump feedrate.';
+      if (!Number.isFinite(cfg.pattern.bottomFeed) || cfg.pattern.bottomFeed < 0)
+        return 'Enter a valid bottom feedrate (0 to use the normal print feed).';
       if (cfg.pattern.type === 'weave' && !(cfg.pattern.bumps >= 1))
         return 'Weave needs at least 1 bump per revolution.';
       if (cfg.pattern.type === 'spikes' && !(cfg.pattern.count >= 1))
@@ -414,11 +421,58 @@
       el.hidden = el.getAttribute('data-pattern') !== type;
     });
     $('patternHint').textContent =
-      type === 'spikes'
+      (type === 'spikes'
         ? 'Spikes: blue-noise outward pokes, base width = line width. Change seed to re-roll. ' +
           'Bump feedrate only slows the way OUT to the tip — the way back in is normal print feed. ' +
           'An optional tip dwell (G4) pauses at the tip before heading back in.'
-        : 'Weave: even bumps/rev = flutes · odd = woven';
+        : 'Weave: even bumps/rev = flutes · odd = woven') +
+      ' Bottom feedrate (0 = use the normal print feed) applies only to the patternless bottom ' +
+      'revolutions, below where the pattern starts — independent of the main print feed.';
+  }
+
+  // Mouse-ear brim rings, mirroring gcode.js's construction exactly (kept in
+  // sync by hand, same as the hanger-loop preview overlay below already
+  // duplicates buildHangerLoop's call rather than sharing generator internals):
+  // per unique fillet corner, the offset loops' corner arcs completed into
+  // full circles, clipped to stay outside the wall (offset out by one line
+  // width), chained outer-to-inner into one open path per corner.
+  function mouseEarChains(cfg, base) {
+    if (cfg.shape !== 'roundedRect' || !cfg.brim || !isPos(cfg.brim.lineWidth) || !(cfg.brim.linesOuter > 0)) {
+      return [];
+    }
+    const sp = cfg.shapeParams;
+    const fl = window.Geo.roundedRectFillets(sp.width, sp.length, sp.fillet);
+    const centers = [];
+    fl.corners.forEach((c) => {
+      if (!centers.some((e) => Math.hypot(e.x - c.x, e.y - c.y) < 1e-6)) centers.push({ x: c.x, y: c.y });
+    });
+    const clipPoly = window.Geo.offsetClosed(base, cfg.lineWidth);
+    const STEPS = 96;
+    const chains = [];
+    centers.forEach((center) => {
+      const chain = [];
+      for (let k = cfg.brim.linesOuter; k >= 1; k--) {
+        const d = cfg.brim.lineWidth / 2 + cfg.lineWidth / 2 + (k - 1) * cfg.brim.lineWidth;
+        const r = fl.rf + d;
+        const raw = [];
+        for (let s = 0; s < STEPS; s++) {
+          const a = (2 * Math.PI * s) / STEPS;
+          raw.push({ x: center.x + r * Math.cos(a), y: center.y + r * Math.sin(a) });
+        }
+        const outside = raw.map((p) => !window.Geo.pointInPolygon(p, clipPoly));
+        let bestStart = -1, bestLen = 0;
+        for (let s = 0; s < STEPS; s++) {
+          if (!outside[s] || outside[(s - 1 + STEPS) % STEPS]) continue;
+          let len = 0;
+          while (len < STEPS && outside[(s + len) % STEPS]) len++;
+          if (len > bestLen) { bestLen = len; bestStart = s; }
+        }
+        if (bestLen === 0) continue;
+        for (let i = 0; i <= bestLen; i++) chain.push(raw[(bestStart + i) % STEPS]);
+      }
+      if (chain.length >= 2) chains.push(chain);
+    });
+    return chains;
   }
 
   // --- Live 2D previews ---
@@ -451,11 +505,19 @@
     if (!base.length || !Number.isFinite(base[0].x)) return;
 
     const loops = [base];
-    if (cfg.brim.enabled && cfg.brim.lines > 0 && isPos(cfg.brim.lineWidth)) {
-      const dir = cfg.brim.outer ? 1 : -1;
-      for (let k = 1; k <= cfg.brim.lines; k++) {
+    let openChains = [];
+    if (cfg.brim.enabled && isPos(cfg.brim.lineWidth)) {
+      if (cfg.brim.outerStyle === 'mouseEar' && cfg.shape === 'roundedRect') {
+        openChains = mouseEarChains(cfg, base);
+      } else {
+        for (let k = 1; k <= cfg.brim.linesOuter; k++) {
+          const d = cfg.brim.lineWidth / 2 + cfg.lineWidth / 2 + (k - 1) * cfg.brim.lineWidth;
+          loops.push(window.Geo.offsetClosed(base, d));
+        }
+      }
+      for (let k = 1; k <= cfg.brim.linesInner; k++) {
         const d = cfg.brim.lineWidth / 2 + cfg.lineWidth / 2 + (k - 1) * cfg.brim.lineWidth;
-        loops.push(window.Geo.offsetClosed(base, dir * d));
+        loops.push(window.Geo.offsetClosed(base, -d));
       }
     }
 
@@ -476,7 +538,7 @@
     }
 
     let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-    const boundLoops = hangerLoop ? loops.concat([hangerLoop]) : loops;
+    const boundLoops = (hangerLoop ? loops.concat([hangerLoop]) : loops).concat(openChains);
     boundLoops.forEach((loop) =>
       loop.forEach((p) => {
         if (p.x < minX) minX = p.x;
@@ -503,6 +565,7 @@
       ctx.stroke();
     }
     for (let k = 1; k < loops.length; k++) stroke(loops[k], '#2bd9a0', 1.5 * sf, true);
+    openChains.forEach((chain) => stroke(chain, '#2bd9a0', 1.5 * sf, false));
     stroke(base, '#4f9dff', 2.5 * sf, true);
 
     if (hangerLoop) {
@@ -585,8 +648,8 @@
     let maxR = spec.snappedD / 2;
     if (legs) maxR = n * lw + cfg.disc.legs.seatHeight;
     let brimExtent = 0;
-    if (cfg.brim.enabled && cfg.brim.outer && cfg.brim.lines > 0 && isPos(cfg.brim.lineWidth)) {
-      brimExtent = cfg.brim.lineWidth / 2 + lw / 2 + (cfg.brim.lines - 1) * cfg.brim.lineWidth + cfg.brim.lineWidth / 2;
+    if (cfg.brim.enabled && cfg.brim.linesOuter > 0 && isPos(cfg.brim.lineWidth)) {
+      brimExtent = cfg.brim.lineWidth / 2 + lw / 2 + (cfg.brim.linesOuter - 1) * cfg.brim.lineWidth + cfg.brim.lineWidth / 2;
     }
     maxR += brimExtent;
     const pad = 20 * sf;
@@ -616,7 +679,7 @@
       ctx.setLineDash([5 * sf, 4 * sf]);
       ctx.strokeStyle = '#2bd9a0';
       ctx.lineWidth = 1.2 * sf;
-      for (let k = 1; k <= cfg.brim.lines; k++) {
+      for (let k = 1; k <= cfg.brim.linesOuter; k++) {
         const d = cfg.brim.lineWidth / 2 + lw / 2 + (k - 1) * cfg.brim.lineWidth;
         strokePoly(window.Geo.offsetClosed(brimOutline, d), true);
       }
@@ -721,11 +784,14 @@
         }
       }
       const brimLoops = [];
-      if (cfg.brim.enabled && cfg.brim.lines > 0 && isPos(cfg.brim.lineWidth)) {
-        const dir = cfg.brim.outer ? 1 : -1;
-        for (let k = 1; k <= cfg.brim.lines; k++) {
+      if (cfg.brim.enabled && isPos(cfg.brim.lineWidth)) {
+        for (let k = 1; k <= cfg.brim.linesOuter; k++) {
           const d = cfg.brim.lineWidth / 2 + lw / 2 + (k - 1) * cfg.brim.lineWidth;
-          brimLoops.push(window.Geo.offsetClosed(wall, dir * d));
+          brimLoops.push(window.Geo.offsetClosed(wall, d));
+        }
+        for (let k = 1; k <= cfg.brim.linesInner; k++) {
+          const d = cfg.brim.lineWidth / 2 + lw / 2 + (k - 1) * cfg.brim.lineWidth;
+          brimLoops.push(window.Geo.offsetClosed(wall, -d));
         }
       }
       let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
@@ -1445,7 +1511,8 @@
     filBedTemp: 'bs_filBedTemp', filFan: 'bs_filFan',
     pelUpTemp: 'bs_pelUpTemp', pelMidTemp: 'bs_pelMidTemp', pelDownTemp: 'bs_pelDownTemp',
     pelBedTemp: 'bs_pelBedTemp', pelPA: 'bs_pelPA', pelPurge: 'bs_pelPurge', pelFan: 'bs_pelFan',
-    brimEnabled: 'bs_brimEnabled', brimOuter: 'bs_brimOuter', brimLines: 'bs_brimLines',
+    brimEnabled: 'bs_brimEnabled', brimOuterStyle: 'bs_brimOuterStyle',
+    brimLinesOuter: 'bs_brimLinesOuter', brimLinesInner: 'bs_brimLinesInner',
     brimLineWidth: 'bs_brimLineWidth', brimLayerHeight: 'bs_brimLayerHeight', brimFeed: 'bs_brimFeed',
   };
 
@@ -1478,7 +1545,8 @@
     poly_radius: 've_poly_radius', poly_sides: 've_poly_sides',
     star_outer: 've_star_outer', star_inner: 've_star_inner', star_points: 've_star_points',
     sq_size: 've_sq_size', sq_n: 've_sq_n',
-    brimEnabled: 've_brimEnabled', brimOuter: 've_brimOuter', brimLines: 've_brimLines',
+    brimEnabled: 've_brimEnabled', brimOuterStyle: 've_brimOuterStyle',
+    brimLinesOuter: 've_brimLinesOuter', brimLinesInner: 've_brimLinesInner',
     brimLineWidth: 've_brimLineWidth', brimLayerHeight: 've_brimLayerHeight', brimFeed: 've_brimFeed',
   };
 
