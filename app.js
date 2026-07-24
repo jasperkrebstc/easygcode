@@ -1333,7 +1333,12 @@
       flash($('downloadBtn'), 'No G-code');
       return;
     }
-    const blob = new Blob([lastGcode], { type: 'text/plain' });
+    // iOS Safari appends ".txt" to a download whenever the blob's MIME type
+    // is a recognized text type (text/plain included) paired with a file
+    // extension it doesn't know, like .gcode — application/octet-stream
+    // reads as generic binary data instead, so Safari just uses the given
+    // filename verbatim.
+    const blob = new Blob([lastGcode], { type: 'application/octet-stream' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -1444,7 +1449,7 @@
       flash($('shareBtn'), 'No G-code');
       return;
     }
-    const file = new File([lastGcode], filename(), { type: 'text/plain' });
+    const file = new File([lastGcode], filename(), { type: 'application/octet-stream' });
     if (navigator.canShare && navigator.canShare({ files: [file] })) {
       try {
         await navigator.share({ files: [file], title: 'EasyGCode ' + activeProject() });
