@@ -252,16 +252,16 @@ present and future) and **type-specific**:
   vector in the vertical plane so bumps rise/fall on the way out and reverse on the way
   back — 0° = flat, ±90° = straight up/down), **coverage %** (the patterned band is
   centered on the seam and grows both directions — 100% = whole loop), **patternless
-  layers top/bottom**, **bump feedrate** (used on bump moves; plain wall moves keep
-  the print feed), and a **bottom feedrate** (0 = use the normal print feed) that applies
-  only to the patternless bottom revolutions, independent of the main print feed — e.g.
-  a much slower start for extra first-layers-out adhesion time without slowing the rest
-  of the print.
-- **Weave (type-specific: bumps/revolution):** continuous displacement
+  layers top/bottom**, and a **bottom feedrate** (0 = use the normal print feed) that
+  applies only to the patternless bottom revolutions, independent of the main print feed
+  — e.g. a much slower start for extra first-layers-out adhesion time without slowing
+  the rest of the print.
+- **Weave (type-specific: bumps/revolution, bump feedrate):** continuous displacement
   `amplitude · cos(π · (L + u) · bumps)`. Emitted points are the union of base-curve
   vertices (shape fidelity) and bump positions, so the weave is smooth and accurate.
   Because the phase shifts by `(-1)^bumps` per layer, **even bumps/rev = vertical flutes,
-  odd = woven**.
+  odd = woven**. The bump feedrate is used on bump moves both ways; plain wall moves
+  keep the print feed.
 - **Random spikes (type-specific: number of spikes, seed):** blue-noise (Mitchell
   best-candidate) outward pokes distributed evenly-but-random across the confined area.
   Each spike is a triangle whose base width equals the line width (so the inner wall reads
@@ -272,12 +272,13 @@ present and future) and **type-specific**:
   variation (± mm)** randomizes each spike's length within `amplitude ± var` (e.g.
   amplitude 50, variation 10 → lengths 40–60), deterministic per seed and drawn from
   a stream independent of the placement; the base stays one line width, only the
-  length varies. 0 = every spike the same length. The **bump feedrate** only slows the
-  move OUT to the tip — the move back in prints at the normal print feed, not the bump
-  feed — since a slow approach with a fast retreat gave cleaner spikes in practice than
-  slowing both directions. An optional **tip dwell (s)** inserts a `G4` pause right at
-  the tip, after the slow move out and before heading back in at normal speed (e.g. very
-  slow out + a few seconds dwell + fast back in).
+  length varies. 0 = every spike the same length. **Feedrate out** and **feedrate in**
+  are two fully independent inputs — the move out to the tip and the move back in each
+  use their own value, so slow-out/fast-back-in, slow both ways, or anything else is
+  just a matter of what's typed in, not a fixed asymmetric rule. An optional **tip dwell
+  (s)** inserts a `G4` pause right at the tip, after the move out and before heading back
+  in — leave it at 0 for a plain back-and-forth with no pause (e.g. slow out, slow back
+  in, no dwell at all).
 
 ### Wall hanger
 
@@ -323,9 +324,18 @@ further from the wall on its own side. Print order is fixed, not a choice: each 
 always starts at its own far end (outer at the outermost line, inner at the innermost)
 and prints TOWARD the wall — the far end is the least supported, so it's laid down
 first, with each subsequent line anchoring progressively closer to the already-adhered
-wall. Inner brim lines that would exceed the shape's size are skipped with a warning, so
-over-specifying is safe. On the bend stool, inner lines are always skipped (with a
-warning) since the disc is solid at the center — only outer applies there.
+wall. Inner brim lines that would cross the shape don't get skipped or keep shrinking
+toward the next line's own (smaller) offset — the naive per-vertex-normal offset can fold
+back on itself locally well before the overall inradius is reached (a thin shape's
+rounded ends especially), which would otherwise let an inner line cross the centerline
+and interfere with lines from the opposite edge, or the outer wall. Safety is checked by
+containment (every offset point must still land inside the true wall), not just area/
+inradius, since those coarser checks can miss a local fold. The safe maximum offset is
+found first (lines print far-to-near, so the largest requested offset — checked first —
+has no "last one that worked" yet to fall back on otherwise); every line past the safe
+range reuses that same maximum instead, so the requested line count still all prints, as
+reinforcement at the safe boundary. On the bend stool, inner lines are always skipped
+(with a warning) since the disc is solid at the center — only outer applies there.
 When a brim is printed, the first travel to the body (wall / disc / bottom) **clears the
 brim**: it lifts to twice the brim layer height, moves over, then drops to the start Z, so
 the nozzle never drags across the brim on its way in. This applies to all three projects.

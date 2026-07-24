@@ -205,6 +205,8 @@
         spikeVar: Math.max(0, num('patSpikeVar')),
         seed: Math.max(0, Math.round(num('patSeed'))),
         spikeDwell: Math.max(0, num('patSpikeDwell')),
+        spikeFeedOut: num('patSpikeFeedOut'),
+        spikeFeedIn: num('patSpikeFeedIn'),
       },
     };
   }
@@ -367,17 +369,21 @@
       if (!Number.isFinite(cfg.pattern.coverage)) return 'Enter a valid pattern coverage %.';
       if (!(cfg.pattern.plBottom >= 0) || !(cfg.pattern.plTop >= 0))
         return 'Enter valid patternless layer counts.';
-      if (!isPos(cfg.pattern.bumpFeed)) return 'Enter a valid bump feedrate.';
       if (!Number.isFinite(cfg.pattern.bottomFeed) || cfg.pattern.bottomFeed < 0)
         return 'Enter a valid bottom feedrate (0 to use the normal print feed).';
-      if (cfg.pattern.type === 'weave' && !(cfg.pattern.bumps >= 1))
-        return 'Weave needs at least 1 bump per revolution.';
-      if (cfg.pattern.type === 'spikes' && !(cfg.pattern.count >= 1))
-        return 'Spikes need at least 1 point.';
-      if (cfg.pattern.type === 'spikes' && (!Number.isFinite(cfg.pattern.spikeVar) || cfg.pattern.spikeVar < 0))
-        return 'Spike length variation must be 0 or more.';
-      if (cfg.pattern.type === 'spikes' && (!Number.isFinite(cfg.pattern.spikeDwell) || cfg.pattern.spikeDwell < 0))
-        return 'Spike tip dwell must be 0 or more.';
+      if (cfg.pattern.type === 'weave') {
+        if (!isPos(cfg.pattern.bumpFeed)) return 'Enter a valid bump feedrate.';
+        if (!(cfg.pattern.bumps >= 1)) return 'Weave needs at least 1 bump per revolution.';
+      }
+      if (cfg.pattern.type === 'spikes') {
+        if (!(cfg.pattern.count >= 1)) return 'Spikes need at least 1 point.';
+        if (!Number.isFinite(cfg.pattern.spikeVar) || cfg.pattern.spikeVar < 0)
+          return 'Spike length variation must be 0 or more.';
+        if (!Number.isFinite(cfg.pattern.spikeDwell) || cfg.pattern.spikeDwell < 0)
+          return 'Spike tip dwell must be 0 or more.';
+        if (!isPos(cfg.pattern.spikeFeedOut)) return 'Enter a valid spike feedrate for the way out.';
+        if (!isPos(cfg.pattern.spikeFeedIn)) return 'Enter a valid spike feedrate for the way in.';
+      }
     }
     return null;
   }
@@ -423,8 +429,9 @@
     $('patternHint').textContent =
       (type === 'spikes'
         ? 'Spikes: blue-noise outward pokes, base width = line width. Change seed to re-roll. ' +
-          'Bump feedrate only slows the way OUT to the tip — the way back in is normal print feed. ' +
-          'An optional tip dwell (G4) pauses at the tip before heading back in.'
+          'Feedrate out and feedrate in are fully independent — slow out / fast back in, slow ' +
+          'both ways, or anything else. An optional tip dwell (G4) pauses at the tip before ' +
+          'heading back in; leave it at 0 for a plain back-and-forth with no pause.'
         : 'Weave: even bumps/rev = flutes · odd = woven') +
       ' Bottom feedrate (0 = use the normal print feed) applies only to the patternless bottom ' +
       'revolutions, below where the pattern starts — independent of the main print feed.';
@@ -480,6 +487,42 @@
     return chains;
   }
 
+  // Inner brim loops, mirroring gcode.js's clamp-to-last-safe-offset exactly:
+  // past the safe inward distance (checked by containment, not just area/
+  // inradius, so a thin shape's rounded ends folding back on themselves
+  // locally is still caught), every further line reuses the last safe
+  // offset instead of overshooting into the opposite side or vanishing.
+  function innerBrimLoops(cfg, base, count) {
+    const lw = cfg.lineWidth;
+    const centroid = base.reduce((s, p) => ({ x: s.x + p.x, y: s.y + p.y }), { x: 0, y: 0 });
+    centroid.x /= base.length;
+    centroid.y /= base.length;
+    const inradius = base.reduce((m, p) => Math.min(m, window.Geo.dist(p, centroid)), Infinity);
+    function safeLoop(d) {
+      if (d >= inradius) return null;
+      const loop = window.Geo.offsetClosed(base, -d);
+      if (window.Geo.signedArea(loop) <= 1e-3) return null;
+      return loop.every((p) => window.Geo.pointInPolygon(p, base)) ? loop : null;
+    }
+    const ds = [];
+    for (let k = 1; k <= count; k++) ds.push(cfg.brim.lineWidth / 2 + lw / 2 + (k - 1) * cfg.brim.lineWidth);
+    let maxSafeD = -1, maxSafeLoop = null;
+    const safeLoops = ds.map((d) => {
+      const loop = safeLoop(d);
+      if (loop && d > maxSafeD) {
+        maxSafeD = d;
+        maxSafeLoop = loop;
+      }
+      return loop;
+    });
+    const out = [];
+    safeLoops.forEach((loop) => {
+      if (loop) out.push(loop);
+      else if (maxSafeLoop) out.push(maxSafeLoop);
+    });
+    return out;
+  }
+
   // --- Live 2D previews ---
   function drawPreview(cfg) {
     if (cfg.project === 'bendstool') {
@@ -520,10 +563,7 @@
           loops.push(window.Geo.offsetClosed(base, d));
         }
       }
-      for (let k = 1; k <= cfg.brim.linesInner; k++) {
-        const d = cfg.brim.lineWidth / 2 + cfg.lineWidth / 2 + (k - 1) * cfg.brim.lineWidth;
-        loops.push(window.Geo.offsetClosed(base, -d));
-      }
+      innerBrimLoops(cfg, base, cfg.brim.linesInner).forEach((l) => loops.push(l));
     }
 
     // Hanger loop overlay (dashed) — computed here so it's part of the bounds.
@@ -794,10 +834,7 @@
           const d = cfg.brim.lineWidth / 2 + lw / 2 + (k - 1) * cfg.brim.lineWidth;
           brimLoops.push(window.Geo.offsetClosed(wall, d));
         }
-        for (let k = 1; k <= cfg.brim.linesInner; k++) {
-          const d = cfg.brim.lineWidth / 2 + lw / 2 + (k - 1) * cfg.brim.lineWidth;
-          brimLoops.push(window.Geo.offsetClosed(wall, -d));
-        }
+        innerBrimLoops(cfg, wall, cfg.brim.linesInner).forEach((l) => brimLoops.push(l));
       }
       let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
       [wall].concat(brimLoops).forEach((l) =>
@@ -1303,7 +1340,12 @@
       flash($('downloadBtn'), 'No G-code');
       return;
     }
-    const blob = new Blob([lastGcode], { type: 'text/plain' });
+    // iOS Safari appends ".txt" to a download whenever the blob's MIME type
+    // is a recognized text type (text/plain included) paired with a file
+    // extension it doesn't know, like .gcode — application/octet-stream
+    // reads as generic binary data instead, so Safari just uses the given
+    // filename verbatim.
+    const blob = new Blob([lastGcode], { type: 'application/octet-stream' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -1414,7 +1456,7 @@
       flash($('shareBtn'), 'No G-code');
       return;
     }
-    const file = new File([lastGcode], filename(), { type: 'text/plain' });
+    const file = new File([lastGcode], filename(), { type: 'application/octet-stream' });
     if (navigator.canShare && navigator.canShare({ files: [file] })) {
       try {
         await navigator.share({ files: [file], title: 'EasyGCode ' + activeProject() });
