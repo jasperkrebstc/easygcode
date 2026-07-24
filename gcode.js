@@ -1100,6 +1100,15 @@
         const STEPS = 96;
         earCenters.forEach((center, ei) => {
           const chain = [];
+          // Zipper-alternate direction ring to ring (same idea as the
+          // alternating seam style elsewhere): without it, every ring is
+          // walked the same rotational way, so ring k's END (at one angular
+          // extreme) connects to ring k-1's START (at the OTHER extreme) —
+          // a connector that cuts back across the whole arc, crossing the
+          // wall's own footprint. Reversing every other ring instead lands
+          // consecutive rings' meeting points at the SAME end, so the
+          // connector is a short, clean radial step.
+          let printedRings = 0;
           for (let k = brim.linesOuter; k >= 1; k--) {
             const d = brim.lineWidth / 2 + cfg.lineWidth / 2 + (k - 1) * brim.lineWidth;
             const r = fl.rf + d;
@@ -1120,7 +1129,11 @@
               warnings.push('Mouse ear ' + (ei + 1) + ' line ' + k + ' skipped (fully inside the shape).');
               continue;
             }
-            for (let i = 0; i <= bestLen; i++) chain.push(raw[(bestStart + i) % STEPS]);
+            const arcPts = [];
+            for (let i = 0; i <= bestLen; i++) arcPts.push(raw[(bestStart + i) % STEPS]);
+            if (printedRings % 2 === 1) arcPts.reverse();
+            chain.push(...arcPts);
+            printedRings++;
           }
           if (chain.length < 2) return;
           travelAbs({ x: chain[0].x + cx, y: chain[0].y + cy, z: brim.layerHeight });
