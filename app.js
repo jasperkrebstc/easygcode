@@ -66,6 +66,7 @@
   function readBrim(pre) {
     return {
       enabled: $(pre + 'brimEnabled').checked,
+      outerStyle: $(pre + 'brimOuterStyle').value === 'mouseEar' ? 'mouseEar' : 'normal',
       linesOuter: Math.max(0, Math.round(num(pre + 'brimLinesOuter'))),
       linesInner: Math.max(0, Math.round(num(pre + 'brimLinesInner'))),
       lineWidth: num(pre + 'brimLineWidth'),
@@ -429,6 +430,51 @@
       'revolutions, below where the pattern starts — independent of the main print feed.';
   }
 
+  // Mouse-ear brim rings, mirroring gcode.js's construction exactly (kept in
+  // sync by hand, same as the hanger-loop preview overlay below already
+  // duplicates buildHangerLoop's call rather than sharing generator internals):
+  // per unique fillet corner, the offset loops' corner arcs completed into
+  // full circles, clipped to stay outside the wall (offset out by one line
+  // width), chained outer-to-inner into one open path per corner.
+  function mouseEarChains(cfg, base) {
+    if (cfg.shape !== 'roundedRect' || !cfg.brim || !isPos(cfg.brim.lineWidth) || !(cfg.brim.linesOuter > 0)) {
+      return [];
+    }
+    const sp = cfg.shapeParams;
+    const fl = window.Geo.roundedRectFillets(sp.width, sp.length, sp.fillet);
+    const centers = [];
+    fl.corners.forEach((c) => {
+      if (!centers.some((e) => Math.hypot(e.x - c.x, e.y - c.y) < 1e-6)) centers.push({ x: c.x, y: c.y });
+    });
+    const clipPoly = window.Geo.offsetClosed(base, cfg.lineWidth);
+    const STEPS = 96;
+    const chains = [];
+    centers.forEach((center) => {
+      const chain = [];
+      for (let k = cfg.brim.linesOuter; k >= 1; k--) {
+        const d = cfg.brim.lineWidth / 2 + cfg.lineWidth / 2 + (k - 1) * cfg.brim.lineWidth;
+        const r = fl.rf + d;
+        const raw = [];
+        for (let s = 0; s < STEPS; s++) {
+          const a = (2 * Math.PI * s) / STEPS;
+          raw.push({ x: center.x + r * Math.cos(a), y: center.y + r * Math.sin(a) });
+        }
+        const outside = raw.map((p) => !window.Geo.pointInPolygon(p, clipPoly));
+        let bestStart = -1, bestLen = 0;
+        for (let s = 0; s < STEPS; s++) {
+          if (!outside[s] || outside[(s - 1 + STEPS) % STEPS]) continue;
+          let len = 0;
+          while (len < STEPS && outside[(s + len) % STEPS]) len++;
+          if (len > bestLen) { bestLen = len; bestStart = s; }
+        }
+        if (bestLen === 0) continue;
+        for (let i = 0; i <= bestLen; i++) chain.push(raw[(bestStart + i) % STEPS]);
+      }
+      if (chain.length >= 2) chains.push(chain);
+    });
+    return chains;
+  }
+
   // --- Live 2D previews ---
   function drawPreview(cfg) {
     if (cfg.project === 'bendstool') {
@@ -459,10 +505,15 @@
     if (!base.length || !Number.isFinite(base[0].x)) return;
 
     const loops = [base];
+    let openChains = [];
     if (cfg.brim.enabled && isPos(cfg.brim.lineWidth)) {
-      for (let k = 1; k <= cfg.brim.linesOuter; k++) {
-        const d = cfg.brim.lineWidth / 2 + cfg.lineWidth / 2 + (k - 1) * cfg.brim.lineWidth;
-        loops.push(window.Geo.offsetClosed(base, d));
+      if (cfg.brim.outerStyle === 'mouseEar' && cfg.shape === 'roundedRect') {
+        openChains = mouseEarChains(cfg, base);
+      } else {
+        for (let k = 1; k <= cfg.brim.linesOuter; k++) {
+          const d = cfg.brim.lineWidth / 2 + cfg.lineWidth / 2 + (k - 1) * cfg.brim.lineWidth;
+          loops.push(window.Geo.offsetClosed(base, d));
+        }
       }
       for (let k = 1; k <= cfg.brim.linesInner; k++) {
         const d = cfg.brim.lineWidth / 2 + cfg.lineWidth / 2 + (k - 1) * cfg.brim.lineWidth;
@@ -487,7 +538,7 @@
     }
 
     let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-    const boundLoops = hangerLoop ? loops.concat([hangerLoop]) : loops;
+    const boundLoops = (hangerLoop ? loops.concat([hangerLoop]) : loops).concat(openChains);
     boundLoops.forEach((loop) =>
       loop.forEach((p) => {
         if (p.x < minX) minX = p.x;
@@ -514,6 +565,7 @@
       ctx.stroke();
     }
     for (let k = 1; k < loops.length; k++) stroke(loops[k], '#2bd9a0', 1.5 * sf, true);
+    openChains.forEach((chain) => stroke(chain, '#2bd9a0', 1.5 * sf, false));
     stroke(base, '#4f9dff', 2.5 * sf, true);
 
     if (hangerLoop) {
@@ -1459,7 +1511,8 @@
     filBedTemp: 'bs_filBedTemp', filFan: 'bs_filFan',
     pelUpTemp: 'bs_pelUpTemp', pelMidTemp: 'bs_pelMidTemp', pelDownTemp: 'bs_pelDownTemp',
     pelBedTemp: 'bs_pelBedTemp', pelPA: 'bs_pelPA', pelPurge: 'bs_pelPurge', pelFan: 'bs_pelFan',
-    brimEnabled: 'bs_brimEnabled', brimLinesOuter: 'bs_brimLinesOuter', brimLinesInner: 'bs_brimLinesInner',
+    brimEnabled: 'bs_brimEnabled', brimOuterStyle: 'bs_brimOuterStyle',
+    brimLinesOuter: 'bs_brimLinesOuter', brimLinesInner: 'bs_brimLinesInner',
     brimLineWidth: 'bs_brimLineWidth', brimLayerHeight: 'bs_brimLayerHeight', brimFeed: 'bs_brimFeed',
   };
 
@@ -1492,7 +1545,8 @@
     poly_radius: 've_poly_radius', poly_sides: 've_poly_sides',
     star_outer: 've_star_outer', star_inner: 've_star_inner', star_points: 've_star_points',
     sq_size: 've_sq_size', sq_n: 've_sq_n',
-    brimEnabled: 've_brimEnabled', brimLinesOuter: 've_brimLinesOuter', brimLinesInner: 've_brimLinesInner',
+    brimEnabled: 've_brimEnabled', brimOuterStyle: 've_brimOuterStyle',
+    brimLinesOuter: 've_brimLinesOuter', brimLinesInner: 've_brimLinesInner',
     brimLineWidth: 've_brimLineWidth', brimLayerHeight: 've_brimLayerHeight', brimFeed: 've_brimFeed',
   };
 

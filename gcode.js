@@ -1026,6 +1026,28 @@
       }
     }
 
+    // Brim: an OPEN chained path (mouse-ear rings) — unlike extrudeLoop, does
+    // not connect the last point back to the first.
+    function extrudeOpenPath(pts, z, a, feed) {
+      for (let i = 1; i < pts.length; i++) {
+        const A = pts[i - 1];
+        const B = pts[i];
+        const segLen = Geo.dist(A, B);
+        const dVol = a * segLen;
+        totalVolume += dVol;
+        pathLength += segLen;
+        let line = 'G1 X' + f3(B.x + cx) + ' Y' + f3(B.y + cy) + ' Z' + f3(z) + ' E' + f5(dVol * eFactor);
+        if (feed !== lastFeed) {
+          line += ' F' + Math.round(feed);
+          lastFeed = feed;
+        }
+        lines.push(line);
+        path.push({ x: B.x + cx, y: B.y + cy, z: z, travel: false, feed: feed });
+        moveCount++;
+        noteZ(z);
+      }
+    }
+
     // ---- Brim ----
     // Outer and inner can both be enabled together. Each always starts at its
     // own far end (outer at the outermost line, inner at the innermost) and
@@ -1035,6 +1057,24 @@
     // closer to the (already-adhered) wall.
     const brim = cfg.brim;
     const brimBase = isBS ? discOuterLoop : isVessel ? vBase : base;
+
+    // Mouse-ear brim (outer only): the plain offset loops' corner arcs,
+    // completed into full circles at each fillet's own center, clipped to
+    // stay outside the wall (offset out by one full line width so the ear
+    // material never touches it) and chained outer-ring-to-inner-ring into
+    // one continuous spiral per corner instead of N separate travel-linked
+    // loops. Only meaningful for a rounded-rectangle base — sharp/no fillet
+    // (fillet=0) degenerates gracefully to circles centered on the point
+    // corner, matching how real slicers target sharp corners specifically.
+    // Coat hanger only: the vessel's wall is scaled by its own bottom-radius
+    // profile (vBase = base * s0), so the fillet centers/radius derived
+    // directly from cfg.shapeParams below would no longer match the actual
+    // (scaled) wall there.
+    let mouseEarOn = !!(brim && brim.enabled && brim.outerStyle === 'mouseEar' && brim.linesOuter > 0);
+    if (mouseEarOn && (isBS || isVessel || cfg.shape !== 'roundedRect')) {
+      warnings.push('Mouse-ear brim needs the coat hanger project with the rounded-rectangle shape — using a normal outer brim instead.');
+      mouseEarOn = false;
+    }
     if (isBS && brim && brim.enabled && brim.linesInner > 0) {
       warnings.push('Inner brim skipped — the disc is solid there; use an outer brim.');
     }
@@ -1045,21 +1085,70 @@
       centroid.x /= brimBase.length;
       centroid.y /= brimBase.length;
       const inradius = brimBase.reduce((m, p) => Math.min(m, Geo.dist(p, centroid)), Infinity);
-      const sides = [
-        { name: 'outer', dir: 1, count: brim.linesOuter },
-        { name: 'inner', dir: -1, count: isBS ? 0 : brim.linesInner },
-      ];
-      sides.forEach((side) => {
-        if (side.count <= 0) return;
-        lines.push('; --- brim (' + side.name + ', far->near) ---');
-        for (let k = side.count; k >= 1; k--) {
+
+      if (mouseEarOn) {
+        lines.push('; --- brim (outer, mouse ears, far->near) ---');
+        const sp = cfg.shapeParams;
+        const fl = Geo.roundedRectFillets(sp.width, sp.length, sp.fillet);
+        const earCenters = [];
+        fl.corners.forEach((c) => {
+          if (!earCenters.some((e) => Math.hypot(e.x - c.x, e.y - c.y) < 1e-6)) {
+            earCenters.push({ x: c.x, y: c.y });
+          }
+        });
+        const clipPoly = Geo.offsetClosed(brimBase, cfg.lineWidth);
+        const STEPS = 96;
+        earCenters.forEach((center, ei) => {
+          const chain = [];
+          for (let k = brim.linesOuter; k >= 1; k--) {
+            const d = brim.lineWidth / 2 + cfg.lineWidth / 2 + (k - 1) * brim.lineWidth;
+            const r = fl.rf + d;
+            const raw = [];
+            for (let s = 0; s < STEPS; s++) {
+              const a = (2 * Math.PI * s) / STEPS;
+              raw.push({ x: center.x + r * Math.cos(a), y: center.y + r * Math.sin(a) });
+            }
+            const outside = raw.map((p) => !Geo.pointInPolygon(p, clipPoly));
+            let bestStart = -1, bestLen = 0;
+            for (let s = 0; s < STEPS; s++) {
+              if (!outside[s] || outside[(s - 1 + STEPS) % STEPS]) continue;
+              let len = 0;
+              while (len < STEPS && outside[(s + len) % STEPS]) len++;
+              if (len > bestLen) { bestLen = len; bestStart = s; }
+            }
+            if (bestLen === 0) {
+              warnings.push('Mouse ear ' + (ei + 1) + ' line ' + k + ' skipped (fully inside the shape).');
+              continue;
+            }
+            for (let i = 0; i <= bestLen; i++) chain.push(raw[(bestStart + i) % STEPS]);
+          }
+          if (chain.length < 2) return;
+          travelAbs({ x: chain[0].x + cx, y: chain[0].y + cy, z: brim.layerHeight });
+          extrudeOpenPath(chain, brim.layerHeight, bArea, brimFeed);
+          brimPrinted = true;
+        });
+      } else if (brim.linesOuter > 0) {
+        lines.push('; --- brim (outer, far->near) ---');
+        for (let k = brim.linesOuter; k >= 1; k--) {
           const d = brim.lineWidth / 2 + cfg.lineWidth / 2 + (k - 1) * brim.lineWidth;
-          if (side.name === 'inner' && d >= inradius) {
+          const loop = Geo.offsetClosed(brimBase, d);
+          travelAbs({ x: loop[0].x + cx, y: loop[0].y + cy, z: brim.layerHeight });
+          extrudeLoop(loop, brim.layerHeight, bArea, brimFeed);
+          brimPrinted = true;
+        }
+      }
+
+      const innerCount = isBS ? 0 : brim.linesInner;
+      if (innerCount > 0) {
+        lines.push('; --- brim (inner, far->near) ---');
+        for (let k = innerCount; k >= 1; k--) {
+          const d = brim.lineWidth / 2 + cfg.lineWidth / 2 + (k - 1) * brim.lineWidth;
+          if (d >= inradius) {
             warnings.push('Inner brim line ' + k + ' skipped (offset exceeds shape size).');
             continue;
           }
-          const loop = Geo.offsetClosed(brimBase, side.dir * d);
-          if (side.name === 'inner' && Geo.signedArea(loop) <= 1e-3) {
+          const loop = Geo.offsetClosed(brimBase, -d);
+          if (Geo.signedArea(loop) <= 1e-3) {
             warnings.push('Inner brim line ' + k + ' skipped (collapsed).');
             continue;
           }
@@ -1067,7 +1156,7 @@
           extrudeLoop(loop, brim.layerHeight, bArea, brimFeed);
           brimPrinted = true;
         }
-      });
+      }
     }
 
     // ---- Base u-samples (vase only) ----

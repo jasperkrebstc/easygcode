@@ -42,23 +42,35 @@
     return pts;
   }
 
-  // width = X extent, length = Y extent, fillet = corner radius.
-  function roundedRect(width, length, fillet) {
+  // The 4 fillet-arc centers of a rounded rectangle (shared with the mouse-ear
+  // brim, which needs each corner's own center + radius independently of the
+  // tessellated outline).
+  function roundedRectFillets(width, length, fillet) {
     const hw = width / 2;
     const hl = length / 2;
     const rf = Math.max(0, Math.min(fillet, Math.min(hw, hl)));
+    return {
+      rf: rf,
+      corners: [
+        { x: hw - rf, y: -hl + rf, a0: -Math.PI / 2, a1: 0 }, // bottom-right
+        { x: hw - rf, y: hl - rf, a0: 0, a1: Math.PI / 2 }, // top-right
+        { x: -hw + rf, y: hl - rf, a0: Math.PI / 2, a1: Math.PI }, // top-left
+        { x: -hw + rf, y: -hl + rf, a0: Math.PI, a1: 1.5 * Math.PI }, // bottom-left
+      ],
+    };
+  }
+
+  // width = X extent, length = Y extent, fillet = corner radius.
+  function roundedRect(width, length, fillet) {
+    const fl = roundedRectFillets(width, length, fillet);
     const pts = [];
     const arcSteps = 24;
-    function arc(cx, cy, a0, a1) {
+    fl.corners.forEach((c) => {
       for (let s = 0; s <= arcSteps; s++) {
-        const a = a0 + ((a1 - a0) * s) / arcSteps;
-        pts.push({ x: cx + rf * Math.cos(a), y: cy + rf * Math.sin(a) });
+        const a = c.a0 + ((c.a1 - c.a0) * s) / arcSteps;
+        pts.push({ x: c.x + fl.rf * Math.cos(a), y: c.y + fl.rf * Math.sin(a) });
       }
-    }
-    arc(hw - rf, -hl + rf, -Math.PI / 2, 0); // bottom-right
-    arc(hw - rf, hl - rf, 0, Math.PI / 2); // top-right
-    arc(-hw + rf, hl - rf, Math.PI / 2, Math.PI); // top-left
-    arc(-hw + rf, -hl + rf, Math.PI, 1.5 * Math.PI); // bottom-left
+    });
     return pts;
   }
 
@@ -188,6 +200,21 @@
       out.push({ x: cur.x + d * nx, y: cur.y + d * ny });
     }
     return out;
+  }
+
+  // Even-odd (crossing number) point-in-polygon test for a closed CCW/CW
+  // polyline (no duplicated closing point).
+  function pointInPolygon(pt, poly) {
+    let inside = false;
+    for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+      const a = poly[i];
+      const b = poly[j];
+      const crosses = a.y > pt.y !== b.y > pt.y;
+      if (crosses && pt.x < ((b.x - a.x) * (pt.y - a.y)) / (b.y - a.y) + a.x) {
+        inside = !inside;
+      }
+    }
+    return inside;
   }
 
   // Distance from point p to the segment a-b.
@@ -870,5 +897,7 @@
     resampleClosed,
     offsetClosed,
     dist,
+    roundedRectFillets,
+    pointInPolygon,
   };
 })();

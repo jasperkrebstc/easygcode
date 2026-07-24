@@ -330,6 +330,21 @@ When a brim is printed, the first travel to the body (wall / disc / bottom) **cl
 brim**: it lifts to twice the brim layer height, moves over, then drops to the start Z, so
 the nozzle never drags across the brim on its way in. This applies to all three projects.
 
+An **outer style** setting picks between the plain offset loops above and a **mouse-ear**
+brim (coat hanger project, rounded-rectangle shape only): only the corner arcs of the
+offset loops survive — the straight sides are dropped — completed into full circles
+centered on each fillet's own center (deduplicated, so a "stadium" shape whose fillet
+equals half the width gets one merged half-circle ear per end instead of two coincident
+ones), then clipped to whatever falls outside the wall (offset out by one full line
+width, so the ear material never touches it). All N rings for a given corner are chained
+outer-to-inner into one continuous path instead of separate travel-linked loops — same
+far-to-near direction as a normal brim, just following the clipped arc instead of the
+full loop. Sharp corners (fillet = 0) work too — the circles just center on the point
+corner, same as how real slicers' mouse-ear brim targets sharp corners specifically.
+Selecting mouse-ear anywhere it doesn't apply (bend stool; vessel, whose wall is
+rescaled by its own bottom radius profile; any non-rounded-rectangle shape) falls back to
+a normal outer brim with a warning rather than failing.
+
 ## Inputs
 
 - **Printer & material:** printer mode (pellet/filament), extrusion multiplier,
@@ -341,8 +356,8 @@ the nozzle never drags across the brim on its way in. This applies to all three 
   chord tolerance, seam side, bed center X/Y.
 - **Pattern:** enable, amplitude, bumps/revolution, coverage %, patternless layers
   top/bottom, bottom feedrate.
-- **Brim:** enable, outer lines, inner lines, brim line width, brim layer height,
-  brim feedrate.
+- **Brim:** enable, outer style (normal/mouse ear), outer lines, inner lines, brim line
+  width, brim layer height, brim feedrate.
 
 The **3D preview** orbits with a drag (Z-up), pinch/wheel zooms, two fingers pan, and a
 double-tap resets. The toolpath is colored by feedrate — blue = fastest, red = slowest —
