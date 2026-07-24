@@ -615,12 +615,38 @@
     const cosA = Math.cos(zAng);
     const sinA = Math.sin(zAng);
     const bumpFeed = pat.bumpFeed > 0 ? pat.bumpFeed : cfg.printFeed;
+    // Separate, slower feed for the plain (bumpless) revolutions below where
+    // the pattern starts — independent of the main print feed used from the
+    // pattern's own bottom layer upward, e.g. for extra first-layers-out
+    // adhesion time without slowing the whole print.
+    const bottomFeed = pat.bottomFeed > 0 ? pat.bottomFeed : cfg.printFeed;
     const plBottom = patternOn ? pat.plBottom : 0;
     const plTop = patternOn ? pat.plTop : 0;
     // Spike tip dwell: G4 pauses right at the tip, after the slow move out and
     // before heading back in at normal feed (P is milliseconds — supported by
     // both Marlin and Klipper, unlike Marlin's S-in-seconds extension).
     const spikeDwellMs = type === 'spikes' && pat.spikeDwell > 0 ? Math.round(pat.spikeDwell * 1000) : 0;
+    function baseFeedAt(L) {
+      return patternOn && L < plBottom ? bottomFeed : cfg.printFeed;
+    }
+
+    // ---- Fan mode ----
+    // 'always' (default): a single M106 after the first revolution, fan stays
+    // on for the whole print (unchanged prior behavior). 'bumps': the fan
+    // only runs during cooling-sensitive slow segments — spike tips (both the
+    // move out AND back, unlike their now-asymmetric feed rate), the hanger's
+    // bridging (new bezier/pocket) sections, its overhang-triggered segments,
+    // and weave's own bump zones — tracked with on/off edges rather than one
+    // constant command.
+    const fanBumpsOnly = !isBS && cfg.fanMode === 'bumps';
+    let fanOn = false;
+    function syncFan(want) {
+      want = !!want; // e.tip is undefined (not false) off-tip — normalize so the
+      // fanOn comparison below never sees undefined !== false as a false toggle.
+      if (!fanBumpsOnly || !includeStartEnd || fanPWM <= 0 || want === fanOn) return;
+      lines.push(want ? 'M106 S' + fanPWM + ' ; bump/bridge fan on' : 'M107 ; bump/bridge fan off');
+      fanOn = want;
+    }
 
     function layerPatterned(L) {
       return !(L < plBottom || L >= T - plTop);
@@ -864,8 +890,10 @@
     }
 
     // Pattern-aware move (bump segments use the bump feedrate).
-    function emit(cur, curBump, ramp) {
-      emitSeg(cur, curBump || prevBump ? bumpFeed : cfg.printFeed, ramp);
+    function emit(cur, curBump, ramp, L) {
+      const inBump = curBump || prevBump;
+      syncFan(inBump);
+      emitSeg(cur, inBump ? bumpFeed : baseFeedAt(L), ramp);
       prevBump = curBump;
     }
 
@@ -999,40 +1027,47 @@
     }
 
     // ---- Brim ----
+    // Outer and inner can both be enabled together. Each always starts at its
+    // own far end (outer at the outermost line, inner at the innermost) and
+    // prints TOWARD the wall — order is fixed, not a user choice, since that's
+    // always the right direction: the far end is unsupported and benefits
+    // from being laid down first, adjacent lines then anchor progressively
+    // closer to the (already-adhered) wall.
     const brim = cfg.brim;
     const brimBase = isBS ? discOuterLoop : isVessel ? vBase : base;
-    if (isBS && brim && brim.enabled && !brim.outer) {
+    if (isBS && brim && brim.enabled && brim.linesInner > 0) {
       warnings.push('Inner brim skipped — the disc is solid there; use an outer brim.');
     }
-    if (brim && brim.enabled && brim.lines > 0 && brimBase && !(isBS && !brim.outer)) {
+    if (brim && brim.enabled && brimBase) {
       const bArea = beadArea(brim.lineWidth, brim.layerHeight);
       const brimFeed = brim.feed > 0 ? brim.feed : cfg.printFeed;
-      const dir = brim.outer ? 1 : -1;
       const centroid = brimBase.reduce((s, p) => ({ x: s.x + p.x, y: s.y + p.y }), { x: 0, y: 0 });
       centroid.x /= brimBase.length;
       centroid.y /= brimBase.length;
       const inradius = brimBase.reduce((m, p) => Math.min(m, Geo.dist(p, centroid)), Infinity);
-      lines.push(
-        '; --- brim (' + (brim.outer ? 'outer' : 'inner') + ', ' + (brim.outIn ? 'out->in' : 'in->out') + ') ---'
-      );
-      const kOrder = [];
-      for (let k = 1; k <= brim.lines; k++) kOrder.push(k);
-      if (brim.outIn) kOrder.reverse();
-      for (const k of kOrder) {
-        const d = brim.lineWidth / 2 + cfg.lineWidth / 2 + (k - 1) * brim.lineWidth;
-        if (!brim.outer && d >= inradius) {
-          warnings.push('Inner brim line ' + k + ' skipped (offset exceeds shape size).');
-          continue;
+      const sides = [
+        { name: 'outer', dir: 1, count: brim.linesOuter },
+        { name: 'inner', dir: -1, count: isBS ? 0 : brim.linesInner },
+      ];
+      sides.forEach((side) => {
+        if (side.count <= 0) return;
+        lines.push('; --- brim (' + side.name + ', far->near) ---');
+        for (let k = side.count; k >= 1; k--) {
+          const d = brim.lineWidth / 2 + cfg.lineWidth / 2 + (k - 1) * brim.lineWidth;
+          if (side.name === 'inner' && d >= inradius) {
+            warnings.push('Inner brim line ' + k + ' skipped (offset exceeds shape size).');
+            continue;
+          }
+          const loop = Geo.offsetClosed(brimBase, side.dir * d);
+          if (side.name === 'inner' && Geo.signedArea(loop) <= 1e-3) {
+            warnings.push('Inner brim line ' + k + ' skipped (collapsed).');
+            continue;
+          }
+          travelAbs({ x: loop[0].x + cx, y: loop[0].y + cy, z: brim.layerHeight });
+          extrudeLoop(loop, brim.layerHeight, bArea, brimFeed);
+          brimPrinted = true;
         }
-        const loop = Geo.offsetClosed(brimBase, dir * d);
-        if (!brim.outer && Geo.signedArea(loop) <= 1e-3) {
-          warnings.push('Inner brim line ' + k + ' skipped (collapsed).');
-          continue;
-        }
-        travelAbs({ x: loop[0].x + cx, y: loop[0].y + cy, z: brim.layerHeight });
-        extrudeLoop(loop, brim.layerHeight, bArea, brimFeed);
-        brimPrinted = true;
-      }
+      });
     }
 
     // ---- Base u-samples (vase only) ----
@@ -1099,7 +1134,7 @@
       const step = (u) => {
         const w = wpoint(L, u);
         const ramp = L === 0 ? Math.max(0, Math.min(1, (prevU + u) / 2)) : 1;
-        emit(w.p, w.bump, ramp);
+        emit(w.p, w.bump, ramp, L);
         prevU = u;
       };
       for (let i = 0; i < uSet.length; i++) {
@@ -1133,6 +1168,7 @@
       });
       events.sort((a, b) => a.u - b.u);
       events.push({ u: uEnd, tip: false });
+      let prevTipFan = false;
       for (let i = 0; i < events.length; i++) {
         const e = events[i];
         let cur;
@@ -1153,9 +1189,13 @@
         // Only the move OUT to the tip (the segment landing on it) gets the
         // bump feed; the move back in afterward is normal print feed — no
         // hysteresis carrying the slow feed past the tip like the shared
-        // emit() helper does for weave.
-        emitSeg(cur, e.tip ? bumpFeed : cfg.printFeed, ramp);
+        // emit() helper does for weave. Fan stays on through BOTH legs though
+        // (out, dwell, AND back in) — it only turns off once fully back at
+        // the wall — so it needs its own, separately-tracked hysteresis.
+        syncFan(e.tip || prevTipFan);
+        emitSeg(cur, e.tip ? bumpFeed : baseFeedAt(L), ramp);
         if (e.tip && spikeDwellMs > 0) lines.push('G4 P' + spikeDwellMs + ' ; spike tip dwell');
+        prevTipFan = !!e.tip;
         prevU = e.u;
       }
     }
@@ -1222,6 +1262,7 @@
       let prevWeaveSpecial = false;
       let prevNew = false;
       let prevHot = false;
+      let prevTipFan = false;
       for (let i = 0; i <= events.length; i++) {
         const endCut = i === events.length || events[i].f >= uEnd - 1e-12;
         const e = endCut ? { f: uEnd } : events[i];
@@ -1234,19 +1275,27 @@
         const lat = amp * cosA;
         const z = Math.min(lh * (L + e.f), cfg.totalHeight) + amp * sinA;
         const weaveSpecial = m !== 0;
-        let feed = cfg.printFeed;
-        if (bridge && (q.isNew || prevNew)) feed = hBridgeFeed;
-        else if (hOverhangOn && (q.hot || prevHot)) feed = hOverhangFeed;
+        const bridgeNow = bridge && (q.isNew || prevNew);
+        const overhangNow = hOverhangOn && (q.hot || prevHot);
+        let feed = baseFeedAt(L);
+        if (bridgeNow) feed = hBridgeFeed;
+        else if (overhangNow) feed = hOverhangFeed;
         // Spike tip: bump feed only for the move OUT (landing on the tip) — no
         // hysteresis carrying it into the move back in, unlike weave's smooth
         // (both-directions) bump zone below.
         else if (e.tip) feed = bumpFeed;
         else if (weaveSpecial || prevWeaveSpecial) feed = bumpFeed;
+        // Fan (bumps-only mode) covers every slow/unsupported zone here —
+        // bridge, overhang, weave bumps — plus the spike tip, but the tip's
+        // OWN hysteresis stays symmetric (on through the move back in too)
+        // unlike its feed, which is deliberately asymmetric above.
+        syncFan(bridgeNow || overhangNow || weaveSpecial || prevWeaveSpecial || e.tip || prevTipFan);
         emitSeg({ x: q.x + q.ty * lat + cx, y: q.y - q.tx * lat + cy, z: z }, feed, 1);
         if (e.tip && spikeDwellMs > 0) lines.push('G4 P' + spikeDwellMs + ' ; spike tip dwell');
         prevWeaveSpecial = weaveSpecial;
         prevNew = q.isNew;
         prevHot = q.hot;
+        prevTipFan = !!e.tip;
         if (endCut) break;
       }
     }
@@ -1393,7 +1442,7 @@
 
       for (let L = 0; L < Lmax; L++) {
         const uEnd = Math.min(1, T - L);
-        if (L === 1 && includeStartEnd && fanPWM > 0) {
+        if (L === 1 && includeStartEnd && fanPWM > 0 && !fanBumpsOnly) {
           lines.push('M106 S' + fanPWM + ' ; part cooling fan on after ramp loop');
         }
         if (inBand(L)) {
@@ -1417,6 +1466,7 @@
       // top height with no z gain and the extrusion tapering to zero, so the
       // rim finishes level and clean instead of on a spiral ramp. Plain wall —
       // no pattern — for a tidy edge.
+      syncFan(false);
       const topZ = cfg.totalHeight;
       const f0 = Math.min(1, T - (Lmax - 1)) % 1; // fraction where the spiral ended
       lines.push('; flat top: no z gain, extrusion ramps to zero for a clean rim');
