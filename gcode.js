@@ -1091,59 +1091,72 @@
       const inradius = brimBase.reduce((m, p) => Math.min(m, Geo.dist(p, centroid)), Infinity);
 
       if (mouseEarOn) {
+        // Exactly the normal offset brim below, with one difference: the
+        // straight sections are dropped, leaving only the corner (fillet)
+        // arcs — each printed as its own separate open path instead of one
+        // closed loop.
+        //
+        // roundedRect() never actually generates a plain "straight" point —
+        // every sample point lies on one of the 4 corner arcs; the straight
+        // side is purely the IMPLICIT connecting segment between the last
+        // point of one arc and the first point of the next. So a point
+        // can't be classified as "arc vs straight" on its own — instead each
+        // point is labeled with WHICH corner it belongs to (nearest corner
+        // whose radius matches, within tolerance), and a straight section is
+        // wherever that label changes between consecutive points (or is
+        // unrecognized) — a run of points sharing one label is one corner's
+        // arc. offsetClosed preserves point order, so the same per-point
+        // labels (found once on the un-offset wall) apply to every ring.
         lines.push('; --- brim (outer, mouse ears, far->near) ---');
         const sp = cfg.shapeParams;
         const fl = Geo.roundedRectFillets(sp.width, sp.length, sp.fillet);
-        const earCenters = [];
-        fl.corners.forEach((c) => {
-          if (!earCenters.some((e) => Math.hypot(e.x - c.x, e.y - c.y) < 1e-6)) {
-            earCenters.push({ x: c.x, y: c.y });
+        const eps = Math.max(0.05, cfg.lineWidth * 0.25);
+        function cornerOf(p) {
+          for (let ci = 0; ci < fl.corners.length; ci++) {
+            if (Math.abs(Geo.dist(p, fl.corners[ci]) - fl.rf) < eps) return ci;
           }
-        });
-        const clipPoly = Geo.offsetClosed(brimBase, cfg.lineWidth);
-        const STEPS = 96;
-        earCenters.forEach((center, ei) => {
-          const chain = [];
-          // Zipper-alternate direction ring to ring (same idea as the
-          // alternating seam style elsewhere): without it, every ring is
-          // walked the same rotational way, so ring k's END (at one angular
-          // extreme) connects to ring k-1's START (at the OTHER extreme) —
-          // a connector that cuts back across the whole arc, crossing the
-          // wall's own footprint. Reversing every other ring instead lands
-          // consecutive rings' meeting points at the SAME end, so the
-          // connector is a short, clean radial step.
-          let printedRings = 0;
-          for (let k = brim.linesOuter; k >= 1; k--) {
-            const d = brim.lineWidth / 2 + cfg.lineWidth / 2 + (k - 1) * brim.lineWidth;
-            const r = fl.rf + d;
-            const raw = [];
-            for (let s = 0; s < STEPS; s++) {
-              const a = (2 * Math.PI * s) / STEPS;
-              raw.push({ x: center.x + r * Math.cos(a), y: center.y + r * Math.sin(a) });
-            }
-            const outside = raw.map((p) => !Geo.pointInPolygon(p, clipPoly));
-            let bestStart = -1, bestLen = 0;
-            for (let s = 0; s < STEPS; s++) {
-              if (!outside[s] || outside[(s - 1 + STEPS) % STEPS]) continue;
-              let len = 0;
-              while (len < STEPS && outside[(s + len) % STEPS]) len++;
-              if (len > bestLen) { bestLen = len; bestStart = s; }
-            }
-            if (bestLen === 0) {
-              warnings.push('Mouse ear ' + (ei + 1) + ' line ' + k + ' skipped (fully inside the shape).');
+          return -1;
+        }
+        const labels = brimBase.map(cornerOf);
+        const n = labels.length;
+        const runs = [];
+        let boundary = -1;
+        for (let i = 0; i < n; i++) {
+          if (labels[i] >= 0 && labels[i] !== labels[(i - 1 + n) % n]) {
+            boundary = i;
+            break;
+          }
+        }
+        if (boundary < 0) {
+          if (labels[0] >= 0) runs.push({ start: 0, len: n });
+        } else {
+          for (let i = 0; i < n; ) {
+            const idx = (boundary + i) % n;
+            if (labels[idx] < 0) {
+              i++;
               continue;
             }
-            const arcPts = [];
-            for (let i = 0; i <= bestLen; i++) arcPts.push(raw[(bestStart + i) % STEPS]);
-            if (printedRings % 2 === 1) arcPts.reverse();
-            chain.push(...arcPts);
-            printedRings++;
+            let len = 1;
+            while (len < n && labels[(idx + len) % n] === labels[idx]) len++;
+            runs.push({ start: idx, len });
+            i += len;
           }
-          if (chain.length < 2) return;
-          travelAbs({ x: chain[0].x + cx, y: chain[0].y + cy, z: brim.layerHeight });
-          extrudeOpenPath(chain, brim.layerHeight, bArea, brimFeed);
-          brimPrinted = true;
-        });
+        }
+        const realRuns = runs.filter((run) => run.len >= 2);
+        for (let k = brim.linesOuter; k >= 1; k--) {
+          const d = brim.lineWidth / 2 + cfg.lineWidth / 2 + (k - 1) * brim.lineWidth;
+          const loop = Geo.offsetClosed(brimBase, d);
+          realRuns.forEach((run) => {
+            const arcPts = [];
+            for (let i = 0; i < run.len; i++) arcPts.push(loop[(run.start + i) % n]);
+            travelAbs({ x: arcPts[0].x + cx, y: arcPts[0].y + cy, z: brim.layerHeight });
+            extrudeOpenPath(arcPts, brim.layerHeight, bArea, brimFeed);
+            brimPrinted = true;
+          });
+        }
+        if (!realRuns.length) {
+          warnings.push('Mouse-ear brim found no fillet arcs (fillet may be 0) — no outer brim printed.');
+        }
       } else if (brim.linesOuter > 0) {
         lines.push('; --- brim (outer, far->near) ---');
         for (let k = brim.linesOuter; k >= 1; k--) {
