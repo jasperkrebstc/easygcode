@@ -615,6 +615,12 @@
     const cosA = Math.cos(zAng);
     const sinA = Math.sin(zAng);
     const bumpFeed = pat.bumpFeed > 0 ? pat.bumpFeed : cfg.printFeed;
+    // Spikes get their own dedicated out/in feeds instead of sharing bumpFeed
+    // with weave — independent, so e.g. slow out + fast back in, or slow
+    // both ways (leave the dwell at 0 for a plain back-and-forth), are both
+    // just a matter of what's typed in, not a fixed asymmetric rule.
+    const spikeFeedOut = pat.spikeFeedOut > 0 ? pat.spikeFeedOut : cfg.printFeed;
+    const spikeFeedIn = pat.spikeFeedIn > 0 ? pat.spikeFeedIn : cfg.printFeed;
     // Separate, slower feed for the plain (bumpless) revolutions below where
     // the pattern starts — independent of the main print feed used from the
     // pattern's own bottom layer upward, e.g. for extra first-layers-out
@@ -779,17 +785,15 @@
     }
     if (patternOn) {
       let ln = '; pattern=' + type + ' amplitude=' + pat.amplitude + ' zAngle=' + (pat.zAngle || 0) +
-        ' coverage=' + pat.coverage + '% plBottom=' + plBottom + ' plTop=' + plTop + ' bumpFeed=' + Math.round(bumpFeed);
+        ' coverage=' + pat.coverage + '% plBottom=' + plBottom + ' plTop=' + plTop;
       ln +=
         type === 'weave'
-          ? ' bumps=' + pat.bumps
+          ? ' bumps=' + pat.bumps + ' bumpFeed=' + Math.round(bumpFeed)
           : ' count=' + pat.count + ' seed=' + pat.seed +
+            ' feedOut=' + Math.round(spikeFeedOut) + ' feedIn=' + Math.round(spikeFeedIn) +
             (pat.spikeVar > 0 ? ' lengthVar=+/-' + pat.spikeVar + 'mm' : '') +
             (spikeDwellMs > 0 ? ' tipDwell=' + pat.spikeDwell + 's' : '');
       lines.push(ln);
-      if (type === 'spikes') {
-        lines.push('; spikes: bump feed only on the way OUT to the tip — the way back in is normal print feed');
-      }
     }
     if (hangOn) {
       lines.push(
@@ -1327,14 +1331,14 @@
           cur = wallPoint(L, e.u);
         }
         const ramp = L === 0 ? Math.max(0, Math.min(1, (prevU + e.u) / 2)) : 1;
-        // Only the move OUT to the tip (the segment landing on it) gets the
-        // bump feed; the move back in afterward is normal print feed — no
-        // hysteresis carrying the slow feed past the tip like the shared
-        // emit() helper does for weave. Fan stays on through BOTH legs though
-        // (out, dwell, AND back in) — it only turns off once fully back at
-        // the wall — so it needs its own, separately-tracked hysteresis.
+        // The move OUT to the tip and the move back IN each have their own
+        // dedicated feed — no hysteresis carrying one into further segments,
+        // unlike the shared emit() helper's symmetric bump zone for weave.
+        // Fan stays on through BOTH legs though (out, dwell, AND back in) —
+        // it only turns off once fully back at the wall — so it needs its
+        // own, separately-tracked hysteresis.
         syncFan(e.tip || prevTipFan);
-        emitSeg(cur, e.tip ? bumpFeed : baseFeedAt(L), ramp);
+        emitSeg(cur, e.tip ? spikeFeedOut : prevTipFan ? spikeFeedIn : baseFeedAt(L), ramp);
         if (e.tip && spikeDwellMs > 0) lines.push('G4 P' + spikeDwellMs + ' ; spike tip dwell');
         prevTipFan = !!e.tip;
         prevU = e.u;
@@ -1421,10 +1425,11 @@
         let feed = baseFeedAt(L);
         if (bridgeNow) feed = hBridgeFeed;
         else if (overhangNow) feed = hOverhangFeed;
-        // Spike tip: bump feed only for the move OUT (landing on the tip) — no
-        // hysteresis carrying it into the move back in, unlike weave's smooth
+        // Spike out/in each get their own dedicated feed — no hysteresis
+        // carrying one into further segments, unlike weave's smooth
         // (both-directions) bump zone below.
-        else if (e.tip) feed = bumpFeed;
+        else if (e.tip) feed = spikeFeedOut;
+        else if (prevTipFan) feed = spikeFeedIn;
         else if (weaveSpecial || prevWeaveSpecial) feed = bumpFeed;
         // Fan (bumps-only mode) covers every slow/unsupported zone here —
         // bridge, overhang, weave bumps — plus the spike tip, but the tip's

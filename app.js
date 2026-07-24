@@ -205,6 +205,8 @@
         spikeVar: Math.max(0, num('patSpikeVar')),
         seed: Math.max(0, Math.round(num('patSeed'))),
         spikeDwell: Math.max(0, num('patSpikeDwell')),
+        spikeFeedOut: num('patSpikeFeedOut'),
+        spikeFeedIn: num('patSpikeFeedIn'),
       },
     };
   }
@@ -367,17 +369,21 @@
       if (!Number.isFinite(cfg.pattern.coverage)) return 'Enter a valid pattern coverage %.';
       if (!(cfg.pattern.plBottom >= 0) || !(cfg.pattern.plTop >= 0))
         return 'Enter valid patternless layer counts.';
-      if (!isPos(cfg.pattern.bumpFeed)) return 'Enter a valid bump feedrate.';
       if (!Number.isFinite(cfg.pattern.bottomFeed) || cfg.pattern.bottomFeed < 0)
         return 'Enter a valid bottom feedrate (0 to use the normal print feed).';
-      if (cfg.pattern.type === 'weave' && !(cfg.pattern.bumps >= 1))
-        return 'Weave needs at least 1 bump per revolution.';
-      if (cfg.pattern.type === 'spikes' && !(cfg.pattern.count >= 1))
-        return 'Spikes need at least 1 point.';
-      if (cfg.pattern.type === 'spikes' && (!Number.isFinite(cfg.pattern.spikeVar) || cfg.pattern.spikeVar < 0))
-        return 'Spike length variation must be 0 or more.';
-      if (cfg.pattern.type === 'spikes' && (!Number.isFinite(cfg.pattern.spikeDwell) || cfg.pattern.spikeDwell < 0))
-        return 'Spike tip dwell must be 0 or more.';
+      if (cfg.pattern.type === 'weave') {
+        if (!isPos(cfg.pattern.bumpFeed)) return 'Enter a valid bump feedrate.';
+        if (!(cfg.pattern.bumps >= 1)) return 'Weave needs at least 1 bump per revolution.';
+      }
+      if (cfg.pattern.type === 'spikes') {
+        if (!(cfg.pattern.count >= 1)) return 'Spikes need at least 1 point.';
+        if (!Number.isFinite(cfg.pattern.spikeVar) || cfg.pattern.spikeVar < 0)
+          return 'Spike length variation must be 0 or more.';
+        if (!Number.isFinite(cfg.pattern.spikeDwell) || cfg.pattern.spikeDwell < 0)
+          return 'Spike tip dwell must be 0 or more.';
+        if (!isPos(cfg.pattern.spikeFeedOut)) return 'Enter a valid spike feedrate for the way out.';
+        if (!isPos(cfg.pattern.spikeFeedIn)) return 'Enter a valid spike feedrate for the way in.';
+      }
     }
     return null;
   }
@@ -423,8 +429,9 @@
     $('patternHint').textContent =
       (type === 'spikes'
         ? 'Spikes: blue-noise outward pokes, base width = line width. Change seed to re-roll. ' +
-          'Bump feedrate only slows the way OUT to the tip — the way back in is normal print feed. ' +
-          'An optional tip dwell (G4) pauses at the tip before heading back in.'
+          'Feedrate out and feedrate in are fully independent — slow out / fast back in, slow ' +
+          'both ways, or anything else. An optional tip dwell (G4) pauses at the tip before ' +
+          'heading back in; leave it at 0 for a plain back-and-forth with no pause.'
         : 'Weave: even bumps/rev = flutes · odd = woven') +
       ' Bottom feedrate (0 = use the normal print feed) applies only to the patternless bottom ' +
       'revolutions, below where the pattern starts — independent of the main print feed.';
