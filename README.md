@@ -339,8 +339,12 @@ ones), then clipped to whatever falls outside the wall (offset out by one full l
 width, so the ear material never touches it). All N rings for a given corner are chained
 outer-to-inner into one continuous path instead of separate travel-linked loops — same
 far-to-near direction as a normal brim, just following the clipped arc instead of the
-full loop. Sharp corners (fillet = 0) work too — the circles just center on the point
-corner, same as how real slicers' mouse-ear brim targets sharp corners specifically.
+full loop. Consecutive rings zipper-alternate direction (same idea as the alternating
+seam style) so ring k's end meets ring k-1's end (then it's walked backwards) instead of
+ring k's end meeting ring k-1's start — without that, the connector cuts back across the
+whole arc, crossing the wall's own footprint. Sharp corners (fillet = 0) work too — the
+circles just center on the point corner, same as how real slicers' mouse-ear brim targets
+sharp corners specifically.
 Selecting mouse-ear anywhere it doesn't apply (bend stool; vessel, whose wall is
 rescaled by its own bottom radius profile; any non-rounded-rectangle shape) falls back to
 a normal outer brim with a warning rather than failing.

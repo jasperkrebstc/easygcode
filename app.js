@@ -451,6 +451,7 @@
     const chains = [];
     centers.forEach((center) => {
       const chain = [];
+      let printedRings = 0;
       for (let k = cfg.brim.linesOuter; k >= 1; k--) {
         const d = cfg.brim.lineWidth / 2 + cfg.lineWidth / 2 + (k - 1) * cfg.brim.lineWidth;
         const r = fl.rf + d;
@@ -468,7 +469,11 @@
           if (len > bestLen) { bestLen = len; bestStart = s; }
         }
         if (bestLen === 0) continue;
-        for (let i = 0; i <= bestLen; i++) chain.push(raw[(bestStart + i) % STEPS]);
+        const arcPts = [];
+        for (let i = 0; i <= bestLen; i++) arcPts.push(raw[(bestStart + i) % STEPS]);
+        if (printedRings % 2 === 1) arcPts.reverse();
+        chain.push(...arcPts);
+        printedRings++;
       }
       if (chain.length >= 2) chains.push(chain);
     });
