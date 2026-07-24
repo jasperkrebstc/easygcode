@@ -341,23 +341,24 @@ brim**: it lifts to twice the brim layer height, moves over, then drops to the s
 the nozzle never drags across the brim on its way in. This applies to all three projects.
 
 An **outer style** setting picks between the plain offset loops above and a **mouse-ear**
-brim (coat hanger project, rounded-rectangle shape only): only the corner arcs of the
-offset loops survive — the straight sides are dropped — completed into full circles
-centered on each fillet's own center (deduplicated, so a "stadium" shape whose fillet
-equals half the width gets one merged half-circle ear per end instead of two coincident
-ones), then clipped to whatever falls outside the wall (offset out by one full line
-width, so the ear material never touches it). All N rings for a given corner are chained
-outer-to-inner into one continuous path instead of separate travel-linked loops — same
-far-to-near direction as a normal brim, just following the clipped arc instead of the
-full loop. Consecutive rings zipper-alternate direction (same idea as the alternating
-seam style) so ring k's end meets ring k-1's end (then it's walked backwards) instead of
-ring k's end meeting ring k-1's start — without that, the connector cuts back across the
-whole arc, crossing the wall's own footprint. Sharp corners (fillet = 0) work too — the
-circles just center on the point corner, same as how real slicers' mouse-ear brim targets
-sharp corners specifically.
-Selecting mouse-ear anywhere it doesn't apply (bend stool; vessel, whose wall is
-rescaled by its own bottom radius profile; any non-rounded-rectangle shape) falls back to
-a normal outer brim with a warning rather than failing.
+brim (coat hanger project, rounded-rectangle shape only): exactly the same offset loops
+as a normal outer brim, just with the straight sections dropped — only the corner
+(fillet) arcs survive, each printed as its own separate open path instead of one closed
+loop. `roundedRect()` never actually generates a plain "straight" point — every sample
+point already lies on one of the 4 corner arcs, and the straight side is purely the
+implicit connecting segment between the last point of one arc and the first point of the
+next — so a point can't be classified as "arc vs. straight" on its own. Instead each
+point is labeled with which corner it belongs to (nearest corner whose radius matches,
+within tolerance), and a straight section is wherever that label changes between
+consecutive points; a run of points sharing one label is one corner's arc. This
+naturally merges a "stadium" shape's two coincident corners (fillet = half the width)
+into one combined half-circle ear per end, since both corners land on the same label.
+Sharp corners (fillet = 0) print nothing, with a warning — there's no arc to keep. No
+clipping, no ring-to-ring chaining, no completed circles: each of the N offset rings is
+handled completely independently, same as a normal brim, just missing its straight
+sections. Selecting mouse-ear anywhere it doesn't apply (bend stool; vessel; any
+non-rounded-rectangle shape) falls back to a normal outer brim with a warning rather
+than failing.
 
 ## Inputs
 

@@ -437,53 +437,69 @@
       'revolutions, below where the pattern starts — independent of the main print feed.';
   }
 
-  // Mouse-ear brim rings, mirroring gcode.js's construction exactly (kept in
-  // sync by hand, same as the hanger-loop preview overlay below already
-  // duplicates buildHangerLoop's call rather than sharing generator internals):
-  // per unique fillet corner, the offset loops' corner arcs completed into
-  // full circles, clipped to stay outside the wall (offset out by one line
-  // width), chained outer-to-inner into one open path per corner.
+  // Mouse-ear brim: exactly the normal offset brim, minus the straight
+  // sections — only the corner (fillet) arcs survive, each as its own
+  // separate open path. A point is a fillet-arc point if it sits at
+  // exactly the fillet radius from one of the 4 corner centers, checked
+  // once on the un-offset wall (offsetClosed preserves point order, so the
+  // same classification applies to every offset ring). Mirrors gcode.js by
+  // hand, same as the hanger-loop overlay below already duplicates
+  // buildHangerLoop rather than sharing generator internals.
   function mouseEarChains(cfg, base) {
     if (cfg.shape !== 'roundedRect' || !cfg.brim || !isPos(cfg.brim.lineWidth) || !(cfg.brim.linesOuter > 0)) {
       return [];
     }
     const sp = cfg.shapeParams;
     const fl = window.Geo.roundedRectFillets(sp.width, sp.length, sp.fillet);
-    const centers = [];
-    fl.corners.forEach((c) => {
-      if (!centers.some((e) => Math.hypot(e.x - c.x, e.y - c.y) < 1e-6)) centers.push({ x: c.x, y: c.y });
-    });
-    const clipPoly = window.Geo.offsetClosed(base, cfg.lineWidth);
-    const STEPS = 96;
-    const chains = [];
-    centers.forEach((center) => {
-      const chain = [];
-      let printedRings = 0;
-      for (let k = cfg.brim.linesOuter; k >= 1; k--) {
-        const d = cfg.brim.lineWidth / 2 + cfg.lineWidth / 2 + (k - 1) * cfg.brim.lineWidth;
-        const r = fl.rf + d;
-        const raw = [];
-        for (let s = 0; s < STEPS; s++) {
-          const a = (2 * Math.PI * s) / STEPS;
-          raw.push({ x: center.x + r * Math.cos(a), y: center.y + r * Math.sin(a) });
-        }
-        const outside = raw.map((p) => !window.Geo.pointInPolygon(p, clipPoly));
-        let bestStart = -1, bestLen = 0;
-        for (let s = 0; s < STEPS; s++) {
-          if (!outside[s] || outside[(s - 1 + STEPS) % STEPS]) continue;
-          let len = 0;
-          while (len < STEPS && outside[(s + len) % STEPS]) len++;
-          if (len > bestLen) { bestLen = len; bestStart = s; }
-        }
-        if (bestLen === 0) continue;
-        const arcPts = [];
-        for (let i = 0; i <= bestLen; i++) arcPts.push(raw[(bestStart + i) % STEPS]);
-        if (printedRings % 2 === 1) arcPts.reverse();
-        chain.push(...arcPts);
-        printedRings++;
+    const eps = Math.max(0.05, cfg.lineWidth * 0.25);
+    // roundedRect() never generates a plain "straight" point — every sample
+    // point lies on one of the 4 corner arcs; the straight side is purely
+    // the implicit connector between the last point of one arc and the
+    // first point of the next. So each point is labeled with WHICH corner
+    // it belongs to, and a straight section is wherever that label changes
+    // (or is unrecognized) — a run sharing one label is one corner's arc.
+    function cornerOf(p) {
+      for (let ci = 0; ci < fl.corners.length; ci++) {
+        if (Math.abs(Math.hypot(p.x - fl.corners[ci].x, p.y - fl.corners[ci].y) - fl.rf) < eps) return ci;
       }
-      if (chain.length >= 2) chains.push(chain);
-    });
+      return -1;
+    }
+    const labels = base.map(cornerOf);
+    const n = labels.length;
+    const runs = [];
+    let boundary = -1;
+    for (let i = 0; i < n; i++) {
+      if (labels[i] >= 0 && labels[i] !== labels[(i - 1 + n) % n]) {
+        boundary = i;
+        break;
+      }
+    }
+    if (boundary < 0) {
+      if (labels[0] >= 0) runs.push({ start: 0, len: n });
+    } else {
+      for (let i = 0; i < n; ) {
+        const idx = (boundary + i) % n;
+        if (labels[idx] < 0) {
+          i++;
+          continue;
+        }
+        let len = 1;
+        while (len < n && labels[(idx + len) % n] === labels[idx]) len++;
+        runs.push({ start: idx, len });
+        i += len;
+      }
+    }
+    const realRuns = runs.filter((run) => run.len >= 2);
+    const chains = [];
+    for (let k = cfg.brim.linesOuter; k >= 1; k--) {
+      const d = cfg.brim.lineWidth / 2 + cfg.lineWidth / 2 + (k - 1) * cfg.brim.lineWidth;
+      const loop = window.Geo.offsetClosed(base, d);
+      realRuns.forEach((run) => {
+        const arcPts = [];
+        for (let i = 0; i < run.len; i++) arcPts.push(loop[(run.start + i) % n]);
+        chains.push(arcPts);
+      });
+    }
     return chains;
   }
 
