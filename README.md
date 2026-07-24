@@ -323,9 +323,18 @@ further from the wall on its own side. Print order is fixed, not a choice: each 
 always starts at its own far end (outer at the outermost line, inner at the innermost)
 and prints TOWARD the wall — the far end is the least supported, so it's laid down
 first, with each subsequent line anchoring progressively closer to the already-adhered
-wall. Inner brim lines that would exceed the shape's size are skipped with a warning, so
-over-specifying is safe. On the bend stool, inner lines are always skipped (with a
-warning) since the disc is solid at the center — only outer applies there.
+wall. Inner brim lines that would cross the shape don't get skipped or keep shrinking
+toward the next line's own (smaller) offset — the naive per-vertex-normal offset can fold
+back on itself locally well before the overall inradius is reached (a thin shape's
+rounded ends especially), which would otherwise let an inner line cross the centerline
+and interfere with lines from the opposite edge, or the outer wall. Safety is checked by
+containment (every offset point must still land inside the true wall), not just area/
+inradius, since those coarser checks can miss a local fold. The safe maximum offset is
+found first (lines print far-to-near, so the largest requested offset — checked first —
+has no "last one that worked" yet to fall back on otherwise); every line past the safe
+range reuses that same maximum instead, so the requested line count still all prints, as
+reinforcement at the safe boundary. On the bend stool, inner lines are always skipped
+(with a warning) since the disc is solid at the center — only outer applies there.
 When a brim is printed, the first travel to the body (wall / disc / bottom) **clears the
 brim**: it lifts to twice the brim layer height, moves over, then drops to the start Z, so
 the nozzle never drags across the brim on its way in. This applies to all three projects.

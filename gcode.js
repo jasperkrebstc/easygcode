@@ -1154,16 +1154,55 @@
       const innerCount = isBS ? 0 : brim.linesInner;
       if (innerCount > 0) {
         lines.push('; --- brim (inner, far->near) ---');
-        for (let k = innerCount; k >= 1; k--) {
-          const d = brim.lineWidth / 2 + cfg.lineWidth / 2 + (k - 1) * brim.lineWidth;
-          if (d >= inradius) {
-            warnings.push('Inner brim line ' + k + ' skipped (offset exceeds shape size).');
-            continue;
-          }
+        // Offsetting inward is only safe up to a point — past it, the naive
+        // per-vertex-normal offset can fold back on itself locally (e.g. a
+        // thin shape's rounded ends, where the safe inward distance is much
+        // smaller than the overall inradius) even where the coarse area/
+        // inradius checks don't catch it, which lets an inner line cross the
+        // shape's centerline and interfere with lines from the opposite edge
+        // — or even the outer wall. Checking every offset point is still
+        // inside the true wall catches that.
+        //
+        // Lines print far-to-near (largest offset first), so the largest
+        // requested offset is checked FIRST, before any smaller (safer) one
+        // has run — there's no "last offset that worked" yet at that point.
+        // Find the safe maximum in a pre-pass instead, so it's already known
+        // when an oversized line needs to fall back to it: every line past
+        // the safe range reuses that same maximum (extra reinforcement at
+        // the safe boundary) rather than either overshooting into the
+        // opposite side or silently vanishing.
+        function isSafeInnerLoop(d) {
+          if (d >= inradius) return null;
           const loop = Geo.offsetClosed(brimBase, -d);
-          if (Geo.signedArea(loop) <= 1e-3) {
-            warnings.push('Inner brim line ' + k + ' skipped (collapsed).');
-            continue;
+          if (Geo.signedArea(loop) <= 1e-3) return null;
+          return loop.every((p) => Geo.pointInPolygon(p, brimBase)) ? loop : null;
+        }
+        const ds = [];
+        for (let k = innerCount; k >= 1; k--) ds.push(brim.lineWidth / 2 + cfg.lineWidth / 2 + (k - 1) * brim.lineWidth);
+        let maxSafeD = -1, maxSafeLoop = null;
+        const safeLoops = ds.map((d) => {
+          const loop = isSafeInnerLoop(d);
+          if (loop && d > maxSafeD) {
+            maxSafeD = d;
+            maxSafeLoop = loop;
+          }
+          return loop;
+        });
+        for (let i = 0; i < ds.length; i++) {
+          const k = innerCount - i;
+          let d = ds[i];
+          let loop = safeLoops[i];
+          if (!loop) {
+            if (!maxSafeLoop) {
+              warnings.push('Inner brim line ' + k + ' skipped (no room for any inner brim line).');
+              continue;
+            }
+            d = maxSafeD;
+            loop = maxSafeLoop;
+            warnings.push(
+              'Inner brim line ' + k + ' would cross the shape — reusing the last safe offset (' +
+                d.toFixed(2) + 'mm) instead.'
+            );
           }
           travelAbs({ x: loop[0].x + cx, y: loop[0].y + cy, z: brim.layerHeight });
           extrudeLoop(loop, brim.layerHeight, bArea, brimFeed);

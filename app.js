@@ -480,6 +480,42 @@
     return chains;
   }
 
+  // Inner brim loops, mirroring gcode.js's clamp-to-last-safe-offset exactly:
+  // past the safe inward distance (checked by containment, not just area/
+  // inradius, so a thin shape's rounded ends folding back on themselves
+  // locally is still caught), every further line reuses the last safe
+  // offset instead of overshooting into the opposite side or vanishing.
+  function innerBrimLoops(cfg, base, count) {
+    const lw = cfg.lineWidth;
+    const centroid = base.reduce((s, p) => ({ x: s.x + p.x, y: s.y + p.y }), { x: 0, y: 0 });
+    centroid.x /= base.length;
+    centroid.y /= base.length;
+    const inradius = base.reduce((m, p) => Math.min(m, window.Geo.dist(p, centroid)), Infinity);
+    function safeLoop(d) {
+      if (d >= inradius) return null;
+      const loop = window.Geo.offsetClosed(base, -d);
+      if (window.Geo.signedArea(loop) <= 1e-3) return null;
+      return loop.every((p) => window.Geo.pointInPolygon(p, base)) ? loop : null;
+    }
+    const ds = [];
+    for (let k = 1; k <= count; k++) ds.push(cfg.brim.lineWidth / 2 + lw / 2 + (k - 1) * cfg.brim.lineWidth);
+    let maxSafeD = -1, maxSafeLoop = null;
+    const safeLoops = ds.map((d) => {
+      const loop = safeLoop(d);
+      if (loop && d > maxSafeD) {
+        maxSafeD = d;
+        maxSafeLoop = loop;
+      }
+      return loop;
+    });
+    const out = [];
+    safeLoops.forEach((loop) => {
+      if (loop) out.push(loop);
+      else if (maxSafeLoop) out.push(maxSafeLoop);
+    });
+    return out;
+  }
+
   // --- Live 2D previews ---
   function drawPreview(cfg) {
     if (cfg.project === 'bendstool') {
@@ -520,10 +556,7 @@
           loops.push(window.Geo.offsetClosed(base, d));
         }
       }
-      for (let k = 1; k <= cfg.brim.linesInner; k++) {
-        const d = cfg.brim.lineWidth / 2 + cfg.lineWidth / 2 + (k - 1) * cfg.brim.lineWidth;
-        loops.push(window.Geo.offsetClosed(base, -d));
-      }
+      innerBrimLoops(cfg, base, cfg.brim.linesInner).forEach((l) => loops.push(l));
     }
 
     // Hanger loop overlay (dashed) — computed here so it's part of the bounds.
@@ -794,10 +827,7 @@
           const d = cfg.brim.lineWidth / 2 + lw / 2 + (k - 1) * cfg.brim.lineWidth;
           brimLoops.push(window.Geo.offsetClosed(wall, d));
         }
-        for (let k = 1; k <= cfg.brim.linesInner; k++) {
-          const d = cfg.brim.lineWidth / 2 + lw / 2 + (k - 1) * cfg.brim.lineWidth;
-          brimLoops.push(window.Geo.offsetClosed(wall, -d));
-        }
+        innerBrimLoops(cfg, wall, cfg.brim.linesInner).forEach((l) => brimLoops.push(l));
       }
       let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
       [wall].concat(brimLoops).forEach((l) =>
