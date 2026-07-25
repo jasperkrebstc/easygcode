@@ -1337,16 +1337,24 @@
       }
       // Not a spike anymore: a "staple" — take the exact stretch of wall the
       // window cut away, push it straight out (90° turn away from the wall),
-      // then straight back in (90° turn) to rejoin. The two ends of that
-      // pushed-out stretch (both at u=s.u-hwU and u=s.u+hwU, same amplitude,
-      // so it's flat, not tapered to a point) share their own u with the
-      // on-wall anchor at that boundary, so an explicit tiebreak orders them:
-      // on-wall -> pushed-out at the START boundary, pushed-out -> on-wall at
-      // the END boundary.
+      // then straight back in (90° turn) to rejoin. Both arms push out along
+      // the SAME direction — the wall's tangent at the spike's own center,
+      // not each corner's own local tangent — so the two arms come out
+      // truly parallel and the tip-to-tip move is a straight line the same
+      // distance out as the arms themselves, even where the underlying
+      // curve bends sharply over that narrow a span (e.g. inside a hanger
+      // detour); using each corner's own tangent there let the two arms
+      // point in different directions, twisting the staple. The two ends of
+      // that pushed-out stretch (both at u=s.u-hwU and u=s.u+hwU, same
+      // amplitude, so it's flat, not tapered to a point) share their own u
+      // with the on-wall anchor at that boundary, so an explicit tiebreak
+      // orders them: on-wall -> pushed-out at the START boundary, pushed-out
+      // -> on-wall at the END boundary.
       spk.forEach((s) => {
+        const tan = sampler.at(s.u).tan;
         events.push({ u: s.u - hwU, tip: false, order: 0 });
-        events.push({ u: s.u - hwU, tip: true, amp: s.amp, order: 1 });
-        events.push({ u: s.u + hwU, tip: true, amp: s.amp, order: 0, dwellAfter: true });
+        events.push({ u: s.u - hwU, tip: true, amp: s.amp, tan: tan, order: 1 });
+        events.push({ u: s.u + hwU, tip: true, amp: s.amp, tan: tan, order: 0, dwellAfter: true });
         events.push({ u: s.u + hwU, tip: false, order: 1 });
       });
       events.sort((a, b) => a.u - b.u || (a.order || 0) - (b.order || 0));
@@ -1361,8 +1369,8 @@
           const lat = amp * cosA;
           const baseZ = Math.min(lh * (L + e.u), cfg.totalHeight);
           cur = {
-            x: sp.pos.x + sp.tan.y * lat + cx,
-            y: sp.pos.y - sp.tan.x * lat + cy,
+            x: sp.pos.x + e.tan.y * lat + cx,
+            y: sp.pos.y - e.tan.x * lat + cy,
             z: baseZ + amp * sinA,
           };
         } else {
@@ -1412,11 +1420,24 @@
           events = events.filter((e) => !spk.some((s) => e.f > s.u - hwF + 1e-9 && e.f < s.u + hwF - 1e-9));
         }
         // Not a spike anymore: a "staple" — see spikesLoop for the full
-        // explanation. Same on-wall/pushed-out tiebreak at each boundary.
+        // explanation of why both arms push out along ONE shared direction
+        // (the underlying curve's tangent at the spike's own center, looked
+        // up independently of the rolling cursor below) instead of each
+        // corner's own local tangent — critical here, since this loop walks
+        // the hanger/tween polyline, whose tangent can swing hard over a
+        // span as narrow as one line width (inside a taper or cap). Same
+        // on-wall/pushed-out tiebreak at each boundary.
         spk.forEach((s) => {
+          let seg0 = 1;
+          const target0 = Math.max(0, Math.min(1, s.u)) * total;
+          while (seg0 < n1 - 1 && cum[seg0] < target0) seg0++;
+          const a0 = pts[seg0 - 1], b0 = pts[seg0];
+          const dx0 = b0.x - a0.x, dy0 = b0.y - a0.y;
+          const len0 = Math.hypot(dx0, dy0) || 1e-9;
+          const tan = { tx: dx0 / len0, ty: dy0 / len0 };
           events.push({ f: s.u - hwF, order: 0 });
-          events.push({ f: s.u - hwF, tip: true, amp: s.amp, order: 1 });
-          events.push({ f: s.u + hwF, tip: true, amp: s.amp, order: 0, dwellAfter: true });
+          events.push({ f: s.u - hwF, tip: true, amp: s.amp, tan: tan, order: 1 });
+          events.push({ f: s.u + hwF, tip: true, amp: s.amp, tan: tan, order: 0, dwellAfter: true });
           events.push({ f: s.u + hwF, order: 1 });
         });
         events.sort((a, b) => a.f - b.f || (a.order || 0) - (b.order || 0));
@@ -1477,7 +1498,8 @@
         // OWN hysteresis stays symmetric (on through the move back in too)
         // unlike its feed, which is deliberately asymmetric above.
         syncFan(bridgeNow || overhangNow || weaveSpecial || prevWeaveSpecial || e.tip || prevTipFan);
-        emitSeg({ x: q.x + q.ty * lat + cx, y: q.y - q.tx * lat + cy, z: z }, feed, 1);
+        const nrm = e.tip ? e.tan : q;
+        emitSeg({ x: q.x + nrm.ty * lat + cx, y: q.y - nrm.tx * lat + cy, z: z }, feed, 1);
         if (e.dwellAfter && spikeDwellMs > 0) lines.push('G4 P' + spikeDwellMs + ' ; spike tip dwell');
         prevWeaveSpecial = weaveSpecial;
         prevNew = q.isNew;

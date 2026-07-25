@@ -268,11 +268,15 @@ present and future) and **type-specific**:
   out (a 90° turn away from the wall), continues at that height for exactly the width it
   cut away (the same stretch of wall, just displaced outward — flat, not tapered, since
   both ends sit at the same amplitude), then turns 90° straight back in to rejoin the
-  wall. Four 90° turns total: out, along, in, and back onto the wall's own direction. Base
-  width = line width (so the inner wall reads as continuous). Deterministic per **seed** —
-  change the seed to re-roll. Stays a clean shape even through the hanger and transition
-  loops (their dense points are dropped inside the window so it never gets pinched
-  narrow). An optional **length variation (± mm)** randomizes each one's length within
+  wall. Four 90° turns total: out, along, in, and back onto the wall's own direction. Both
+  push-out arms use the SAME direction — the wall's tangent at the staple's own center,
+  not each corner's own local tangent — so the two arms stay parallel (and the flat top
+  a straight line the same distance out as the arms) even where the underlying curve
+  bends sharply over that narrow a span, like inside a double-hanger keyhole's taper or
+  cap. Base width = line width (so the inner wall reads as continuous). Deterministic per
+  **seed** — change the seed to re-roll. Stays a clean shape even through the hanger and
+  transition loops (their dense points are dropped inside the window so it never gets
+  pinched narrow). An optional **length variation (± mm)** randomizes each one's length within
   `amplitude ± var` (e.g. amplitude 50, variation 10 → lengths 40–60), deterministic per
   seed and drawn from a stream independent of the placement; the base stays one line
   width, only the length varies. 0 = every one the same length. **Feedrate out** and
@@ -297,16 +301,26 @@ gap % so the beziers have room.
 **Double** replaces the one large hanger with two smaller, independent ones. The same
 **gap %** input now picks two anchor points at half that percentage either side of the
 seam (e.g. 30% → anchors at ±15%); at each anchor a **gap width (mm)** slice is cut
-(split evenly either side of the anchor) and bridged, through the same funnel
-construction, to a **pocket width (mm)** arc at the mirrored point on the opposite side
-of the shape. Each hanger is a self-contained loop spanning roughly a quarter of the
-perimeter, leaving the seam and the far side as plain wall. Because the gap and pocket
-sit closer together than in single mode, the funnel beziers have less room to work with;
-the generator tries both ways of pairing the gap edges to the pocket edges and keeps
-whichever doesn't cross itself, but for a small shape with a comparatively large gap/pocket
-width **it can still overlap** — watch for a "the loop crosses itself" warning after
-generating, and shrink the gap/pocket width (mm) or grow the shape/gap % if you see it.
-The **export profile SVG** button (below) is single-hanger only for now.
+(split evenly either side of the anchor) and bridged to a **pocket width (mm)** arc at
+the mirrored point on the opposite side of the shape. Each hanger is a self-contained
+loop spanning roughly a quarter of the perimeter, leaving the seam and the far side as
+plain wall.
+
+Because the gap and pocket sit close together and hug the same stretch of wall (unlike
+the single hanger's pocket, which sits diametrically opposite and can be bridged by a
+bezier cutting through open interior space), the bridge here is built differently: each
+gap edge grows its own inward-offset copy of the wall — right on the wall at the gap
+edge, easing up to a full line width deep by the pocket edge — like the two tines of a
+tuning fork running alongside the retained wall. The pocket itself is a U-turn between
+those tines, rounded off by a genuine semicircle (bulging further inward, where there's
+open room) rather than a sharp reversal. The one seam that isn't perfectly smooth is
+where the second tine rejoins the wall at its gap edge — it can arrive at a shallow
+angle rather than dead straight, like the corner of a real keyhole notch, but it doesn't
+loop or cross itself there. For a small shape with a comparatively large gap/pocket
+width the two tines (or the two hangers' pockets) **can still overlap** — watch for a
+"the loop crosses itself" warning after generating, and shrink the gap/pocket width (mm)
+or grow the shape/gap % if you see it. The **export profile SVG** button (below) is
+single-hanger only for now.
 
 Other inputs — **bottom normal loops** (plain revolutions below), **transition loops**
 (the hanger shape tweens back into the base curve over this many revolutions), and
