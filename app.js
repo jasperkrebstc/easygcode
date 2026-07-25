@@ -209,6 +209,7 @@
         seed: Math.max(0, Math.round(num('patSeed'))),
         spikeDwell: Math.max(0, num('patSpikeDwell')),
         spikeFeedOut: num('patSpikeFeedOut'),
+        spikeFeedTip: num('patSpikeFeedTip'),
         spikeFeedIn: num('patSpikeFeedIn'),
       },
     };
@@ -389,6 +390,7 @@
         if (!Number.isFinite(cfg.pattern.spikeDwell) || cfg.pattern.spikeDwell < 0)
           return 'Spike tip dwell must be 0 or more.';
         if (!isPos(cfg.pattern.spikeFeedOut)) return 'Enter a valid spike feedrate for the way out.';
+        if (!isPos(cfg.pattern.spikeFeedTip)) return 'Enter a valid spike feedrate for the tip.';
         if (!isPos(cfg.pattern.spikeFeedIn)) return 'Enter a valid spike feedrate for the way in.';
       }
     }
