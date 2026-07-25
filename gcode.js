@@ -621,6 +621,10 @@
     // just a matter of what's typed in, not a fixed asymmetric rule.
     const spikeFeedOut = pat.spikeFeedOut > 0 ? pat.spikeFeedOut : cfg.printFeed;
     const spikeFeedIn = pat.spikeFeedIn > 0 ? pat.spikeFeedIn : cfg.printFeed;
+    // The flat top itself (the pushed-out stretch between the two 90° turns)
+    // gets its own feed too, independent of the out/in moves on either side
+    // of it — defaults to feedOut if left unset.
+    const spikeFeedTip = pat.spikeFeedTip > 0 ? pat.spikeFeedTip : spikeFeedOut;
     // Separate, slower feed for the plain (bumpless) revolutions below where
     // the pattern starts — independent of the main print feed used from the
     // pattern's own bottom layer upward, e.g. for extra first-layers-out
@@ -804,7 +808,8 @@
         type === 'weave'
           ? ' bumps=' + pat.bumps + ' bumpFeed=' + Math.round(bumpFeed)
           : ' count=' + pat.count + ' seed=' + pat.seed +
-            ' feedOut=' + Math.round(spikeFeedOut) + ' feedIn=' + Math.round(spikeFeedIn) +
+            ' feedOut=' + Math.round(spikeFeedOut) + ' feedTip=' + Math.round(spikeFeedTip) +
+            ' feedIn=' + Math.round(spikeFeedIn) +
             (pat.spikeVar > 0 ? ' lengthVar=+/-' + pat.spikeVar + 'mm' : '') +
             (spikeDwellMs > 0 ? ' tipDwell=' + pat.spikeDwell + 's' : '');
       lines.push(ln);
@@ -1377,15 +1382,19 @@
           cur = wallPoint(L, e.u);
         }
         const ramp = L === 0 ? Math.max(0, Math.min(1, (prevU + e.u) / 2)) : 1;
-        // The move OUT (both the initial 90° push and the pushed-out stretch
-        // itself) and the move back IN each have their own dedicated feed —
-        // no hysteresis carrying one into further segments, unlike the
-        // shared emit() helper's symmetric bump zone for weave. Fan stays on
-        // through the whole excursion (out, dwell, AND back in) — it only
-        // turns off once fully back at the wall — so it needs its own,
+        // The initial 90° push OUT, the flat pushed-out stretch itself, and
+        // the move back IN each get their own dedicated feed — no hysteresis
+        // carrying one into further segments, unlike the shared emit()
+        // helper's symmetric bump zone for weave. Which of the three a tip
+        // segment is comes down to whether the PREVIOUS event was also a tip
+        // (arriving at the second tip corner, i.e. the flat stretch) or not
+        // (arriving at the first, i.e. the initial push out). Fan stays on
+        // through the whole excursion (out, along, dwell, AND back in) — it
+        // only turns off once fully back at the wall — so it needs its own,
         // separately-tracked hysteresis.
         syncFan(e.tip || prevTipFan);
-        emitSeg(cur, e.tip ? spikeFeedOut : prevTipFan ? spikeFeedIn : baseFeedAt(L), ramp);
+        const feed = e.tip ? (prevTipFan ? spikeFeedTip : spikeFeedOut) : prevTipFan ? spikeFeedIn : baseFeedAt(L);
+        emitSeg(cur, feed, ramp);
         if (e.dwellAfter && spikeDwellMs > 0) lines.push('G4 P' + spikeDwellMs + ' ; spike tip dwell');
         prevTipFan = !!e.tip;
         prevU = e.u;
@@ -1487,10 +1496,12 @@
         let feed = baseFeedAt(L);
         if (bridgeNow) feed = hBridgeFeed;
         else if (overhangNow) feed = hOverhangFeed;
-        // Spike out/in each get their own dedicated feed — no hysteresis
+        // Spike out/tip/in each get their own dedicated feed — no hysteresis
         // carrying one into further segments, unlike weave's smooth
-        // (both-directions) bump zone below.
-        else if (e.tip) feed = spikeFeedOut;
+        // (both-directions) bump zone below. Which of the three a tip
+        // segment is comes down to whether the previous event was also a tip
+        // (the flat stretch) or not (the initial push out) — see spikesLoop.
+        else if (e.tip) feed = prevTipFan ? spikeFeedTip : spikeFeedOut;
         else if (prevTipFan) feed = spikeFeedIn;
         else if (weaveSpecial || prevWeaveSpecial) feed = bumpFeed;
         // Fan (bumps-only mode) covers every slow/unsupported zone here —

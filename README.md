@@ -279,12 +279,14 @@ present and future) and **type-specific**:
   pinched narrow). An optional **length variation (± mm)** randomizes each one's length within
   `amplitude ± var` (e.g. amplitude 50, variation 10 → lengths 40–60), deterministic per
   seed and drawn from a stream independent of the placement; the base stays one line
-  width, only the length varies. 0 = every one the same length. **Feedrate out** and
-  **feedrate in** are two fully independent inputs — the move out (both the initial 90°
-  push and the pushed-out stretch itself) and the move back in each use their own value,
-  so slow-out/fast-back-in, slow both ways, or anything else is just a matter of what's
-  typed in, not a fixed asymmetric rule. An optional **tip dwell (s)** inserts a `G4`
-  pause right before heading back in — leave it at 0 for a plain back-and-forth with no
+  width, only the length varies. 0 = every one the same length. **Feedrate out**,
+  **feedrate tip**, and **feedrate in** are three fully independent inputs — the initial
+  90° push out, the flat pushed-out stretch itself, and the move back in each use their
+  own value, so slow-out/fast-tip/fast-back-in, slow all three, or anything else is just
+  a matter of what's typed in, not a fixed rule (feedrate tip defaults to feedrate out if
+  left unset, matching the old behavior before it was split out). An optional **tip dwell
+  (s)** inserts a `G4` pause right before heading back in — leave it at 0 for a plain
+  back-and-forth with no
   pause (e.g. slow out, slow back in, no dwell at all).
 
 ### Wall hanger
