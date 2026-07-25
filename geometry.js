@@ -400,57 +400,42 @@
   // points on the beziers/pocket carry isNew=true (the sections that bridge
   // on the first hanger loop).
   function buildHangerLoop(base, gapFrac, pocketFrac, lineWidth) {
-    const s = makeSampler(base);
     const n = base.length;
-    const frac = pocketFrac; // pocket arc length as a fraction
-    const uA = 0.5 - gapFrac / 2; // gap edge reached first (CCW)
-    const uB = 0.5 + gapFrac / 2; // gap edge where the outer wall resumes
-    const uE1 = pocketFrac / 2; // pocket end on the first-traveled side
-    const uE2 = 1 - pocketFrac / 2; // pocket end on the return side
-    const A = s.at(uA);
-    const B = s.at(uB);
-    const E1 = s.at(uE1);
-    const E2 = s.at(uE2);
-    // Inward normal for a CCW curve is (-tan.y, +tan.x).
-    const inw = (q) => ({ x: q.pos.x - lineWidth * q.tan.y, y: q.pos.y + lineWidth * q.tan.x });
-    const E1o = inw(E1);
-    const E2o = inw(E2);
+    const d = buildMiniHangerLoop(base, 0.5, gapFrac / 2, 0, pocketFrac / 2, lineWidth);
+    const s = makeSampler(base);
 
     const pts = [{ x: base[0].x, y: base[0].y, isNew: false }];
 
     // Outer wall: seam -> A.
     for (let i = 1; i < n; i++) {
       const u = s.uOf(i);
-      if (u >= uA) break;
+      if (u >= d.uA) break;
       pts.push({ x: base[i].x, y: base[i].y, isNew: false });
     }
-    pts.push({ x: A.pos.x, y: A.pos.y, isNew: false });
-
-    // Bezier: A -> pocket start (arriving in the pocket's travel direction, -tan).
-    bezierPts(A.pos, A.tan, E1o, { x: -E1.tan.x, y: -E1.tan.y }, 32).forEach((p) =>
-      pts.push({ x: p.x, y: p.y, isNew: true })
-    );
-
-    // Pocket arc traced in reverse (uE1 -> seam -> uE2), offset inward.
-    const steps = Math.max(8, Math.ceil((frac * s.perimeter) / 1.0));
-    for (let i = 1; i < steps; i++) {
-      const q = s.at(uE1 - (i / steps) * frac);
-      const o = inw(q);
-      pts.push({ x: o.x, y: o.y, isNew: true });
-    }
-    pts.push({ x: E2o.x, y: E2o.y, isNew: true });
-
-    // Bezier: pocket end -> B (departing along the pocket's travel direction).
-    const bz2 = bezierPts(E2o, { x: -E2.tan.x, y: -E2.tan.y }, B.pos, B.tan, 32);
-    bz2.forEach((p, i) => pts.push({ x: p.x, y: p.y, isNew: i !== bz2.length - 1 }));
+    pts.push({ x: d.A.pos.x, y: d.A.pos.y, isNew: false });
+    pts.push(...d.pts);
 
     // Outer wall: B -> back to the seam.
     for (let i = 0; i < n; i++) {
       const u = s.uOf(i);
-      if (u > uB) pts.push({ x: base[i].x, y: base[i].y, isNew: false });
+      if (u > d.uB) pts.push({ x: base[i].x, y: base[i].y, isNew: false });
     }
     pts.push({ x: base[0].x, y: base[0].y, isNew: false });
     return pts;
+  }
+
+  // Do chords (a,b) and (x,y) cross when drawn across the circle (perimeter-
+  // fraction space, mod 1)? Rotate so `a` sits at 0 and compare which side
+  // of x each of b/y falls on — interleaved (one inside, one outside) means
+  // the chords cross; nested or flanking means they don't.
+  function chordsCross(a, b, x, y) {
+    const rel = (v) => {
+      let r = v - a;
+      r -= Math.floor(r);
+      return r;
+    };
+    const rb = rel(b), rx = rel(x), ry = rel(y);
+    return (rb < rx) !== (ry < rx);
   }
 
   // Sign of the SHORTEST path direction from u-fraction `from` to `to`
@@ -462,84 +447,64 @@
     return d >= 0 ? 1 : -1;
   }
 
-  // Ease with zero rate of change at both ends (a "smoothstep"). Tapers an
-  // offset in/out with no kink where it meets a constant-offset section.
-  function easeInOut(t) {
-    return t * t * (3 - 2 * t);
-  }
-
-  // One double-hanger mini-keyhole: a gap (centered at gapCenter, half-width
-  // gapHalf) connected to a pocket (centered at pocketCenter, half-width
-  // pocketHalf) that sits well to ONE side of it — unlike the single
-  // hanger's pocket, which sits diametrically opposite the gap and can be
-  // bridged with two tangent-matched beziers cutting through open interior
-  // space. Here gap and pocket are close together and hug the same stretch
-  // of wall, so a bezier spanning that whole distance has too little room to
-  // turn between two independently-chosen tangents without looping back on
-  // itself (tried; the loop crosses the retained wall).
+  // One keyhole "funnel" detour: a gap (removed material, centered at
+  // gapCenter, half-width gapHalf) bridged through the interior — via two
+  // tangent-matched beziers and an inward-offset (by lineWidth) pocket arc —
+  // to a pocket (centered at pocketCenter, half-width pocketHalf) somewhere
+  // else on the curve. The single hanger puts that pocket diametrically
+  // opposite the gap; the double hanger's two mini-hangers put it off to one
+  // side instead. Which pocket edge pairs with which gap edge, and which way
+  // the short pocket arc sweeps, is chosen so the two bridging beziers are
+  // NESTED rather than interleaved (interleaved chords cross when drawn;
+  // nested ones don't) — for the single hanger's opposite-pocket case this
+  // reduces to exactly the original, fixed choice.
   //
-  // Instead, each gap edge grows its own EASED, inward-offset copy of the
-  // wall running alongside the retained outline to its nearby pocket edge —
-  // offset 0 (right on the wall) at the gap edge, easing up to lineWidth at
-  // the pocket edge, zero rate of change at both ends — like the two tines
-  // of a tuning fork. The pocket itself is a U-turn between those tines,
-  // rounded off by a genuine semicircle (E1o-E2o as its diameter, bulging
-  // further inward where there's open room) rather than a bare reversal.
-  // The one seam that ISN'T perfectly smooth is where the second tine meets
-  // gEnd: it arrives however the turn left it, not necessarily the wall's
-  // own forward tangent, so there can be one small, contained corner right
-  // at the gap edge — like the corner of a real keyhole notch — rather than
-  // the loop a full bezier makes trying to iron it out.
-  function buildDoubleKeyholeDetour(s, gapCenter, gapHalf, pocketCenter, pocketHalf) {
-    return function (lineWidth) {
-      const gStart = gapCenter - gapHalf;
-      const gEnd = gapCenter + gapHalf;
-      const inw = (q, off) => ({ x: q.pos.x - off * q.tan.y, y: q.pos.y + off * q.tan.x });
+  // Returns the detour's own points (bezier + pocket + bezier, from A to B —
+  // NOT including A itself, and not any of the plain wall on either side of
+  // it — the caller supplies that by walking the base curve up to uA and
+  // resuming after uB); points carry isNew=true except the final one (B,
+  // back on the true wall).
+  function buildMiniHangerLoop(base, gapCenter, gapHalf, pocketCenter, pocketHalf, lineWidth) {
+    const s = makeSampler(base);
+    const uA = gapCenter - gapHalf; // gap edge reached first (CCW)
+    const uB = gapCenter + gapHalf; // gap edge where the outer wall resumes
+    const P = pocketCenter - pocketHalf;
+    const Q = pocketCenter + pocketHalf;
+    const swap = chordsCross(uA, uB, P, Q);
+    const uE1 = swap ? Q : P; // pocket edge nearest A's bezier
+    const uE2 = swap ? P : Q; // pocket edge nearest B's bezier
+    const sgn = shortDir(uE1, uE2); // sweep direction along the short pocket arc
+    const frac = 2 * pocketHalf; // pocket arc length as a fraction
+    const A = s.at(uA);
+    const B = s.at(uB);
+    const E1 = s.at(uE1);
+    const E2 = s.at(uE2);
+    // Inward normal for a CCW curve is (-tan.y, +tan.x).
+    const inw = (q) => ({ x: q.pos.x - lineWidth * q.tan.y, y: q.pos.y + lineWidth * q.tan.x });
+    const E1o = inw(E1);
+    const E2o = inw(E2);
 
-      function taper(fromU, toU, off0, off1) {
-        const span = toU - fromU;
-        const stepCount = Math.max(4, Math.ceil((Math.abs(span) * s.perimeter) / 1.0));
-        const out = [];
-        for (let i = 1; i <= stepCount; i++) {
-          const t = i / stepCount;
-          const q = s.at(fromU + t * span);
-          const o = inw(q, off0 + easeInOut(t) * (off1 - off0));
-          out.push({ x: o.x, y: o.y });
-        }
-        return out;
-      }
+    const pts = [];
 
-      // Which pocket edge is "nearest" the gap (in the direction from gap to
-      // pocket) pairs with gStart; the far edge pairs with gEnd.
-      const taperDir = shortDir(gapCenter, pocketCenter);
-      const e1 = pocketCenter - taperDir * pocketHalf;
-      const e2 = pocketCenter + taperDir * pocketHalf;
-      const E1 = s.at(e1);
-      const E2 = s.at(e2);
-      const E1o = inw(E1, lineWidth);
-      const E2o = inw(E2, lineWidth);
+    // Bezier: A -> pocket start (arriving in the pocket's travel direction).
+    bezierPts(A.pos, A.tan, E1o, { x: sgn * E1.tan.x, y: sgn * E1.tan.y }, 32).forEach((p) =>
+      pts.push({ x: p.x, y: p.y, isNew: true })
+    );
 
-      const pts = [];
-      taper(gStart, e1, 0, lineWidth).forEach((p) => pts.push({ x: p.x, y: p.y, isNew: true }));
+    // Pocket arc, swept in the sgn direction from E1 to E2, offset inward.
+    const steps = Math.max(8, Math.ceil((frac * s.perimeter) / 1.0));
+    for (let i = 1; i < steps; i++) {
+      const q = s.at(uE1 + sgn * (i / steps) * frac);
+      const o = inw(q);
+      pts.push({ x: o.x, y: o.y, isNew: true });
+    }
+    pts.push({ x: E2o.x, y: E2o.y, isNew: true });
 
-      // Semicircle: E1o-E2o as its diameter, bulging toward the edges' own
-      // average inward normal (away from the wall).
-      const r = Math.hypot(E2o.x - E1o.x, E2o.y - E1o.y) / 2;
-      const center = { x: (E1o.x + E2o.x) / 2, y: (E1o.y + E2o.y) / 2 };
-      const startAngle = Math.atan2(E1o.y - center.y, E1o.x - center.x);
-      const bulge = { x: -(E1.tan.y + E2.tan.y), y: E1.tan.x + E2.tan.x };
-      const perpAtStart = { x: -Math.sin(startAngle), y: Math.cos(startAngle) };
-      const sweep = perpAtStart.x * bulge.x + perpAtStart.y * bulge.y >= 0 ? 1 : -1;
-      const capSteps = Math.max(8, Math.ceil((Math.PI * r) / 1.0));
-      for (let i = 1; i <= capSteps; i++) {
-        const ang = startAngle + sweep * Math.PI * (i / capSteps);
-        pts.push({ x: center.x + r * Math.cos(ang), y: center.y + r * Math.sin(ang), isNew: true });
-      }
+    // Bezier: pocket end -> B (departing along the pocket's travel direction).
+    const bz2 = bezierPts(E2o, { x: sgn * E2.tan.x, y: sgn * E2.tan.y }, B.pos, B.tan, 32);
+    bz2.forEach((p, i) => pts.push({ x: p.x, y: p.y, isNew: i !== bz2.length - 1 }));
 
-      const tail = taper(e2, gEnd, lineWidth, 0);
-      tail.forEach((p, i) => pts.push({ x: p.x, y: p.y, isNew: i !== tail.length - 1 }));
-      return { gStart, gEnd, A: s.at(gStart), pts };
-    };
+    return { uA, uB, A, pts };
   }
 
   // Double-hanger variant: two independent, smaller keyhole funnels instead
@@ -550,23 +515,27 @@
   // either side of the anchor), bridged to a pocket of width pocketWidthMM
   // centered at the mirrored point on the OPPOSITE side (u=0.5, offset by
   // that same gapFrac/2) — gap1 (near u=gapFrac/2) pockets at u=0.5-gapFrac/2,
-  // gap2 (near u=1-gapFrac/2) pockets at u=0.5+gapFrac/2 — each its own
-  // self-contained funnel spanning roughly a quarter of the perimeter.
+  // gap2 (near u=1-gapFrac/2) pockets at u=0.5+gapFrac/2. Each pocket sits on
+  // the SAME side as its own gap (not diametrically opposite it) — if it
+  // were diametrically opposite instead, the two hangers' bridging beziers
+  // would land on interleaved chords, which always cross, for any anchor
+  // spacing — each its own self-contained funnel spanning roughly a quarter
+  // of the perimeter.
   function buildDoubleHangerLoop(base, gapFrac, gapWidthMM, pocketWidthMM, lineWidth) {
     const s = makeSampler(base);
     const n = base.length;
     const half = gapFrac / 2;
     const gHalf = gapWidthMM / 2 / s.perimeter;
     const pHalf = pocketWidthMM / 2 / s.perimeter;
-    const d1 = buildDoubleKeyholeDetour(s, half, gHalf, 0.5 - half, pHalf)(lineWidth);
-    const d2 = buildDoubleKeyholeDetour(s, 1 - half, gHalf, 0.5 + half, pHalf)(lineWidth);
+    const d1 = buildMiniHangerLoop(base, half, gHalf, 0.5 - half, pHalf, lineWidth);
+    const d2 = buildMiniHangerLoop(base, 1 - half, gHalf, 0.5 + half, pHalf, lineWidth);
     // Normalize to [0,1) and order by position along the curve so the wall
     // segments between/around them are walked correctly regardless of which
     // one the caller happened to build first.
     const wrap = (u) => ((u % 1) + 1) % 1;
     const dets = [
-      { gStart: wrap(d1.gStart), gEnd: wrap(d1.gEnd), A: d1.A, pts: d1.pts },
-      { gStart: wrap(d2.gStart), gEnd: wrap(d2.gEnd), A: d2.A, pts: d2.pts },
+      { gStart: wrap(d1.uA), gEnd: wrap(d1.uB), A: d1.A, pts: d1.pts },
+      { gStart: wrap(d2.uA), gEnd: wrap(d2.uB), A: d2.A, pts: d2.pts },
     ].sort((a, b) => a.gStart - b.gStart);
 
     const pts = [{ x: base[0].x, y: base[0].y, isNew: false }];
