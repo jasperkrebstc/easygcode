@@ -1181,18 +1181,30 @@
             i += len;
           }
         }
+        // Grouped by mouse ear (not by ring): one corner's whole stack of
+        // rings prints as a single boustrophedon chain — outermost ring
+        // forward, then every following ring in from it printed in the
+        // OPPOSITE direction, so each new ring starts right next to (one
+        // line width from) where the previous one just ended, instead of
+        // retracting and traveling back to a shared start point every time.
+        // Same total path per ring, same far->near order, just chained
+        // corner-by-corner instead of ring-by-ring — far less travel.
         const realRuns = runs.filter((run) => run.len >= 2);
+        const ringLoops = [];
         for (let k = brim.linesOuter; k >= 1; k--) {
           const d = brim.lineWidth / 2 + cfg.lineWidth / 2 + (k - 1) * brim.lineWidth;
-          const loop = Geo.offsetClosed(brimBase, d);
-          realRuns.forEach((run) => {
-            const arcPts = [];
+          ringLoops.push(Geo.offsetClosed(brimBase, d));
+        }
+        realRuns.forEach((run) => {
+          ringLoops.forEach((loop, ri) => {
+            let arcPts = [];
             for (let i = 0; i < run.len; i++) arcPts.push(loop[(run.start + i) % n]);
+            if (ri % 2 === 1) arcPts = arcPts.slice().reverse();
             travelAbs({ x: arcPts[0].x + cx, y: arcPts[0].y + cy, z: brim.layerHeight });
             extrudeOpenPath(arcPts, brim.layerHeight, bArea, brimFeed);
             brimPrinted = true;
           });
-        }
+        });
         if (!realRuns.length) {
           warnings.push('Mouse-ear brim found no fillet arcs (fillet may be 0) — no outer brim printed.');
         }

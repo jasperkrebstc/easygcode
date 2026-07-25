@@ -397,11 +397,21 @@ consecutive points; a run of points sharing one label is one corner's arc. This
 naturally merges a "stadium" shape's two coincident corners (fillet = half the width)
 into one combined half-circle ear per end, since both corners land on the same label.
 Sharp corners (fillet = 0) print nothing, with a warning — there's no arc to keep. No
-clipping, no ring-to-ring chaining, no completed circles: each of the N offset rings is
-handled completely independently, same as a normal brim, just missing its straight
-sections. Selecting mouse-ear anywhere it doesn't apply (bend stool; vessel; any
-non-rounded-rectangle shape) falls back to a normal outer brim with a warning rather
-than failing.
+clipping, no completed circles: each of the N offset rings is still the same arc a normal
+brim would use, just missing its straight sections.
+
+The N rings ARE chained together, though — grouped by mouse ear (corner) rather than by
+ring. For one corner, the outermost ring prints first (far end first, same as every other
+brim), then each ring further in prints in the OPPOSITE direction from the one before it
+— since ring k and ring k+1 are the same arc at adjacent radii, ring k's end point sits
+right next to (one line width from) ring k+1's start point when read backwards, so the
+travel between them is just that one line width instead of a retract-and-dash back to a
+shared start. One corner's whole stack prints as a single boustrophedon (zigzag) chain
+before moving to the next corner, instead of interleaving all 4 corners at every ring —
+cuts total brim travel distance dramatically (about 70% on a typical shape) with the
+exact same printed geometry, just reordered. Selecting mouse-ear anywhere it doesn't
+apply (bend stool; vessel; any non-rounded-rectangle shape) falls back to a normal outer
+brim with a warning rather than failing.
 
 ## Inputs
 
