@@ -182,8 +182,11 @@
       brim: readBrim(''),
       hanger: {
         enabled: $('hangEnabled').checked,
+        mode: $('hangMode').value === 'double' ? 'double' : 'single',
         size: num('hangSize'),
         pocket: num('hangPocket'),
+        gapWidthMM: num('hangGapWidth'),
+        pocketWidthMM: num('hangPocketWidth'),
         bottom: Math.max(1, Math.round(num('hangBottom'))),
         transition: Math.max(1, Math.round(num('hangTransition'))),
         bridgeFeed: num('hangBridgeFeed'),
@@ -354,8 +357,12 @@
     if (cfg.hanger.enabled) {
       if (!isPos(cfg.hanger.size) || cfg.hanger.size > 45)
         return 'Hanger gap must be between 1 and 45% of the outline.';
-      if (!isPos(cfg.hanger.pocket) || cfg.hanger.pocket > 45)
+      if (cfg.hanger.mode === 'double') {
+        if (!isPos(cfg.hanger.gapWidthMM)) return 'Enter a valid hanger gap width (mm).';
+        if (!isPos(cfg.hanger.pocketWidthMM)) return 'Enter a valid hanger pocket width (mm).';
+      } else if (!isPos(cfg.hanger.pocket) || cfg.hanger.pocket > 45) {
         return 'Hanger pocket must be between 1 and 45% of the outline.';
+      }
       if (!(cfg.hanger.bottom >= 1) || !(cfg.hanger.transition >= 1))
         return 'Enter valid hanger bottom/transition loop counts.';
       if (!isPos(cfg.hanger.bridgeFeed)) return 'Enter a valid hanger bridge feedrate.';
@@ -437,6 +444,25 @@
         : 'Weave: even bumps/rev = flutes · odd = woven') +
       ' Bottom feedrate (0 = use the normal print feed) applies only to the patternless bottom ' +
       'revolutions, below where the pattern starts — independent of the main print feed.';
+  }
+
+  function showHangerParams(mode) {
+    document.querySelectorAll('.hang-params').forEach((el) => {
+      el.hidden = el.getAttribute('data-hangmode') !== mode;
+    });
+    $('hangHint').textContent =
+      (mode === 'double'
+        ? 'Double: two smaller hangers instead of one. The gap % input now picks two anchor ' +
+          'points at half that percentage either side of the seam; each gets its own gap of the ' +
+          'given width (mm), bridged to a pocket of the given width (mm) at the mirrored point ' +
+          'on the opposite side.'
+        : 'Single: one keyhole hanger opposite the seam — gap cutout at the back + inward pocket ' +
+          'at the seam, joined by tangent beziers. Keep the pocket % smaller than the gap % so the ' +
+          'beziers have room.') +
+      ' The first hanger loop bridges — its new sections print at the bridge feedrate, then it ' +
+      'tweens back to the normal curve. Any segment in that tween zone that shifts sideways more ' +
+      'than the overhang angle allows (for the current layer height) prints at the overhang ' +
+      'feedrate instead, to fight sagging on steep transitions.';
   }
 
   // Mouse-ear brim: exactly the normal offset brim, minus the straight
@@ -588,13 +614,17 @@
     let hangerLoop = null;
     if (
       cfg.hanger && cfg.hanger.enabled &&
-      isPos(cfg.hanger.size) && cfg.hanger.size <= 45 &&
-      isPos(cfg.hanger.pocket) && cfg.hanger.pocket <= 45 && isPos(cfg.lineWidth)
+      isPos(cfg.hanger.size) && cfg.hanger.size <= 45 && isPos(cfg.lineWidth) &&
+      (cfg.hanger.mode === 'double'
+        ? isPos(cfg.hanger.gapWidthMM) && isPos(cfg.hanger.pocketWidthMM)
+        : isPos(cfg.hanger.pocket) && cfg.hanger.pocket <= 45)
     ) {
       try {
-        hangerLoop = window.Geo.buildHangerLoop(
-          base, cfg.hanger.size / 100, cfg.hanger.pocket / 100, cfg.lineWidth
-        );
+        hangerLoop = cfg.hanger.mode === 'double'
+          ? window.Geo.buildDoubleHangerLoop(
+              base, cfg.hanger.size / 100, cfg.hanger.gapWidthMM, cfg.hanger.pocketWidthMM, cfg.lineWidth
+            )
+          : window.Geo.buildHangerLoop(base, cfg.hanger.size / 100, cfg.hanger.pocket / 100, cfg.lineWidth);
       } catch (e) {
         hangerLoop = null;
       }
@@ -1207,6 +1237,7 @@
     if (cfg.project === 'cordhanger') {
       showShapeParams(cfg.shape);
       showPatternParams(cfg.pattern.type);
+      showHangerParams(cfg.hanger.mode === 'double' ? 'double' : 'single');
     } else if (cfg.project === 'vessel') {
       showShapeParams(cfg.shape, 've-shape-params');
     } else if (cfg.project === 'bendstool') {
@@ -1424,6 +1455,10 @@
       flash(btn, 'Enable the hanger first');
       return;
     }
+    if (cfg.hanger.mode === 'double') {
+      flash(btn, 'SVG export is single-hanger only for now');
+      return;
+    }
     if (
       !isPos(cfg.hanger.size) || cfg.hanger.size > 45 ||
       !isPos(cfg.hanger.pocket) || cfg.hanger.pocket > 45 || !isPos(cfg.lineWidth)
@@ -1554,6 +1589,8 @@
     $('brimFields').hidden = !$('brimEnabled').checked;
     $('patternFields').hidden = !$('patternEnabled').checked;
     $('hangFields').hidden = !$('hangEnabled').checked;
+    $('hangFields2').hidden = !$('hangEnabled').checked;
+    showHangerParams($('hangMode').value === 'double' ? 'double' : 'single');
     $('bs_brimFields').hidden = !$('bs_brimEnabled').checked;
     $('bs_legFields').hidden = !$('bs_legsEnabled').checked;
     $('bs_foamFields').hidden = !$('bs_foamEnabled').checked;
@@ -1728,6 +1765,11 @@
 
   $('hangEnabled').addEventListener('change', () => {
     $('hangFields').hidden = !$('hangEnabled').checked;
+    $('hangFields2').hidden = !$('hangEnabled').checked;
+    updateShapeUI();
+  });
+  $('hangMode').addEventListener('change', () => {
+    showHangerParams($('hangMode').value === 'double' ? 'double' : 'single');
     updateShapeUI();
   });
   $('hangExportSvgBtn').addEventListener('click', exportHangerSvg);

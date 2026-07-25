@@ -667,10 +667,15 @@
 
     // ---- Hanger setup ----
     const hang = cfg.hanger || {};
+    const hangDouble = hang.mode === 'double';
     const hangFrac = Math.max(0, Math.min(45, hang.size || 0)) / 100;
     const pocketFrac =
       Math.max(0, Math.min(45, hang.pocket != null && hang.pocket > 0 ? hang.pocket : hang.size || 0)) / 100;
-    let hangOn = !isBS && !!hang.enabled && hangFrac > 0.005 && pocketFrac > 0.005;
+    let hangOn =
+      !isBS &&
+      !!hang.enabled &&
+      hangFrac > 0.005 &&
+      (hangDouble ? hang.gapWidthMM > 0 && hang.pocketWidthMM > 0 : pocketFrac > 0.005);
     const hStart = Math.max(1, Math.round(hang.bottom || 1));
     const hTween = Math.max(1, Math.round(hang.transition || 1));
     const hBridgeFeed = hang.bridgeFeed > 0 ? hang.bridgeFeed : cfg.printFeed;
@@ -692,7 +697,7 @@
     if (hangOn && hStart + hTween >= Lmax) {
       warnings.push('Hanger transition reaches the top of the print — consider more total height.');
     }
-    if (hangOn && pocketFrac >= hangFrac) {
+    if (hangOn && !hangDouble && pocketFrac >= hangFrac) {
       warnings.push('Insert pocket % is not smaller than the gap % — the beziers get no room. Consider a smaller pocket.');
     }
     const inBand = (L) => hangOn && L >= hStart && L <= hStart + hTween;
@@ -702,7 +707,16 @@
     let hangRes = null;
     const TWEEN_N = 400;
     if (hangOn) {
-      hangerPts = Geo.buildHangerLoop(base, hangFrac, pocketFrac, cfg.lineWidth);
+      hangerPts = hangDouble
+        ? Geo.buildDoubleHangerLoop(base, hangFrac, hang.gapWidthMM, hang.pocketWidthMM, cfg.lineWidth)
+        : Geo.buildHangerLoop(base, hangFrac, pocketFrac, cfg.lineWidth);
+      if (Geo.polylineSelfIntersects(hangerPts)) {
+        warnings.push(
+          (hangDouble ? 'Double' : 'Wall') +
+            ' hanger: the gap/pocket cuts overlap for this shape\'s size — the loop crosses itself. ' +
+            'Try a smaller gap/pocket, or a larger gap %.'
+        );
+      }
       hangRes = Geo.resampleClosed(hangerPts.slice(0, -1), TWEEN_N);
       baseRes = Geo.resampleClosed(base, TWEEN_N);
     }
@@ -797,8 +811,11 @@
     }
     if (hangOn) {
       lines.push(
-        '; hanger: gap=' + hang.size + '% pocket=' + Math.round(pocketFrac * 100) + '% bottomLoops=' +
-          hStart + ' transition=' + hTween + ' bridgeFeed=' + Math.round(hBridgeFeed)
+        (hangDouble
+          ? '; hanger: double, gap%=' + hang.size + ' gapWidth=' + hang.gapWidthMM + 'mm pocketWidth=' +
+            hang.pocketWidthMM + 'mm'
+          : '; hanger: gap=' + hang.size + '% pocket=' + Math.round(pocketFrac * 100) + '%') +
+          ' bottomLoops=' + hStart + ' transition=' + hTween + ' bridgeFeed=' + Math.round(hBridgeFeed)
       );
       if (hOverhangOn) {
         lines.push(

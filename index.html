@@ -193,15 +193,30 @@
           <label class="toggle"><input type="checkbox" id="hangEnabled" /> enable</label>
         </h2>
         <div id="hangFields" class="grid" hidden>
+          <div class="field">
+            <label>Hanger mode</label>
+            <select id="hangMode">
+              <option value="single">Single (one large hanger)</option>
+              <option value="double">Double (two smaller hangers)</option>
+            </select>
+          </div>
           <div class="field"><label>Gap cutout (%)</label><input type="number" id="hangSize" value="15" min="1" max="45" step="1" /></div>
+        </div>
+        <div class="hang-params grid" data-hangmode="single" hidden>
           <div class="field"><label>Insert pocket (%)</label><input type="number" id="hangPocket" value="12" min="1" max="45" step="1" /></div>
+        </div>
+        <div class="hang-params grid" data-hangmode="double" hidden>
+          <div class="field"><label>Gap width (mm)</label><input type="number" id="hangGapWidth" value="60" min="1" step="1" /></div>
+          <div class="field"><label>Pocket width (mm)</label><input type="number" id="hangPocketWidth" value="20" min="1" step="1" /></div>
+        </div>
+        <div id="hangFields2" class="grid" hidden>
           <div class="field"><label>Bottom normal loops</label><input type="number" id="hangBottom" value="5" min="1" step="1" /></div>
           <div class="field"><label>Transition loops</label><input type="number" id="hangTransition" value="10" min="1" step="1" /></div>
           <div class="field"><label>Bridge feedrate (mm/min)</label><input type="number" id="hangBridgeFeed" value="300" min="1" step="10" /></div>
           <div class="field"><label>Overhang angle (deg)</label><input type="number" id="hangOverhangAngle" value="15" min="1" max="89" step="1" /></div>
           <div class="field"><label>Overhang feedrate (mm/min)</label><input type="number" id="hangOverhangFeed" value="300" min="1" step="10" /></div>
         </div>
-        <p class="hint">Keyhole hanger opposite the seam: gap cutout at the back + inward pocket at the seam, joined by tangent beziers. Keep the pocket % smaller than the gap % so the beziers have room. The first hanger loop bridges — its new sections print at the bridge feedrate, then it tweens back to the normal curve. Any segment in that tween zone that shifts sideways more than the overhang angle allows (for the current layer height) prints at the overhang feedrate instead, to fight sagging on steep transitions.</p>
+        <p class="hint" id="hangHint"></p>
         <button type="button" id="hangExportSvgBtn">Export profile SVG</button>
       </section>
 
