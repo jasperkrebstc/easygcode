@@ -285,16 +285,35 @@ present and future) and **type-specific**:
 
 ### Wall hanger
 
-An optional keyhole-style hanger, always placed **opposite the seam**. On the hanger
-loop, a **gap cutout %** is removed from the back of the outline; an **insert pocket %**
-arc centered on the seam is offset inward by one line width; tangent-matched beziers join
-the gap edges to the pocket through the interior, forming a funnel. Keep the pocket %
-smaller than the gap % so the beziers have room. Other inputs: **bottom normal loops**
-(plain revolutions below), **transition loops** (the hanger shape tweens back into the
-base curve over this many revolutions), and **bridge feedrate** — the first hanger loop
-bridges over air, so only its new sections (beziers + pocket) print at this slow feed.
-Patterns (weave/spikes) stay active through the hanger and transition loops. The 2D
-preview shows the hanger loop dashed.
+An optional keyhole-style hanger, with a **hanger mode** dropdown choosing between two
+layouts. Only the inputs relevant to the selected mode are shown.
+
+**Single** (the original layout) places one hanger **opposite the seam**. A **gap cutout
+%** is removed from the back of the outline; an **insert pocket %** arc centered on the
+seam is offset inward by one line width; tangent-matched beziers join the gap edges to
+the pocket through the interior, forming a funnel. Keep the pocket % smaller than the
+gap % so the beziers have room.
+
+**Double** replaces the one large hanger with two smaller, independent ones. The same
+**gap %** input now picks two anchor points at half that percentage either side of the
+seam (e.g. 30% → anchors at ±15%); at each anchor a **gap width (mm)** slice is cut
+(split evenly either side of the anchor) and bridged, through the same funnel
+construction, to a **pocket width (mm)** arc at the mirrored point on the opposite side
+of the shape. Each hanger is a self-contained loop spanning roughly a quarter of the
+perimeter, leaving the seam and the far side as plain wall. Because the gap and pocket
+sit closer together than in single mode, the funnel beziers have less room to work with;
+the generator tries both ways of pairing the gap edges to the pocket edges and keeps
+whichever doesn't cross itself, but for a small shape with a comparatively large gap/pocket
+width **it can still overlap** — watch for a "the loop crosses itself" warning after
+generating, and shrink the gap/pocket width (mm) or grow the shape/gap % if you see it.
+The **export profile SVG** button (below) is single-hanger only for now.
+
+Other inputs — **bottom normal loops** (plain revolutions below), **transition loops**
+(the hanger shape tweens back into the base curve over this many revolutions), and
+**bridge feedrate** (the first hanger loop bridges over air, so only its new sections —
+beziers + pocket — print at this slow feed) — apply to both modes. Patterns (weave/spikes)
+stay active through the hanger and transition loops. The 2D preview shows the hanger
+loop(s) dashed.
 
 The transition loops aren't stacked directly on top of each other — each point slides
 sideways toward the plain profile as the hanger shape washes out — so a steep transition

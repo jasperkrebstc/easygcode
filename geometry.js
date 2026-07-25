@@ -217,6 +217,28 @@
     return inside;
   }
 
+  // Does a closed polyline cross itself anywhere? O(n^2) — fine for a
+  // one-time check on a few hundred points (e.g. validating a hanger loop
+  // right after building it), not for anything per-layer.
+  function polylineSelfIntersects(pts) {
+    const n = pts.length;
+    function segInt(p1, p2, p3, p4) {
+      const d1x = p2.x - p1.x, d1y = p2.y - p1.y, d2x = p4.x - p3.x, d2y = p4.y - p3.y;
+      const denom = d1x * d2y - d1y * d2x;
+      if (Math.abs(denom) < 1e-12) return false;
+      const t = ((p3.x - p1.x) * d2y - (p3.y - p1.y) * d2x) / denom;
+      const u = ((p3.x - p1.x) * d1y - (p3.y - p1.y) * d1x) / denom;
+      return t > 1e-6 && t < 1 - 1e-6 && u > 1e-6 && u < 1 - 1e-6;
+    }
+    for (let i = 0; i < n; i++) {
+      for (let j = i + 1; j < n; j++) {
+        if (Math.abs(i - j) <= 1 || (i === 0 && j === n - 1)) continue;
+        if (segInt(pts[i], pts[(i + 1) % n], pts[j], pts[(j + 1) % n])) return true;
+      }
+    }
+    return false;
+  }
+
   // Distance from point p to the segment a-b.
   function segDist(p, a, b) {
     const dx = b.x - a.x;
@@ -370,6 +392,102 @@
     return out;
   }
 
+  // One keyhole "funnel" detour: a gap (removed material, centered at
+  // gapCenter, half-width gapHalf) bridged through the interior — via two
+  // tangent-matched beziers and an inward-offset (by lineWidth) pocket arc —
+  // to a pocket (centered at pocketCenter, half-width pocketHalf) somewhere
+  // else on the curve. gStart/gEnd are the gap's own two edges (in perimeter-
+  // fraction u, NOT wrapped to [0,1) — the caller wraps as needed); the
+  // returned pts run from gStart's bezier through to gEnd itself (NOT
+  // including gStart — the caller supplies that, already walking the plain
+  // wall up to it), all tagged isNew=true except the final point (gEnd,
+  // back on the true wall). Factored out of the single-hanger construction
+  // so the same funnel shape can be repositioned/resized for the
+  // double-hanger mode.
+  // Sign of the SHORTEST path direction from u-fraction `from` to `to`
+  // (wraparound-aware — going the "other way" around is shorter whenever
+  // the raw difference exceeds half the perimeter).
+  function shortDir(from, to) {
+    let d = to - from;
+    d -= Math.round(d);
+    return d >= 0 ? 1 : -1;
+  }
+
+  // Does an OPEN polyline (no wraparound between last and first point) cross
+  // itself? Same O(n^2) segment test as polylineSelfIntersects, just without
+  // the closing edge — used to compare candidate keyhole detours, which are
+  // open paths (wall -> bezier -> pocket -> bezier -> wall), not closed loops.
+  function openPolylineSelfIntersects(pts) {
+    const n = pts.length;
+    function segInt(p1, p2, p3, p4) {
+      const d1x = p2.x - p1.x, d1y = p2.y - p1.y, d2x = p4.x - p3.x, d2y = p4.y - p3.y;
+      const denom = d1x * d2y - d1y * d2x;
+      if (Math.abs(denom) < 1e-12) return false;
+      const t = ((p3.x - p1.x) * d2y - (p3.y - p1.y) * d2x) / denom;
+      const u = ((p3.x - p1.x) * d1y - (p3.y - p1.y) * d1x) / denom;
+      return t > 1e-6 && t < 1 - 1e-6 && u > 1e-6 && u < 1 - 1e-6;
+    }
+    for (let i = 0; i < n - 1; i++) {
+      for (let j = i + 2; j < n - 1; j++) {
+        if (segInt(pts[i], pts[i + 1], pts[j], pts[j + 1])) return true;
+      }
+    }
+    return false;
+  }
+
+  function buildKeyholeDetour(s, gapCenter, gapHalf, pocketCenter, pocketHalf) {
+    return function (lineWidth) {
+      const gStart = gapCenter - gapHalf;
+      const gEnd = gapCenter + gapHalf;
+      const A = s.at(gStart);
+      const B = s.at(gEnd);
+      // Inward normal for a CCW curve is (-tan.y, +tan.x).
+      const inw = (q) => ({ x: q.pos.x - lineWidth * q.tan.y, y: q.pos.y + lineWidth * q.tan.x });
+      const pocketFrac = 2 * pocketHalf;
+      const steps = Math.max(8, Math.ceil((pocketFrac * s.perimeter) / 1.0));
+
+      // Build the detour for one assignment of the two pocket edges to the
+      // two gap edges (gStart<->e1, gEnd<->e2). Which assignment avoids a
+      // self-crossing depends on how far apart the gap and pocket sit: when
+      // they're roughly opposite (single-hanger mode, pocket straddling the
+      // seam wraparound), the "near edge to near edge" pairing is the smooth
+      // one; when they're close together and to one side (the double-
+      // hanger's compact keyholes), the beziers' own wall-tangents can make
+      // that same pairing bow into each other, and the other assignment is
+      // the smooth one instead. Rather than guess from position alone, build
+      // both and keep whichever doesn't cross itself.
+      function build(e1, e2) {
+        const sgn = shortDir(e1, e2); // sweep direction along the short pocket arc
+        const E1 = s.at(e1);
+        const E2 = s.at(e2);
+        const E1o = inw(E1);
+        const E2o = inw(E2);
+        const dir1 = shortDir(gStart, e1);
+        const dir2 = shortDir(e2, gEnd);
+        const pts = [];
+        bezierPts(A.pos, A.tan, E1o, { x: dir1 * E1.tan.x, y: dir1 * E1.tan.y }, 32).forEach((p) =>
+          pts.push({ x: p.x, y: p.y, isNew: true })
+        );
+        for (let i = 1; i < steps; i++) {
+          const q = s.at(e1 + sgn * (i / steps) * pocketFrac);
+          const o = inw(q);
+          pts.push({ x: o.x, y: o.y, isNew: true });
+        }
+        pts.push({ x: E2o.x, y: E2o.y, isNew: true });
+        const bz2 = bezierPts(E2o, { x: dir2 * E2.tan.x, y: dir2 * E2.tan.y }, B.pos, B.tan, 32);
+        bz2.forEach((p, i) => pts.push({ x: p.x, y: p.y, isNew: i !== bz2.length - 1 }));
+        return pts;
+      }
+
+      const P = pocketCenter - pocketHalf;
+      const Q = pocketCenter + pocketHalf;
+      const candidatePQ = build(P, Q);
+      const openPQ = [A.pos].concat(candidatePQ);
+      const pts = openPolylineSelfIntersects(openPQ) ? build(Q, P) : candidatePQ;
+      return { gStart, gEnd, A, pts };
+    };
+  }
+
   // Build the wall-hanger loop from a seam-rotated CCW base curve.
   // gapFrac = fraction of the perimeter removed at the back (opposite the
   // seam); pocketFrac = fraction of the perimeter grabbed at the seam and
@@ -380,19 +498,9 @@
   function buildHangerLoop(base, gapFrac, pocketFrac, lineWidth) {
     const s = makeSampler(base);
     const n = base.length;
-    const frac = pocketFrac; // pocket arc length as a fraction
-    const uA = 0.5 - gapFrac / 2; // gap edge reached first (CCW)
-    const uB = 0.5 + gapFrac / 2; // gap edge where the outer wall resumes
-    const uE1 = pocketFrac / 2; // pocket end on the first-traveled side
-    const uE2 = 1 - pocketFrac / 2; // pocket end on the return side
-    const A = s.at(uA);
-    const B = s.at(uB);
-    const E1 = s.at(uE1);
-    const E2 = s.at(uE2);
-    // Inward normal for a CCW curve is (-tan.y, +tan.x).
-    const inw = (q) => ({ x: q.pos.x - lineWidth * q.tan.y, y: q.pos.y + lineWidth * q.tan.x });
-    const E1o = inw(E1);
-    const E2o = inw(E2);
+    const detour = buildKeyholeDetour(s, 0.5, gapFrac / 2, 0, pocketFrac / 2)(lineWidth);
+    const uA = detour.gStart;
+    const uB = detour.gEnd;
 
     const pts = [{ x: base[0].x, y: base[0].y, isNew: false }];
 
@@ -402,30 +510,60 @@
       if (u >= uA) break;
       pts.push({ x: base[i].x, y: base[i].y, isNew: false });
     }
-    pts.push({ x: A.pos.x, y: A.pos.y, isNew: false });
-
-    // Bezier: A -> pocket start (arriving in the pocket's travel direction, -tan).
-    bezierPts(A.pos, A.tan, E1o, { x: -E1.tan.x, y: -E1.tan.y }, 32).forEach((p) =>
-      pts.push({ x: p.x, y: p.y, isNew: true })
-    );
-
-    // Pocket arc traced in reverse (uE1 -> seam -> uE2), offset inward.
-    const steps = Math.max(8, Math.ceil((frac * s.perimeter) / 1.0));
-    for (let i = 1; i < steps; i++) {
-      const q = s.at(uE1 - (i / steps) * frac);
-      const o = inw(q);
-      pts.push({ x: o.x, y: o.y, isNew: true });
-    }
-    pts.push({ x: E2o.x, y: E2o.y, isNew: true });
-
-    // Bezier: pocket end -> B (departing along the pocket's travel direction).
-    const bz2 = bezierPts(E2o, { x: -E2.tan.x, y: -E2.tan.y }, B.pos, B.tan, 32);
-    bz2.forEach((p, i) => pts.push({ x: p.x, y: p.y, isNew: i !== bz2.length - 1 }));
+    pts.push({ x: detour.A.pos.x, y: detour.A.pos.y, isNew: false });
+    pts.push(...detour.pts);
 
     // Outer wall: B -> back to the seam.
     for (let i = 0; i < n; i++) {
       const u = s.uOf(i);
       if (u > uB) pts.push({ x: base[i].x, y: base[i].y, isNew: false });
+    }
+    pts.push({ x: base[0].x, y: base[0].y, isNew: false });
+    return pts;
+  }
+
+  // Double-hanger variant: two independent, smaller keyhole funnels instead
+  // of one large one. gapFrac (the same "gap %" input as the single-hanger)
+  // now picks two GAP ANCHOR points at gapFrac/2 either side of the seam
+  // (u=0) — not a single gap of that width centered opposite the seam. Each
+  // anchor gets its own gap of width gapWidthMM (absolute, split evenly
+  // either side of the anchor), bridged to a pocket of width pocketWidthMM
+  // centered at the mirrored point on the OPPOSITE side (u=0.5, offset by
+  // that same gapFrac/2) — gap1 (near u=gapFrac/2) pockets at u=0.5-gapFrac/2,
+  // gap2 (near u=1-gapFrac/2) pockets at u=0.5+gapFrac/2 — each its own
+  // self-contained funnel spanning roughly a quarter of the perimeter.
+  function buildDoubleHangerLoop(base, gapFrac, gapWidthMM, pocketWidthMM, lineWidth) {
+    const s = makeSampler(base);
+    const n = base.length;
+    const half = gapFrac / 2;
+    const gHalf = gapWidthMM / 2 / s.perimeter;
+    const pHalf = pocketWidthMM / 2 / s.perimeter;
+    const d1 = buildKeyholeDetour(s, half, gHalf, 0.5 - half, pHalf)(lineWidth);
+    const d2 = buildKeyholeDetour(s, 1 - half, gHalf, 0.5 + half, pHalf)(lineWidth);
+    // Normalize to [0,1) and order by position along the curve so the wall
+    // segments between/around them are walked correctly regardless of which
+    // one the caller happened to build first.
+    const wrap = (u) => ((u % 1) + 1) % 1;
+    const dets = [
+      { gStart: wrap(d1.gStart), gEnd: wrap(d1.gEnd), A: d1.A, pts: d1.pts },
+      { gStart: wrap(d2.gStart), gEnd: wrap(d2.gEnd), A: d2.A, pts: d2.pts },
+    ].sort((a, b) => a.gStart - b.gStart);
+
+    const pts = [{ x: base[0].x, y: base[0].y, isNew: false }];
+    let uCursor = 0;
+    dets.forEach((det) => {
+      for (let i = 1; i < n; i++) {
+        const u = s.uOf(i);
+        if (u <= uCursor || u >= det.gStart) continue;
+        pts.push({ x: base[i].x, y: base[i].y, isNew: false });
+      }
+      pts.push({ x: det.A.pos.x, y: det.A.pos.y, isNew: false });
+      pts.push(...det.pts);
+      uCursor = det.gEnd;
+    });
+    for (let i = 1; i < n; i++) {
+      const u = s.uOf(i);
+      if (u > uCursor) pts.push({ x: base[i].x, y: base[i].y, isNew: false });
     }
     pts.push({ x: base[0].x, y: base[0].y, isNew: false });
     return pts;
@@ -884,6 +1022,7 @@
   window.Geo = {
     bezierPts,
     buildHangerLoop,
+    buildDoubleHangerLoop,
     stoolLoop,
     ringFill,
     rdpClosed,
@@ -899,5 +1038,6 @@
     dist,
     roundedRectFillets,
     pointInPolygon,
+    polylineSelfIntersects,
   };
 })();
