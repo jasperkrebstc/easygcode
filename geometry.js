@@ -372,6 +372,32 @@
     };
   }
 
+  // Resample a u-tagged, monotonically increasing (0 -> 1) closed point list
+  // at an arbitrary u — for a hanger loop whose points carry a `u` (see
+  // buildHangerLoop/buildDoubleHangerLoop): plain-wall points keep their
+  // real u, detour points get one proportional to their position along the
+  // detour. Lets a hanger loop and the plain base curve be resampled at the
+  // SAME u values so a transition tween can blend them point-for-point
+  // without the mismatch a generic arc-length resample introduces — away
+  // from any detour the two share the same u and are identical points, so
+  // the tween leaves that stretch of wall untouched at every layer.
+  // Queries are assumed non-decreasing (the tween walks u forward).
+  function makeUSampler(taggedPts) {
+    const n = taggedPts.length;
+    let seg = 0;
+    return {
+      at: (u) => {
+        const uu = u - Math.floor(u);
+        while (seg < n - 2 && taggedPts[seg + 1].u <= uu) seg++;
+        const a = taggedPts[seg];
+        const b = taggedPts[seg + 1];
+        const span = b.u - a.u || 1e-9;
+        const t = Math.max(0, Math.min(1, (uu - a.u) / span));
+        return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
+      },
+    };
+  }
+
   // Tessellate a cubic bezier defined Hermite-style: endpoints + unit tangents.
   // Control length = 1/3 of the endpoint distance. Returns `steps` points
   // excluding p0, including p3.
@@ -404,23 +430,23 @@
     const d = buildMiniHangerLoop(base, 0.5, gapFrac / 2, 0, pocketFrac / 2, lineWidth);
     const s = makeSampler(base);
 
-    const pts = [{ x: base[0].x, y: base[0].y, isNew: false }];
+    const pts = [{ x: base[0].x, y: base[0].y, isNew: false, u: 0 }];
 
     // Outer wall: seam -> A.
     for (let i = 1; i < n; i++) {
       const u = s.uOf(i);
       if (u >= d.uA) break;
-      pts.push({ x: base[i].x, y: base[i].y, isNew: false });
+      pts.push({ x: base[i].x, y: base[i].y, isNew: false, u: u });
     }
-    pts.push({ x: d.A.pos.x, y: d.A.pos.y, isNew: false });
+    pts.push({ x: d.A.pos.x, y: d.A.pos.y, isNew: false, u: d.uA });
     pts.push(...d.pts);
 
     // Outer wall: B -> back to the seam.
     for (let i = 0; i < n; i++) {
       const u = s.uOf(i);
-      if (u > d.uB) pts.push({ x: base[i].x, y: base[i].y, isNew: false });
+      if (u > d.uB) pts.push({ x: base[i].x, y: base[i].y, isNew: false, u: u });
     }
-    pts.push({ x: base[0].x, y: base[0].y, isNew: false });
+    pts.push({ x: base[0].x, y: base[0].y, isNew: false, u: 1 });
     return pts;
   }
 
@@ -484,11 +510,11 @@
     const E1o = inw(E1);
     const E2o = inw(E2);
 
-    const pts = [];
+    const raw = [{ x: A.pos.x, y: A.pos.y }];
 
     // Bezier: A -> pocket start (arriving in the pocket's travel direction).
     bezierPts(A.pos, A.tan, E1o, { x: sgn * E1.tan.x, y: sgn * E1.tan.y }, 32).forEach((p) =>
-      pts.push({ x: p.x, y: p.y, isNew: true })
+      raw.push({ x: p.x, y: p.y, isNew: true })
     );
 
     // Pocket arc, swept in the sgn direction from E1 to E2, offset inward.
@@ -496,39 +522,62 @@
     for (let i = 1; i < steps; i++) {
       const q = s.at(uE1 + sgn * (i / steps) * frac);
       const o = inw(q);
-      pts.push({ x: o.x, y: o.y, isNew: true });
+      raw.push({ x: o.x, y: o.y, isNew: true });
     }
-    pts.push({ x: E2o.x, y: E2o.y, isNew: true });
+    raw.push({ x: E2o.x, y: E2o.y, isNew: true });
 
     // Bezier: pocket end -> B (departing along the pocket's travel direction).
     const bz2 = bezierPts(E2o, { x: sgn * E2.tan.x, y: sgn * E2.tan.y }, B.pos, B.tan, 32);
-    bz2.forEach((p, i) => pts.push({ x: p.x, y: p.y, isNew: i !== bz2.length - 1 }));
+    bz2.forEach((p, i) => raw.push({ x: p.x, y: p.y, isNew: i !== bz2.length - 1 }));
+
+    // Tag each detour point with a u — NOT its position on the original
+    // curve (it doesn't have one; it's a new point on a bezier through the
+    // interior), but a perimeter-fraction between uA and uB, proportional to
+    // how far along the detour's OWN path (by arc length, A to B) the point
+    // sits. That gives the transition tween (see gcode.js) something
+    // sensible to ease each point toward as the hanger washes back to the
+    // plain wall — "where this point would be on the plain, uncut wall" —
+    // and, critically, lets it look up plain-wall points by their real u
+    // instead of by a generic resampled index, which is what kept the
+    // hanger's tween from also perturbing wall the detour never touched.
+    let cum = 0;
+    const cumArr = [0];
+    for (let i = 1; i < raw.length; i++) {
+      cum += Math.hypot(raw[i].x - raw[i - 1].x, raw[i].y - raw[i - 1].y);
+      cumArr.push(cum);
+    }
+    const total = cum || 1e-9;
+    const pts = [];
+    for (let i = 1; i < raw.length; i++) {
+      pts.push({ x: raw[i].x, y: raw[i].y, isNew: raw[i].isNew, u: uA + (cumArr[i] / total) * (uB - uA) });
+    }
 
     return { uA, uB, A, pts };
   }
 
   // Double-hanger variant: two independent, smaller keyhole funnels instead
   // of one large one. gapFrac (the same "gap %" input as the single-hanger)
-  // now picks two GAP ANCHOR points at gapFrac/2 either side of the seam
-  // (u=0) — not a single gap of that width centered opposite the seam. Each
-  // anchor gets its own gap of width gapWidthMM (absolute, split evenly
-  // either side of the anchor), bridged to a pocket of width pocketWidthMM
-  // centered at the mirrored point on the OPPOSITE side (u=0.5, offset by
-  // that same gapFrac/2) — gap1 (near u=gapFrac/2) pockets at u=0.5-gapFrac/2,
-  // gap2 (near u=1-gapFrac/2) pockets at u=0.5+gapFrac/2. Each pocket sits on
-  // the SAME side as its own gap (not diametrically opposite it) — if it
-  // were diametrically opposite instead, the two hangers' bridging beziers
-  // would land on interleaved chords, which always cross, for any anchor
-  // spacing — each its own self-contained funnel spanning roughly a quarter
-  // of the perimeter.
+  // now picks two GAP ANCHOR points at gapFrac/2 either side of u=0.5 — the
+  // seam's OPPOSITE side, same as the single hanger's own gap, and for the
+  // same reason: the spike/weave pattern is centered ON the seam, so keeping
+  // the gap (the actually-removed material) on the far side is what keeps
+  // the two from colliding. Each anchor gets its own gap of width
+  // gapWidthMM (absolute, split evenly either side of the anchor), bridged
+  // to a pocket of width pocketWidthMM centered at the mirrored point on the
+  // seam side instead (gap1 near u=0.5+gapFrac/2 pockets near u=1-gapFrac/2,
+  // gap2 near u=0.5-gapFrac/2 pockets near u=gapFrac/2) — same side as its
+  // own gap, not diametrically opposite it (that would put the two hangers'
+  // bridging beziers on interleaved chords, which always cross, for any
+  // anchor spacing) — each its own self-contained funnel spanning roughly a
+  // quarter of the perimeter.
   function buildDoubleHangerLoop(base, gapFrac, gapWidthMM, pocketWidthMM, lineWidth) {
     const s = makeSampler(base);
     const n = base.length;
     const half = gapFrac / 2;
     const gHalf = gapWidthMM / 2 / s.perimeter;
     const pHalf = pocketWidthMM / 2 / s.perimeter;
-    const d1 = buildMiniHangerLoop(base, half, gHalf, 0.5 - half, pHalf, lineWidth);
-    const d2 = buildMiniHangerLoop(base, 1 - half, gHalf, 0.5 + half, pHalf, lineWidth);
+    const d1 = buildMiniHangerLoop(base, 0.5 + half, gHalf, 1 - half, pHalf, lineWidth);
+    const d2 = buildMiniHangerLoop(base, 0.5 - half, gHalf, half, pHalf, lineWidth);
     // Normalize to [0,1) and order by position along the curve so the wall
     // segments between/around them are walked correctly regardless of which
     // one the caller happened to build first.
@@ -538,23 +587,23 @@
       { gStart: wrap(d2.uA), gEnd: wrap(d2.uB), A: d2.A, pts: d2.pts },
     ].sort((a, b) => a.gStart - b.gStart);
 
-    const pts = [{ x: base[0].x, y: base[0].y, isNew: false }];
+    const pts = [{ x: base[0].x, y: base[0].y, isNew: false, u: 0 }];
     let uCursor = 0;
     dets.forEach((det) => {
       for (let i = 1; i < n; i++) {
         const u = s.uOf(i);
         if (u <= uCursor || u >= det.gStart) continue;
-        pts.push({ x: base[i].x, y: base[i].y, isNew: false });
+        pts.push({ x: base[i].x, y: base[i].y, isNew: false, u: u });
       }
-      pts.push({ x: det.A.pos.x, y: det.A.pos.y, isNew: false });
+      pts.push({ x: det.A.pos.x, y: det.A.pos.y, isNew: false, u: det.gStart });
       pts.push(...det.pts);
       uCursor = det.gEnd;
     });
     for (let i = 1; i < n; i++) {
       const u = s.uOf(i);
-      if (u > uCursor) pts.push({ x: base[i].x, y: base[i].y, isNew: false });
+      if (u > uCursor) pts.push({ x: base[i].x, y: base[i].y, isNew: false, u: u });
     }
-    pts.push({ x: base[0].x, y: base[0].y, isNew: false });
+    pts.push({ x: base[0].x, y: base[0].y, isNew: false, u: 1 });
     return pts;
   }
 
@@ -1018,6 +1067,7 @@
     adaptiveShape,
     rotateToSeam,
     makeSampler,
+    makeUSampler,
     makeShape,
     ensureCCW,
     signedArea,

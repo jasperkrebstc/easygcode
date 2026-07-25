@@ -300,29 +300,24 @@ seam is offset inward by one line width; tangent-matched beziers join the gap ed
 the pocket through the interior, forming a funnel. Keep the pocket % smaller than the
 gap % so the beziers have room.
 
-**Double** replaces the one large hanger with two smaller, independent ones. The same
-**gap %** input now picks two anchor points at half that percentage either side of the
-seam (e.g. 30% → anchors at ±15%); at each anchor a **gap width (mm)** slice is cut
-(split evenly either side of the anchor) and bridged to a **pocket width (mm)** arc at
-the mirrored point on the opposite side of the shape. Each hanger is a self-contained
-loop spanning roughly a quarter of the perimeter, leaving the seam and the far side as
-plain wall.
-
-Because the gap and pocket sit close together and hug the same stretch of wall (unlike
-the single hanger's pocket, which sits diametrically opposite and can be bridged by a
-bezier cutting through open interior space), the bridge here is built differently: each
-gap edge grows its own inward-offset copy of the wall — right on the wall at the gap
-edge, easing up to a full line width deep by the pocket edge — like the two tines of a
-tuning fork running alongside the retained wall. The pocket itself is a U-turn between
-those tines, rounded off by a genuine semicircle (bulging further inward, where there's
-open room) rather than a sharp reversal. The one seam that isn't perfectly smooth is
-where the second tine rejoins the wall at its gap edge — it can arrive at a shallow
-angle rather than dead straight, like the corner of a real keyhole notch, but it doesn't
-loop or cross itself there. For a small shape with a comparatively large gap/pocket
-width the two tines (or the two hangers' pockets) **can still overlap** — watch for a
-"the loop crosses itself" warning after generating, and shrink the gap/pocket width (mm)
-or grow the shape/gap % if you see it. The **export profile SVG** button (below) is
-single-hanger only for now.
+**Double** replaces the one large hanger with two smaller, independent ones, positioned
+**opposite the seam** the same way the single hanger's own gap is — this matters because
+the spike/weave pattern is centered ON the seam, so keeping the gap (the actually-removed
+material) on the far side is what keeps the hanger and the pattern from colliding, same
+as it always has for single mode. The same **gap %** input now picks two anchor points at
+half that percentage either side of u=0.5 (e.g. 30% → anchors at 50%±15%); at each anchor
+a **gap width (mm)** slice is cut (split evenly either side of the anchor) and bridged,
+via the same tangent-matched-bezier funnel the single hanger uses, to a **pocket width
+(mm)** arc at the mirrored point on the seam side instead (same side as its own gap, not
+diametrically opposite it — diametrically opposite would put the two hangers' bridging
+beziers on interleaved chords, which always cross, for any anchor spacing). Each hanger
+is a self-contained loop spanning roughly a quarter of the perimeter, leaving the seam
+and the antipode as plain wall. Because the gap and pocket sit closer together than in
+single mode, the funnel beziers have less room to work with, and for a small shape with a
+comparatively large gap/pocket width **it can still overlap** — watch for a "the loop
+crosses itself" warning after generating, and shrink the gap/pocket width (mm) or grow
+the shape/gap % if you see it. The **export profile SVG** button (below) is single-hanger
+only for now.
 
 Other inputs — **bottom normal loops** (plain revolutions below), **transition loops**
 (the hanger shape tweens back into the base curve over this many revolutions), and
@@ -338,6 +333,16 @@ top of the single bridging loop above. An **overhang angle** (degrees from verti
 **overhang feedrate** cover this: any transition-loop segment whose sideways shift from
 the loop directly below it exceeds what the angle allows for the current layer height
 prints at the overhang feedrate instead of the normal print feed.
+
+The hanger loop and the plain base curve are resampled at the SAME perimeter-fraction (u)
+values for this tween, not independently by arc length — the hanger loop is longer than
+the wall it replaces (the funnel bezier cuts a longer path than the straight stretch it
+removes), so resampling each one to N points along its own length would land index i on a
+different physical spot on each curve, and blending those two would subtly warp the
+*entire* silhouette (not just the cutout) as it tweens, tightening every loop in the
+transition band. Resampling both at the same u instead means any point away from a
+gap/pocket is the exact same point on both curves, so it's completely unaffected by the
+tween regardless of which layer it's on — only the gap/pocket itself actually changes.
 
 An **export profile SVG** button (next to the hanger inputs) downloads the **gap opening
 itself** — not the wall outline, but the actual hole a bracket needs to hook through. It's

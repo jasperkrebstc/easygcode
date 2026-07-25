@@ -721,8 +721,25 @@
             'Try a smaller gap/pocket, or a larger gap %.'
         );
       }
-      hangRes = Geo.resampleClosed(hangerPts.slice(0, -1), TWEEN_N);
-      baseRes = Geo.resampleClosed(base, TWEEN_N);
+      // Resample both the hanger loop and the plain base curve at the SAME
+      // u values (not independently by arc length — Geo.resampleClosed
+      // would space each one's N points evenly along its OWN total length,
+      // which differ since the detour is a different length than the wall
+      // it replaces, so index i wouldn't land on the same physical spot on
+      // both curves). Away from any detour the hanger loop's points already
+      // carry their real u, so hangRes[i] and baseRes[i] are then the exact
+      // same point — the tween below leaves that stretch of wall completely
+      // untouched at every layer, instead of subtly warping the whole
+      // silhouette to compensate for the detour's own length.
+      const hSampler = Geo.makeUSampler(hangerPts);
+      const bSampler = Geo.makeSampler(base);
+      hangRes = [];
+      baseRes = [];
+      for (let i = 0; i < TWEEN_N; i++) {
+        const u = i / TWEEN_N;
+        hangRes.push(hSampler.at(u));
+        baseRes.push(bSampler.at(u).pos);
+      }
     }
 
     function tweenLoopPts(t) {
