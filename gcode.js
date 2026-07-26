@@ -619,7 +619,7 @@
       !isBS &&
       !!pat.enabled &&
       pat.amplitude !== 0 &&
-      ((type === 'weave' && pat.bumps >= 1) || (type === 'spikes' && pat.count >= 1));
+      ((type === 'weave' && pat.bumps >= 1) || (type === 'spikes' && pat.spikeDensity > 0));
     const cov = patternOn ? Math.max(0, Math.min(100, pat.coverage)) / 100 : 0;
     const zAng = ((pat.zAngle || 0) * Math.PI) / 180;
     const cosA = Math.cos(zAng);
@@ -642,6 +642,22 @@
     const bottomFeed = pat.bottomFeed > 0 ? pat.bottomFeed : cfg.printFeed;
     const plBottom = patternOn ? pat.plBottom : 0;
     const plTop = patternOn ? pat.plTop : 0;
+    // Spikes are placed by density (spikes per cm^2) rather than a fixed
+    // count, so the same setting reads as the same visual density on any
+    // shape/height/coverage combination instead of a fixed count spreading
+    // thinner (or bunching tighter) as the patterned area changes with the
+    // part's size. The placement rectangle is arc-length (perim * coverage)
+    // by patterned height ((T - plBottom - plTop) layers, in mm) — the exact
+    // area spikes get scattered across in the placement step below.
+    let spikeCount = 0;
+    if (type === 'spikes' && patternOn) {
+      const patternedHeightMM = Math.max(0, (T - plBottom - plTop) * lh);
+      const areaCm2 = (cov * perim * patternedHeightMM) / 100;
+      spikeCount = Math.max(0, Math.round((pat.spikeDensity || 0) * areaCm2));
+      if (spikeCount === 0) {
+        warnings.push('Spike density is too low for this shape/coverage/height — 0 spikes would be placed.');
+      }
+    }
     // Spike tip dwell: G4 pauses right at the tip, after the slow move out and
     // before heading back in at normal feed (P is milliseconds — supported by
     // both Marlin and Klipper, unlike Marlin's S-in-seconds extension).
@@ -851,7 +867,7 @@
       ln +=
         type === 'weave'
           ? ' bumps=' + pat.bumps + ' bumpFeed=' + Math.round(bumpFeed)
-          : ' count=' + pat.count + ' seed=' + pat.seed +
+          : ' density=' + pat.spikeDensity + '/cm2 (' + spikeCount + ' spikes) seed=' + pat.seed +
             ' feedOut=' + Math.round(spikeFeedOut) + ' feedTip=' + Math.round(spikeFeedTip) +
             ' feedIn=' + Math.round(spikeFeedIn) +
             (pat.spikeVar > 0 ? ' lengthVar=+/-' + pat.spikeVar + 'mm' : '') +
@@ -1332,7 +1348,7 @@
       const oMax = (cov / 2) * perim;
       let placed = 0;
       if (zMax > zMin && oMax > hwU * perim) {
-        const spikes = bestCandidate(pat.count, -oMax, oMax, zMin, zMax, (pat.seed | 0) || 1);
+        const spikes = bestCandidate(spikeCount, -oMax, oMax, zMin, zMax, (pat.seed | 0) || 1);
         // Per-spike length variation: each tip's amplitude is amplitude +/- var,
         // drawn from a separate seeded stream so it is deterministic per seed and
         // independent of the (also seeded) placement. var=0 -> every spike is the
@@ -1349,8 +1365,8 @@
           placed++;
         });
       }
-      if (placed < pat.count) {
-        warnings.push('Some spikes could not be placed (pattern area too small for the count).');
+      if (placed < spikeCount) {
+        warnings.push('Some spikes could not be placed (pattern area too small for the density).');
       }
       if ((pat.spikeVar || 0) > pat.amplitude) {
         warnings.push('Spike length variation exceeds the amplitude — some spikes will have zero length.');
