@@ -300,7 +300,13 @@ present and future) and **type-specific**:
   left unset, matching the old behavior before it was split out). An optional **tip dwell
   (s)** inserts a `G4` pause right before heading back in — leave it at 0 for a plain
   back-and-forth with no
-  pause (e.g. slow out, slow back in, no dwell at all).
+  pause (e.g. slow out, slow back in, no dwell at all). Optional **spike line width** and
+  **spike layer height** (each 0 = same as the wall) change ONLY the bead cross-section
+  used to compute `E` on the push-out/flat-tip/push-back-in moves — the spikes' actual
+  XYZ path is still built entirely from the wall's own line width/layer height, so this
+  over- or under-extrudes the same physical shape rather than resizing it. Useful for
+  printing the spikes with, say, a taller/thinner or flatter/wider bead than the wall
+  without touching the wall's own line width or layer height.
 
 ### Wall hanger
 
