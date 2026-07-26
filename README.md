@@ -275,9 +275,15 @@ present and future) and **type-specific**:
   Because the phase shifts by `(-1)^bumps` per layer, **even bumps/rev = vertical flutes,
   odd = woven**. The bump feedrate is used on bump moves both ways; plain wall moves
   keep the print feed.
-- **Random spikes (type-specific: number of spikes, seed):** blue-noise (Mitchell
+- **Random spikes (type-specific: spike density, seed):** blue-noise (Mitchell
   best-candidate) outward "staples" distributed evenly-but-random across the confined
-  area — not a taper to a point. The stretch of wall each one replaces is pushed straight
+  area — not a taper to a point. **Spike density (spikes / cm²)** replaces a fixed count:
+  the actual number placed is `density × (arc length of the patterned band × patterned
+  height)`, so the same density setting looks equally sparse or dense whether the shape is
+  small or large, short or tall, or coverage/patternless-layer settings shrink the
+  patterned band — instead of a fixed count spreading thinner (or bunching tighter) as
+  those change. The derived count is rounded to the nearest whole spike and shown in the
+  G-code header comment. The stretch of wall each one replaces is pushed straight
   out (a 90° turn away from the wall), continues at that height for exactly the width it
   cut away (the same stretch of wall, just displaced outward — flat, not tapered, since
   both ends sit at the same amplitude), then turns 90° straight back in to rejoin the
