@@ -646,6 +646,20 @@
     // before heading back in at normal feed (P is milliseconds — supported by
     // both Marlin and Klipper, unlike Marlin's S-in-seconds extension).
     const spikeDwellMs = type === 'spikes' && pat.spikeDwell > 0 ? Math.round(pat.spikeDwell * 1000) : 0;
+    // Spikes can extrude as if printed with a different line width/layer
+    // height than the wall — 0 (either field) means "same as wall", the
+    // ordinary bead area. This ONLY changes the bead cross-section used to
+    // compute E on spike segments (the push-out, flat tip, and push-back-in
+    // moves); the spike's actual XYZ geometry is still governed entirely by
+    // the wall's own lineWidth/layerHeight, same as before this setting
+    // existed — under- or over-extruding the same physical path, not
+    // reshaping it.
+    const spikeLineWidth = pat.spikeLineWidth > 0 ? pat.spikeLineWidth : cfg.lineWidth;
+    const spikeLayerHeightForArea = pat.spikeLayerHeight > 0 ? pat.spikeLayerHeight : lh;
+    const spikeArea =
+      type === 'spikes' && (pat.spikeLineWidth > 0 || pat.spikeLayerHeight > 0)
+        ? beadArea(spikeLineWidth, spikeLayerHeightForArea)
+        : null;
     function baseFeedAt(L) {
       return patternOn && L < plBottom ? bottomFeed : cfg.printFeed;
     }
@@ -841,7 +855,10 @@
             ' feedOut=' + Math.round(spikeFeedOut) + ' feedTip=' + Math.round(spikeFeedTip) +
             ' feedIn=' + Math.round(spikeFeedIn) +
             (pat.spikeVar > 0 ? ' lengthVar=+/-' + pat.spikeVar + 'mm' : '') +
-            (spikeDwellMs > 0 ? ' tipDwell=' + pat.spikeDwell + 's' : '');
+            (spikeDwellMs > 0 ? ' tipDwell=' + pat.spikeDwell + 's' : '') +
+            (spikeArea != null
+              ? ' spikeExtrusion=' + spikeLineWidth + 'x' + spikeLayerHeightForArea + 'mm (geometry unaffected)'
+              : '');
       lines.push(ln);
     }
     if (hangOn) {
@@ -1440,7 +1457,7 @@
         // separately-tracked hysteresis.
         syncFan(e.tip || prevTipFan);
         const feed = e.tip ? (prevTipFan ? spikeFeedTip : spikeFeedOut) : prevTipFan ? spikeFeedIn : baseFeedAt(L);
-        emitSeg(cur, feed, ramp);
+        emitSeg(cur, feed, ramp, e.tip || prevTipFan ? spikeArea : null);
         if (e.dwellAfter && spikeDwellMs > 0) lines.push('G4 P' + spikeDwellMs + ' ; spike tip dwell');
         prevTipFan = !!e.tip;
         prevU = e.u;
@@ -1556,7 +1573,12 @@
         // unlike its feed, which is deliberately asymmetric above.
         syncFan(bridgeNow || overhangNow || weaveSpecial || prevWeaveSpecial || e.tip || prevTipFan);
         const nrm = e.tip ? e.tan : q;
-        emitSeg({ x: q.x + dirSign * nrm.ty * lat + cx, y: q.y - dirSign * nrm.tx * lat + cy, z: z }, feed, 1);
+        emitSeg(
+          { x: q.x + dirSign * nrm.ty * lat + cx, y: q.y - dirSign * nrm.tx * lat + cy, z: z },
+          feed,
+          1,
+          e.tip || prevTipFan ? spikeArea : null
+        );
         if (e.dwellAfter && spikeDwellMs > 0) lines.push('G4 P' + spikeDwellMs + ' ; spike tip dwell');
         prevWeaveSpecial = weaveSpecial;
         prevNew = q.isNew;

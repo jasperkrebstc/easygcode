@@ -212,6 +212,8 @@
         spikeFeedOut: num('patSpikeFeedOut'),
         spikeFeedTip: num('patSpikeFeedTip'),
         spikeFeedIn: num('patSpikeFeedIn'),
+        spikeLineWidth: Math.max(0, num('patSpikeLineWidth')),
+        spikeLayerHeight: Math.max(0, num('patSpikeLayerHeight')),
       },
     };
   }
@@ -393,6 +395,10 @@
         if (!isPos(cfg.pattern.spikeFeedOut)) return 'Enter a valid spike feedrate for the way out.';
         if (!isPos(cfg.pattern.spikeFeedTip)) return 'Enter a valid spike feedrate for the tip.';
         if (!isPos(cfg.pattern.spikeFeedIn)) return 'Enter a valid spike feedrate for the way in.';
+        if (!Number.isFinite(cfg.pattern.spikeLineWidth) || cfg.pattern.spikeLineWidth < 0)
+          return 'Spike line width must be 0 (same as wall) or more.';
+        if (!Number.isFinite(cfg.pattern.spikeLayerHeight) || cfg.pattern.spikeLayerHeight < 0)
+          return 'Spike layer height must be 0 (same as wall) or more.';
       }
     }
     return null;
