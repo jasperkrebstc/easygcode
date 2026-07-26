@@ -176,6 +176,7 @@
       travelFeed: num('travelFeed'),
       tolerance: num('tolerance'),
       seamSide: $('seamSide').value,
+      printDirection: $('printDirection').value === 'cw' ? 'cw' : 'ccw',
       centerX: num('centerX'),
       centerY: num('centerY'),
       fanMode: $('fanMode').value === 'bumps' ? 'bumps' : 'always',
@@ -538,7 +539,8 @@
   // inradius, so a thin shape's rounded ends folding back on themselves
   // locally is still caught), every further line reuses the last safe
   // offset instead of overshooting into the opposite side or vanishing.
-  function innerBrimLoops(cfg, base, count) {
+  function innerBrimLoops(cfg, base, count, dirSign) {
+    const sign = dirSign || 1;
     const lw = cfg.lineWidth;
     const centroid = base.reduce((s, p) => ({ x: s.x + p.x, y: s.y + p.y }), { x: 0, y: 0 });
     centroid.x /= base.length;
@@ -546,8 +548,8 @@
     const inradius = base.reduce((m, p) => Math.min(m, window.Geo.dist(p, centroid)), Infinity);
     function safeLoop(d) {
       if (d >= inradius) return null;
-      const loop = window.Geo.offsetClosed(base, -d);
-      if (window.Geo.signedArea(loop) <= 1e-3) return null;
+      const loop = window.Geo.offsetClosed(base, -d, sign);
+      if (sign * window.Geo.signedArea(loop) <= 1e-3) return null;
       return loop.every((p) => window.Geo.pointInPolygon(p, base)) ? loop : null;
     }
     const ds = [];
@@ -587,12 +589,12 @@
 
     const sf = W / 600; // stroke scale so lines look the same at any backing resolution
 
+    const dirSign = cfg.printDirection === 'cw' ? -1 : 1;
     let base;
     try {
-      base = window.Geo.rotateToSeam(
-        window.Geo.adaptiveShape(cfg.shape, cfg.shapeParams, isPos(cfg.tolerance) ? cfg.tolerance : 0.05),
-        cfg.seamSide
-      );
+      let rawBase = window.Geo.adaptiveShape(cfg.shape, cfg.shapeParams, isPos(cfg.tolerance) ? cfg.tolerance : 0.05);
+      if (dirSign < 0) rawBase = window.Geo.reverseWinding(rawBase);
+      base = window.Geo.rotateToSeam(rawBase, cfg.seamSide);
     } catch (e) {
       return;
     }
@@ -606,10 +608,10 @@
       } else {
         for (let k = 1; k <= cfg.brim.linesOuter; k++) {
           const d = cfg.brim.lineWidth / 2 + cfg.lineWidth / 2 + (k - 1) * cfg.brim.lineWidth;
-          loops.push(window.Geo.offsetClosed(base, d));
+          loops.push(window.Geo.offsetClosed(base, d, dirSign));
         }
       }
-      innerBrimLoops(cfg, base, cfg.brim.linesInner).forEach((l) => loops.push(l));
+      innerBrimLoops(cfg, base, cfg.brim.linesInner, dirSign).forEach((l) => loops.push(l));
     }
 
     // Hanger loop overlay (dashed) — computed here so it's part of the bounds.
@@ -624,9 +626,9 @@
       try {
         hangerLoop = cfg.hanger.mode === 'double'
           ? window.Geo.buildDoubleHangerLoop(
-              base, cfg.hanger.size / 100, cfg.hanger.gapWidthMM, cfg.hanger.pocketWidthMM, cfg.lineWidth
+              base, cfg.hanger.size / 100, cfg.hanger.gapWidthMM, cfg.hanger.pocketWidthMM, cfg.lineWidth, dirSign
             )
-          : window.Geo.buildHangerLoop(base, cfg.hanger.size / 100, cfg.hanger.pocket / 100, cfg.lineWidth);
+          : window.Geo.buildHangerLoop(base, cfg.hanger.size / 100, cfg.hanger.pocket / 100, cfg.lineWidth, dirSign);
       } catch (e) {
         hangerLoop = null;
       }
@@ -1419,12 +1421,12 @@
   // Returned at the raw toolpath centerline, unoffset — offsetting is left to
   // the user's own CAD tool.
   function hangerGapOutline(cfg) {
-    const base = window.Geo.rotateToSeam(
-      window.Geo.adaptiveShape(cfg.shape, cfg.shapeParams, isPos(cfg.tolerance) ? cfg.tolerance : 0.05),
-      cfg.seamSide
-    );
+    const dirSign = cfg.printDirection === 'cw' ? -1 : 1;
+    let rawBase = window.Geo.adaptiveShape(cfg.shape, cfg.shapeParams, isPos(cfg.tolerance) ? cfg.tolerance : 0.05);
+    if (dirSign < 0) rawBase = window.Geo.reverseWinding(rawBase);
+    const base = window.Geo.rotateToSeam(rawBase, cfg.seamSide);
     const gapFrac = cfg.hanger.size / 100;
-    const hangerLoop = window.Geo.buildHangerLoop(base, gapFrac, cfg.hanger.pocket / 100, cfg.lineWidth);
+    const hangerLoop = window.Geo.buildHangerLoop(base, gapFrac, cfg.hanger.pocket / 100, cfg.lineWidth, dirSign);
 
     let firstNew = -1, lastNew = -1;
     for (let i = 0; i < hangerLoop.length; i++) {

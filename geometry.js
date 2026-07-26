@@ -24,6 +24,31 @@
     return signedArea(pts) < 0 ? pts.slice().reverse() : pts;
   }
 
+  // Reverse a closed outline's traversal order — EXACT same points, same
+  // shape, opposite winding (CCW becomes CW). Used for the "print
+  // direction" setting: unlike a mirror reflection (which, for any shape
+  // symmetric about the reflection axis — every shape this app ships except
+  // an odd-sided polygon/star — round-trips back through ensureCCW to the
+  // SAME traversal, doing nothing), this actually reverses which way the
+  // nozzle sweeps around the SAME outline.
+  //
+  // The catch: every offset/pattern computation downstream (brim rings,
+  // hanger pocket, weave lateral, spike push-out) derives "inward"/"outward"
+  // from a fixed 90°-rotate-the-forward-tangent rule that assumes CCW.
+  // Reversing the array flips the tangent makeSampler derives at every
+  // point (it's now the backward direction), so that same rotate-by-90°
+  // rule now yields the OPPOSITE of what it used to at that physical spot —
+  // confirmed by direct test, not just derivation: same point, same
+  // formula, opposite vector. So a plain reversal alone is NOT enough; it
+  // must be paired with negating the offset amount everywhere one of those
+  // rotate-by-90° computations happens (the `dirSign` parameter threaded
+  // through offsetClosed / buildHangerLoop / buildDoubleHangerLoop, and
+  // gcode.js's own weave/spike lateral-offset code) so "inward" and
+  // "outward" still mean the same physical directions they always did.
+  function reverseWinding(pts) {
+    return pts.slice().reverse();
+  }
+
   function circle(r, steps) {
     const pts = [];
     for (let i = 0; i < steps; i++) {
@@ -177,7 +202,14 @@
 
   // Offset a closed CCW polyline by `d` along per-vertex outward normals.
   // Positive d = outward, negative d = inward.
-  function offsetClosed(pts, d) {
+  // dirSign: +1 for a CCW-wound `pts` (the default, and the only case this
+  // ever ran before the "print direction" setting existed), -1 if `pts` has
+  // been through reverseWinding (still the same shape, but the per-vertex
+  // normal below — derived from the LOCAL forward direction of travel,
+  // which is now backward — comes out pointing the opposite way without
+  // this, i.e. offsetting inward when `d` asked for outward or vice versa).
+  function offsetClosed(pts, d, dirSign) {
+    const sign = dirSign || 1;
     const n = pts.length;
     const out = [];
     for (let i = 0; i < n; i++) {
@@ -197,7 +229,7 @@
       const len = Math.hypot(nx, ny) || 1e-9;
       nx /= len;
       ny /= len;
-      out.push({ x: cur.x + d * nx, y: cur.y + d * ny });
+      out.push({ x: cur.x + sign * d * nx, y: cur.y + sign * d * ny });
     }
     return out;
   }
@@ -425,9 +457,9 @@
   // have room). Returns a closed point list starting and ending at the seam;
   // points on the beziers/pocket carry isNew=true (the sections that bridge
   // on the first hanger loop).
-  function buildHangerLoop(base, gapFrac, pocketFrac, lineWidth) {
+  function buildHangerLoop(base, gapFrac, pocketFrac, lineWidth, dirSign) {
     const n = base.length;
-    const d = buildMiniHangerLoop(base, 0.5, gapFrac / 2, 0, pocketFrac / 2, lineWidth);
+    const d = buildMiniHangerLoop(base, 0.5, gapFrac / 2, 0, pocketFrac / 2, lineWidth, dirSign);
     const s = makeSampler(base);
 
     const pts = [{ x: base[0].x, y: base[0].y, isNew: false, u: 0 }];
@@ -490,7 +522,8 @@
   // it — the caller supplies that by walking the base curve up to uA and
   // resuming after uB); points carry isNew=true except the final one (B,
   // back on the true wall).
-  function buildMiniHangerLoop(base, gapCenter, gapHalf, pocketCenter, pocketHalf, lineWidth) {
+  function buildMiniHangerLoop(base, gapCenter, gapHalf, pocketCenter, pocketHalf, lineWidth, dirSign) {
+    const sign = dirSign || 1;
     const s = makeSampler(base);
     const uA = gapCenter - gapHalf; // gap edge reached first (CCW)
     const uB = gapCenter + gapHalf; // gap edge where the outer wall resumes
@@ -505,8 +538,12 @@
     const B = s.at(uB);
     const E1 = s.at(uE1);
     const E2 = s.at(uE2);
-    // Inward normal for a CCW curve is (-tan.y, +tan.x).
-    const inw = (q) => ({ x: q.pos.x - lineWidth * q.tan.y, y: q.pos.y + lineWidth * q.tan.x });
+    // Inward normal for a CCW curve is (-tan.y, +tan.x); `sign` flips this
+    // to (tan.y, -tan.x) when `base` has been through reverseWinding (same
+    // shape, traversed backward — the LOCAL forward tangent this formula
+    // rotates is now the reverse of what it used to be at every point, so
+    // without this the pocket would offset outward instead of inward).
+    const inw = (q) => ({ x: q.pos.x - sign * lineWidth * q.tan.y, y: q.pos.y + sign * lineWidth * q.tan.x });
     const E1o = inw(E1);
     const E2o = inw(E2);
 
@@ -570,14 +607,14 @@
   // bridging beziers on interleaved chords, which always cross, for any
   // anchor spacing) — each its own self-contained funnel spanning roughly a
   // quarter of the perimeter.
-  function buildDoubleHangerLoop(base, gapFrac, gapWidthMM, pocketWidthMM, lineWidth) {
+  function buildDoubleHangerLoop(base, gapFrac, gapWidthMM, pocketWidthMM, lineWidth, dirSign) {
     const s = makeSampler(base);
     const n = base.length;
     const half = gapFrac / 2;
     const gHalf = gapWidthMM / 2 / s.perimeter;
     const pHalf = pocketWidthMM / 2 / s.perimeter;
-    const d1 = buildMiniHangerLoop(base, 0.5 + half, gHalf, 1 - half, pHalf, lineWidth);
-    const d2 = buildMiniHangerLoop(base, 0.5 - half, gHalf, half, pHalf, lineWidth);
+    const d1 = buildMiniHangerLoop(base, 0.5 + half, gHalf, 1 - half, pHalf, lineWidth, dirSign);
+    const d2 = buildMiniHangerLoop(base, 0.5 - half, gHalf, half, pHalf, lineWidth, dirSign);
     // Normalize to [0,1) and order by position along the curve so the wall
     // segments between/around them are walked correctly regardless of which
     // one the caller happened to build first.
@@ -1070,6 +1107,7 @@
     makeUSampler,
     makeShape,
     ensureCCW,
+    reverseWinding,
     signedArea,
     perimeter,
     resampleClosed,

@@ -242,6 +242,19 @@ This is geometry only — it's never emitted directly when a pattern is active.
 The loop is rotated so its start (the seam) sits where the Y-axis crosses the curve —
 **Back (+Y)** by default, or **Front (−Y)**.
 
+### Print direction
+
+Coat hanger only. **Counter-clockwise** (default, matches every print from before this
+setting existed) or **Clockwise** — reverses which way the nozzle sweeps around the same
+outline, seam position and shape otherwise unchanged. Every offset that depends on the
+direction of travel (brim rings, hanger pocket, weave lateral push, spike push-out) is
+compensated so "inward"/"outward" still mean the same physical directions either way.
+Useful for working around an asymmetric part-cooling fan (e.g. one that's off-center or
+underperforming on one side) — reversing direction flips which physical side of the
+nozzle consistently leads/trails, which can rebalance uneven cooling. Not offered on bend
+stool or vessel (their bottom-fill and leg geometry have their own, separate winding
+conventions not yet audited for this).
+
 ### Patterns
 
 Choose a pattern **type**; each displaces the toolpath sideways along the horizontal

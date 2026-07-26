@@ -436,12 +436,22 @@
 
     const isBS = cfg.project === 'bendstool';
     const isVessel = cfg.project === 'vessel';
+    // +1 = counter-clockwise (the only direction that ever existed before
+    // this setting; bend stool doesn't offer the choice, so it's always +1
+    // there). -1 reverses the base outline's traversal order below (same
+    // shape, opposite sweep) — every inward/outward offset derived from the
+    // LOCAL forward direction of travel (brim rings, hanger pocket, weave
+    // lateral, spike push-out) needs this sign to still point the same
+    // physical way it always did, since reversing flips what "forward"
+    // means at every point on the curve.
+    const dirSign = !isBS && cfg.printDirection === 'cw' ? -1 : 1;
 
     let base = null;
     let sampler = null;
     let perim = 0;
     if (!isBS) {
       base = Geo.adaptiveShape(cfg.shape, cfg.shapeParams, cfg.tolerance);
+      if (dirSign < 0) base = Geo.reverseWinding(base);
       base = Geo.rotateToSeam(base, cfg.seamSide || 'back');
       sampler = Geo.makeSampler(base);
       perim = sampler.perimeter;
@@ -712,8 +722,8 @@
     const TWEEN_N = 400;
     if (hangOn) {
       hangerPts = hangDouble
-        ? Geo.buildDoubleHangerLoop(base, hangFrac, hang.gapWidthMM, hang.pocketWidthMM, cfg.lineWidth)
-        : Geo.buildHangerLoop(base, hangFrac, pocketFrac, cfg.lineWidth);
+        ? Geo.buildDoubleHangerLoop(base, hangFrac, hang.gapWidthMM, hang.pocketWidthMM, cfg.lineWidth, dirSign)
+        : Geo.buildHangerLoop(base, hangFrac, pocketFrac, cfg.lineWidth, dirSign);
       if (Geo.polylineSelfIntersects(hangerPts)) {
         warnings.push(
           (hangDouble ? 'Double' : 'Wall') +
@@ -816,7 +826,10 @@
       lines.push('; layerHeight=' + lh + ' lineWidth=' + cfg.lineWidth + ' tolerance=' + cfg.tolerance + 'mm');
     } else {
       lines.push('; shape=' + cfg.shape + ' tolerance=' + cfg.tolerance + 'mm seam=' + (cfg.seamSide || 'back'));
-      lines.push('; layerHeight=' + lh + ' lineWidth=' + cfg.lineWidth + ' totalHeight=' + cfg.totalHeight);
+      lines.push(
+        '; layerHeight=' + lh + ' lineWidth=' + cfg.lineWidth + ' totalHeight=' + cfg.totalHeight +
+          ' direction=' + (cfg.printDirection === 'cw' ? 'CW' : 'CCW')
+      );
     }
     if (patternOn) {
       let ln = '; pattern=' + type + ' amplitude=' + pat.amplitude + ' zAngle=' + (pat.zAngle || 0) +
@@ -1193,7 +1206,7 @@
         const ringLoops = [];
         for (let k = brim.linesOuter; k >= 1; k--) {
           const d = brim.lineWidth / 2 + cfg.lineWidth / 2 + (k - 1) * brim.lineWidth;
-          ringLoops.push(Geo.offsetClosed(brimBase, d));
+          ringLoops.push(Geo.offsetClosed(brimBase, d, dirSign));
         }
         realRuns.forEach((run) => {
           ringLoops.forEach((loop, ri) => {
@@ -1212,7 +1225,7 @@
         lines.push('; --- brim (outer, far->near) ---');
         for (let k = brim.linesOuter; k >= 1; k--) {
           const d = brim.lineWidth / 2 + cfg.lineWidth / 2 + (k - 1) * brim.lineWidth;
-          const loop = Geo.offsetClosed(brimBase, d);
+          const loop = Geo.offsetClosed(brimBase, d, dirSign);
           travelAbs({ x: loop[0].x + cx, y: loop[0].y + cy, z: brim.layerHeight });
           extrudeLoop(loop, brim.layerHeight, bArea, brimFeed);
           brimPrinted = true;
@@ -1241,8 +1254,12 @@
         // opposite side or silently vanishing.
         function isSafeInnerLoop(d) {
           if (d >= inradius) return null;
-          const loop = Geo.offsetClosed(brimBase, -d);
-          if (Geo.signedArea(loop) <= 1e-3) return null;
+          const loop = Geo.offsetClosed(brimBase, -d, dirSign);
+          // dirSign flips the SIGN of a valid (non-degenerate, non-inverted)
+          // loop's area too, since it flips brimBase's own winding sense —
+          // compare in the "same orientation as brimBase" sense rather than
+          // assuming positive/CCW.
+          if (dirSign * Geo.signedArea(loop) <= 1e-3) return null;
           return loop.every((p) => Geo.pointInPolygon(p, brimBase)) ? loop : null;
         }
         const ds = [];
@@ -1331,8 +1348,8 @@
     }
     function wpoint(L, u) {
       const sp = sampler.at(u);
-      const nx = sp.tan.y;
-      const ny = -sp.tan.x;
+      const nx = dirSign * sp.tan.y;
+      const ny = dirSign * -sp.tan.x;
       const m = weaveMag(L, u);
       const lat = m * cosA;
       const baseZ = Math.min(lh * (L + u), cfg.totalHeight);
@@ -1403,8 +1420,8 @@
           const lat = amp * cosA;
           const baseZ = Math.min(lh * (L + e.u), cfg.totalHeight);
           cur = {
-            x: sp.pos.x + e.tan.y * lat + cx,
-            y: sp.pos.y - e.tan.x * lat + cy,
+            x: sp.pos.x + dirSign * e.tan.y * lat + cx,
+            y: sp.pos.y - dirSign * e.tan.x * lat + cy,
             z: baseZ + amp * sinA,
           };
         } else {
@@ -1539,7 +1556,7 @@
         // unlike its feed, which is deliberately asymmetric above.
         syncFan(bridgeNow || overhangNow || weaveSpecial || prevWeaveSpecial || e.tip || prevTipFan);
         const nrm = e.tip ? e.tan : q;
-        emitSeg({ x: q.x + nrm.ty * lat + cx, y: q.y - nrm.tx * lat + cy, z: z }, feed, 1);
+        emitSeg({ x: q.x + dirSign * nrm.ty * lat + cx, y: q.y - dirSign * nrm.tx * lat + cy, z: z }, feed, 1);
         if (e.dwellAfter && spikeDwellMs > 0) lines.push('G4 P' + spikeDwellMs + ' ; spike tip dwell');
         prevWeaveSpecial = weaveSpecial;
         prevNew = q.isNew;
@@ -1563,7 +1580,7 @@
           ') + spiral wall to z=' + wallH.toFixed(2) + ' ---'
       );
 
-      const innerBase = Geo.offsetClosed(vBase, -cfg.lineWidth);
+      const innerBase = Geo.offsetClosed(vBase, -cfg.lineWidth, dirSign);
       const vSpiralB = vBottomStyle === 'spiral';
       const fill = Geo.ringFill(
         innerBase, cfg.lineWidth, tolV, vBottomStyle, cfg.seamSide || 'back', vSpiralB ? vBase : null
