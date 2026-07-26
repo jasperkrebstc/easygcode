@@ -476,7 +476,7 @@
   // same classification applies to every offset ring). Mirrors gcode.js by
   // hand, same as the hanger-loop overlay below already duplicates
   // buildHangerLoop rather than sharing generator internals.
-  function mouseEarChains(cfg, base) {
+  function mouseEarChains(cfg, base, dirSign) {
     if (cfg.shape !== 'roundedRect' || !cfg.brim || !isPos(cfg.brim.lineWidth) || !(cfg.brim.linesOuter > 0)) {
       return [];
     }
@@ -524,7 +524,7 @@
     const chains = [];
     for (let k = cfg.brim.linesOuter; k >= 1; k--) {
       const d = cfg.brim.lineWidth / 2 + cfg.lineWidth / 2 + (k - 1) * cfg.brim.lineWidth;
-      const loop = window.Geo.offsetClosed(base, d);
+      const loop = window.Geo.offsetClosed(base, d, dirSign);
       realRuns.forEach((run) => {
         const arcPts = [];
         for (let i = 0; i < run.len; i++) arcPts.push(loop[(run.start + i) % n]);
@@ -604,7 +604,7 @@
     let openChains = [];
     if (cfg.brim.enabled && isPos(cfg.brim.lineWidth)) {
       if (cfg.brim.outerStyle === 'mouseEar' && cfg.shape === 'roundedRect') {
-        openChains = mouseEarChains(cfg, base);
+        openChains = mouseEarChains(cfg, base, dirSign);
       } else {
         for (let k = 1; k <= cfg.brim.linesOuter; k++) {
           const d = cfg.brim.lineWidth / 2 + cfg.lineWidth / 2 + (k - 1) * cfg.brim.lineWidth;
