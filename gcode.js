@@ -97,6 +97,62 @@
     return pts;
   }
 
+  // Best-candidate is only an approximation of true blue noise — it can
+  // still leave a rare pair closer together than the rest of the field. This
+  // nudges any pair closer than the domain's own expected spacing apart by
+  // half their shortfall, a few rounds, so the handful of outlier-close
+  // pairs spread out while everywhere-else-fine points barely move — no
+  // culling (so the point count, and therefore density, never changes), no
+  // exposed min/max distance (the target is derived from the area and count
+  // themselves, the same way the density setting already is). Not a full
+  // physics simulation: symmetric pairwise correction converges in a handful
+  // of iterations at the point counts spikes run at (tens to a few hundred),
+  // same idea as the "resolve overlaps" step in force-directed layouts.
+  function relaxSpacing(pts, sMin, sMax, zMin, zMax) {
+    const n = pts.length;
+    if (n < 2) return pts;
+    const area = (sMax - sMin) * (zMax - zMin);
+    // Expected nearest-neighbor spacing for n points scattered evenly over
+    // that area; comfortably under 1 so only genuinely-crowded pairs (not
+    // every pair at roughly the "natural" spacing) get pushed.
+    const target = 0.6 * Math.sqrt(area / n);
+    const ITERS = 10;
+    for (let iter = 0; iter < ITERS; iter++) {
+      const dx = new Array(n).fill(0);
+      const dz = new Array(n).fill(0);
+      let anyClose = false;
+      for (let i = 0; i < n; i++) {
+        for (let j = i + 1; j < n; j++) {
+          const ddx = pts[j].s - pts[i].s;
+          const ddz = pts[j].z - pts[i].z;
+          const dist = Math.hypot(ddx, ddz);
+          if (dist < 1e-9) {
+            // Coincident (practically never happens) — nudge apart along an
+            // arbitrary axis so the next iteration has a direction to use.
+            anyClose = true;
+            dx[i] -= target * 0.5;
+            dx[j] += target * 0.5;
+          } else if (dist < target) {
+            anyClose = true;
+            const push = (target - dist) * 0.5;
+            const nx = ddx / dist;
+            const nz = ddz / dist;
+            dx[i] -= nx * push;
+            dz[i] -= nz * push;
+            dx[j] += nx * push;
+            dz[j] += nz * push;
+          }
+        }
+      }
+      if (!anyClose) break;
+      for (let i = 0; i < n; i++) {
+        pts[i].s = Math.min(sMax, Math.max(sMin, pts[i].s + dx[i]));
+        pts[i].z = Math.min(zMax, Math.max(zMin, pts[i].z + dz[i]));
+      }
+    }
+    return pts;
+  }
+
   // ---- Start / end G-code builders ----
   // Values that change per material are injected; everything else is kept
   // fixed from the user's proven start/end files (cleaned up).
@@ -868,6 +924,7 @@
         type === 'weave'
           ? ' bumps=' + pat.bumps + ' bumpFeed=' + Math.round(bumpFeed)
           : ' density=' + pat.spikeDensity + '/cm2 (' + spikeCount + ' spikes) seed=' + pat.seed +
+            (pat.spikeBalance ? ' spacingBalance=on' : '') +
             ' feedOut=' + Math.round(spikeFeedOut) + ' feedTip=' + Math.round(spikeFeedTip) +
             ' feedIn=' + Math.round(spikeFeedIn) +
             (pat.spikeVar > 0 ? ' lengthVar=+/-' + pat.spikeVar + 'mm' : '') +
@@ -1349,6 +1406,7 @@
       let placed = 0;
       if (zMax > zMin && oMax > hwU * perim) {
         const spikes = bestCandidate(spikeCount, -oMax, oMax, zMin, zMax, (pat.seed | 0) || 1);
+        if (pat.spikeBalance) relaxSpacing(spikes, -oMax, oMax, zMin, zMax);
         // Per-spike length variation: each tip's amplitude is amplitude +/- var,
         // drawn from a separate seeded stream so it is deterministic per seed and
         // independent of the (also seeded) placement. var=0 -> every spike is the

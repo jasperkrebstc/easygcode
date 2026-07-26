@@ -208,6 +208,7 @@
         spikeDensity: Math.max(0, num('patSpikeDensity')),
         spikeVar: Math.max(0, num('patSpikeVar')),
         seed: Math.max(0, Math.round(num('patSeed'))),
+        spikeBalance: $('patSpikeBalance').value === 'on',
         spikeDwell: Math.max(0, num('patSpikeDwell')),
         spikeFeedOut: num('patSpikeFeedOut'),
         spikeFeedTip: num('patSpikeFeedTip'),

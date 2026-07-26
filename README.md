@@ -283,7 +283,13 @@ present and future) and **type-specific**:
   small or large, short or tall, or coverage/patternless-layer settings shrink the
   patterned band — instead of a fixed count spreading thinner (or bunching tighter) as
   those change. The derived count is rounded to the nearest whole spike and shown in the
-  G-code header comment. The stretch of wall each one replaces is pushed straight
+  G-code header comment. An optional **spacing balance** toggle (off by default) runs a
+  handful of relaxation passes over the blue-noise placement afterward: any pair of spikes
+  closer together than the layout's own expected spacing (derived from the density and
+  area, not a separate input) gets nudged apart by half the shortfall, a few rounds, so
+  the rare crowded outlier spreads out while everywhere-else-fine spikes barely move — no
+  spike is added or removed, so the density stays exact, and the layout still reads as
+  random rather than gridded. The stretch of wall each one replaces is pushed straight
   out (a 90° turn away from the wall), continues at that height for exactly the width it
   cut away (the same stretch of wall, just displaced outward — flat, not tapered, since
   both ends sit at the same amplitude), then turns 90° straight back in to rejoin the
