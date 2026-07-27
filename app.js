@@ -181,6 +181,10 @@
           startPoint: $('sp_startPoint').value === 'stick' ? 'stick' : 'center',
           stickLineWidth: Math.max(0, num('sp_stickLineWidth')),
           stickLayerHeight: Math.max(0, num('sp_stickLayerHeight')),
+          flowFeed: {
+            enabled: $('sp_flowFeedEnabled').checked,
+            rate: num('sp_flowFeedRate'),
+          },
         },
       };
     }
@@ -381,6 +385,9 @@
         return 'Stick line width must be 0 (same as spiral) or more.';
       if (!Number.isFinite(cfg.spoon.stickLayerHeight) || cfg.spoon.stickLayerHeight < 0)
         return 'Stick layer height must be 0 (same as spiral) or more.';
+      if (cfg.spoon.flowFeed.enabled && !isPos(cfg.spoon.flowFeed.rate)) {
+        return 'Enter a valid target volumetric flow (mm³/s).';
+      }
       return validatePrinter(cfg);
     }
 
@@ -1376,6 +1383,8 @@
     } else if (cfg.project === 'bendstool') {
       syncFoamHint(cfg);
       syncFlowFeedHint(cfg);
+    } else if (cfg.project === 'spoon') {
+      syncSpoonFlowFeedHint(cfg);
     }
     syncPrinterCards();
   }
@@ -1434,6 +1443,46 @@
           ' mm³/s (undomed — bead area is uniform, so flow is too).';
     } else {
       $('bs_flowFeedHint').textContent = '';
+    }
+  }
+
+  // Same idea for the spoon: the spiral and (optionally) stick have their
+  // OWN bead areas (the stick's line width/layer height override, if set),
+  // so a single target flow resolves to two different feeds — shown here,
+  // using the SAME areas generateSpoon derives, so the numbers always match.
+  function syncSpoonFlowFeedHint(cfg) {
+    if (!isPos(cfg.lineWidth) || !isPos(cfg.layerHeight)) {
+      $('sp_flowFeedHint').textContent = '';
+      return;
+    }
+    const sp = cfg.spoon || {};
+    const areaSpiral = window.GcodeGen.beadArea(cfg.lineWidth, cfg.layerHeight);
+    const hasStickOverride = sp.stickLineWidth > 0 || sp.stickLayerHeight > 0;
+    const areaStick = hasStickOverride
+      ? window.GcodeGen.beadArea(
+          sp.stickLineWidth > 0 ? sp.stickLineWidth : cfg.lineWidth,
+          sp.stickLayerHeight > 0 ? sp.stickLayerHeight : cfg.layerHeight
+        )
+      : areaSpiral;
+    const ff = sp.flowFeed || {};
+    if (ff.enabled && isPos(ff.rate)) {
+      const feedSpiral = (ff.rate * 60) / areaSpiral;
+      const feedStick = (ff.rate * 60) / areaStick;
+      $('sp_flowFeedHint').textContent = hasStickOverride
+        ? 'Spiral feed ' + feedSpiral.toFixed(0) + ' mm/min (area ' + areaSpiral.toFixed(2) +
+          ' mm²) · stick feed ' + feedStick.toFixed(0) + ' mm/min (area ' + areaStick.toFixed(2) +
+          ' mm²) — both hold ' + ff.rate + ' mm³/s.'
+        : 'Feed ' + feedSpiral.toFixed(0) + ' mm/min (bead area ' + areaSpiral.toFixed(2) +
+          ' mm²) to hold ' + ff.rate + ' mm³/s.';
+    } else if (isPos(cfg.printFeed)) {
+      const flowSpiral = (cfg.printFeed * areaSpiral) / 60;
+      const flowStick = (cfg.printFeed * areaStick) / 60;
+      $('sp_flowFeedHint').textContent = hasStickOverride
+        ? 'At a constant ' + cfg.printFeed + ' mm/min: spiral flow ' + flowSpiral.toFixed(2) +
+          ' mm³/s, stick flow ' + flowStick.toFixed(2) + ' mm³/s (different bead areas).'
+        : 'At a constant ' + cfg.printFeed + ' mm/min: ' + flowSpiral.toFixed(2) + ' mm³/s.';
+    } else {
+      $('sp_flowFeedHint').textContent = '';
     }
   }
 
@@ -1732,6 +1781,7 @@
     $('bs_foamPrimerFields').hidden = !$('bs_foamEnabled').checked;
     $('bs_flowFeedFields').hidden = !$('bs_flowFeedEnabled').checked;
     $('ve_brimFields').hidden = !$('ve_brimEnabled').checked;
+    $('sp_flowFeedFields').hidden = !$('sp_flowFeedEnabled').checked;
     showProject(activeProject());
   }
 
@@ -1952,6 +2002,11 @@
 
   $('bs_flowFeedEnabled').addEventListener('change', () => {
     $('bs_flowFeedFields').hidden = !$('bs_flowFeedEnabled').checked;
+    updateShapeUI();
+  });
+
+  $('sp_flowFeedEnabled').addEventListener('change', () => {
+    $('sp_flowFeedFields').hidden = !$('sp_flowFeedEnabled').checked;
     updateShapeUI();
   });
 
