@@ -152,6 +152,17 @@ keep **fully independent settings** per project:
   stops, leaving an even full-width bead all the way to the end (with the spiral's
   one-layer helical step at the seam). Separate **brim** settings, like the other
   projects.
+- **Spoon** — a small fun one: a flat lollipop shape, an Archimedean **spiral**
+  (pitch = one line width per turn, so adjacent arms sit edge to edge, filling a solid
+  disc) that ends in a straight **stick** continuing past the last turn in the radial
+  direction — a ~90° turn away from the spiral's own tangential travel there, same as a
+  lollipop's stick sticking straight out from the candy. **Turns**, **start radius**,
+  **stick length**, and a **layers** count (the whole flat path repeated at rising Z, a
+  stack of identical passes rather than a vase-mode helix) are the only shape inputs;
+  everything else is the same print settings / printer modes as the other projects. No
+  brim, hanger, or pattern options — kept intentionally minimal. Its own fully separate
+  generator function (not threaded through the vase-mode one the other three projects
+  share), so it can't affect their output at all.
 
 The coat hanger is a dead-simple, phone-first tool to generate **vase-mode G-code** for
 **Klipper pellet 3D printing** (or the Bambu P1P in filament mode). Pick a cross-section
@@ -463,6 +474,10 @@ brim with a warning rather than failing.
   top/bottom, bottom feedrate.
 - **Brim:** enable, outer style (normal/mouse ear), outer lines, inner lines, brim line
   width, brim layer height, brim feedrate.
+
+The **Spoon** tab has its own, much smaller set: printer & material (identical fields to
+above), turns, start radius, stick length, layers, layer height, line width, print feed,
+travel feed, bed center X/Y — no shape, pattern, brim, or hanger options.
 
 The **3D preview** orbits with a drag (Z-up), pinch/wheel zooms, two fingers pan, and a
 double-tap resets. The toolpath is colored by feedrate — blue = fastest, red = slowest —

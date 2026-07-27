@@ -16,7 +16,7 @@
 
   function activeProject() {
     const v = $('activeProject').value;
-    return v === 'bendstool' || v === 'vessel' ? v : 'cordhanger';
+    return v === 'bendstool' || v === 'vessel' || v === 'spoon' ? v : 'cordhanger';
   }
 
   // Read a shape select + its params for the given input-id prefix ('' for the
@@ -160,6 +160,25 @@
           top: num('ve_profTop'),
         },
         brim: readBrim('ve_'),
+      };
+    }
+
+    if (activeProject() === 'spoon') {
+      return {
+        project: 'spoon',
+        printer: readPrinter('sp_'),
+        layerHeight: num('sp_layerHeight'),
+        lineWidth: num('sp_lineWidth'),
+        printFeed: num('sp_printFeed'),
+        travelFeed: num('sp_travelFeed'),
+        centerX: num('sp_centerX'),
+        centerY: num('sp_centerY'),
+        spoon: {
+          turns: Math.max(0, num('sp_turns')),
+          startRadius: Math.max(0, num('sp_startRadius')),
+          stickLength: Math.max(0, num('sp_stickLength')),
+          layers: Math.max(1, Math.round(num('sp_layers'))),
+        },
       };
     }
 
@@ -337,6 +356,27 @@
       return validatePrinter(cfg) || validateBrim(cfg.brim);
     }
 
+    if (cfg.project === 'spoon') {
+      const schecks = {
+        'layer height': cfg.layerHeight,
+        'line width': cfg.lineWidth,
+        'print feed': cfg.printFeed,
+        'travel feed': cfg.travelFeed,
+      };
+      for (const name in schecks) {
+        if (!isPos(schecks[name])) return 'Enter a valid ' + name + ' (must be greater than 0).';
+      }
+      if (!Number.isFinite(cfg.centerX) || !Number.isFinite(cfg.centerY))
+        return 'Enter valid bed center X/Y.';
+      if (!(cfg.spoon.turns >= 0)) return 'Turns must be 0 or more.';
+      if (!(cfg.spoon.startRadius >= 0)) return 'Start radius must be 0 or more.';
+      if (!(cfg.spoon.stickLength >= 0)) return 'Stick length must be 0 or more.';
+      if (cfg.spoon.turns <= 0 && cfg.spoon.stickLength <= 0)
+        return 'Enter at least some turns or a stick length.';
+      if (!(cfg.spoon.layers >= 1)) return 'Layers must be at least 1.';
+      return validatePrinter(cfg);
+    }
+
     const checks = {
       'layer height': cfg.layerHeight,
       'line width': cfg.lineWidth,
@@ -416,6 +456,7 @@
       ['printerMode', 'printer-params', 'printerHint'],
       ['bs_printerMode', 'printer-params-bs', 'bs_printerHint'],
       ['ve_printerMode', 'printer-params-ve', 've_printerHint'],
+      ['sp_printerMode', 'printer-params-sp', 'sp_printerHint'],
     ].forEach(([selId, cls, hintId]) => {
       const sel = $(selId);
       if (!sel) return;
@@ -437,6 +478,7 @@
     $('tabCordhanger').classList.toggle('active', p === 'cordhanger');
     $('tabBendstool').classList.toggle('active', p === 'bendstool');
     $('tabVessel').classList.toggle('active', p === 'vessel');
+    $('tabSpoon').classList.toggle('active', p === 'spoon');
   }
 
   function showPatternParams(type) {
@@ -578,6 +620,56 @@
     return out;
   }
 
+  // Spoon: single flat spiral + stick path, same Geo.spoonPath the generator
+  // itself uses, so the preview always matches the actual G-code exactly.
+  function drawPreviewSpoon(cfg) {
+    const canvas = $('sp_preview');
+    const ctx = canvas.getContext('2d');
+    const W = canvas.width;
+    const H = canvas.height;
+    ctx.clearRect(0, 0, W, H);
+    const sf = W / 600;
+
+    const sp = cfg.spoon || {};
+    if (!isPos(cfg.lineWidth) || !(sp.turns >= 0) || !(sp.stickLength >= 0)) {
+      $('sp_hint').textContent = 'Enter a valid line width, turns, and stick length.';
+      return;
+    }
+    if (sp.turns <= 0 && sp.stickLength <= 0) {
+      $('sp_hint').textContent = 'Enter at least some turns or a stick length.';
+      return;
+    }
+    const pts = window.Geo.spoonPath(sp.turns, sp.startRadius, cfg.lineWidth, sp.stickLength, 0.05);
+    const endRadius = (sp.startRadius || 0) + sp.turns * cfg.lineWidth;
+    const tipRadius = endRadius + sp.stickLength;
+    $('sp_hint').textContent =
+      'Disc Ø' + (endRadius * 2).toFixed(1) + ' mm · stick tip ' + tipRadius.toFixed(1) +
+      ' mm from center · ' + sp.layers + ' layer' + (sp.layers > 1 ? 's' : '') + ' (' +
+      (sp.layers * cfg.layerHeight).toFixed(2) + ' mm thick)';
+
+    const maxR = Math.max(tipRadius, endRadius, 1);
+    const pad = 20 * sf;
+    const scale = (Math.min(W, H) / 2 - pad) / maxR;
+    const cxp = W / 2;
+    const cyp = H / 2;
+
+    ctx.strokeStyle = '#4f9dff';
+    ctx.lineWidth = 1.8 * sf;
+    ctx.beginPath();
+    pts.forEach((p, i) => {
+      const X = cxp + p.x * scale;
+      const Y = cyp - p.y * scale;
+      if (i === 0) ctx.moveTo(X, Y);
+      else ctx.lineTo(X, Y);
+    });
+    ctx.stroke();
+
+    ctx.fillStyle = '#2bd9a0';
+    ctx.beginPath();
+    ctx.arc(cxp, cyp, 3 * sf, 0, 2 * Math.PI);
+    ctx.fill();
+  }
+
   // --- Live 2D previews ---
   function drawPreview(cfg) {
     if (cfg.project === 'bendstool') {
@@ -586,6 +678,10 @@
     }
     if (cfg.project === 'vessel') {
       drawPreviewVessel(cfg);
+      return;
+    }
+    if (cfg.project === 'spoon') {
+      drawPreviewSpoon(cfg);
       return;
     }
     const canvas = $('preview');
@@ -1392,6 +1488,8 @@
         ? 'stool'
         : p === 'vessel'
         ? 'vessel_' + $('ve_shape').value
+        : p === 'spoon'
+        ? 'spoon'
         : 'vase_' + $('shape').value;
     return stem + '_' + Date.now() + '.gcode';
   }
@@ -1559,7 +1657,7 @@
   // Size canvas backing stores to the displayed size × devicePixelRatio so
   // lines are crisp on retina screens (drawing code scales strokes via W/600).
   function fitCanvases() {
-    ['preview', 'previewBS', 've_preview', 've_profile', 'preview3d'].forEach((id) => {
+    ['preview', 'previewBS', 've_preview', 've_profile', 'sp_preview', 'preview3d'].forEach((id) => {
       const c = $(id);
       const dpr = Math.min(window.devicePixelRatio || 1, 2.5);
       const w = c.clientWidth || 600;
@@ -1672,6 +1770,31 @@
       else b.value = a.value;
     });
     $('ve_brimFields').hidden = !$('ve_brimEnabled').checked;
+  }
+
+  // Same idea for the spoon: seed its generic print/printer settings from the
+  // cord hanger the first time it appears, then it stays independent. No
+  // shape fields to seed — the spiral has its own, unrelated params.
+  const SEED_MAP_SP = {
+    layerHeight: 'sp_layerHeight', lineWidth: 'sp_lineWidth',
+    printFeed: 'sp_printFeed', travelFeed: 'sp_travelFeed',
+    centerX: 'sp_centerX', centerY: 'sp_centerY',
+    printerMode: 'sp_printerMode', extrusionMultiplier: 'sp_extrusionMultiplier',
+    startEndEnabled: 'sp_startEndEnabled',
+    filDiameter: 'sp_filDiameter', filNozzleTemp: 'sp_filNozzleTemp',
+    filBedTemp: 'sp_filBedTemp', filFan: 'sp_filFan',
+    pelUpTemp: 'sp_pelUpTemp', pelMidTemp: 'sp_pelMidTemp', pelDownTemp: 'sp_pelDownTemp',
+    pelBedTemp: 'sp_pelBedTemp', pelPA: 'sp_pelPA', pelPurge: 'sp_pelPurge', pelFan: 'sp_pelFan',
+  };
+
+  function seedSpoon() {
+    Object.keys(SEED_MAP_SP).forEach((src) => {
+      const a = $(src);
+      const b = $(SEED_MAP_SP[src]);
+      if (!a || !b) return;
+      if (a.type === 'checkbox') b.checked = a.checked;
+      else b.value = a.value;
+    });
   }
 
   // Double-buffered save: the previous good state is kept under a backup key,
@@ -1821,6 +1944,7 @@
   $('tabCordhanger').addEventListener('click', () => switchProject('cordhanger'));
   $('tabBendstool').addEventListener('click', () => switchProject('bendstool'));
   $('tabVessel').addEventListener('click', () => switchProject('vessel'));
+  $('tabSpoon').addEventListener('click', () => switchProject('spoon'));
 
   $('regenBtn').addEventListener('click', regenerate);
   $('copyBtn').addEventListener('click', copy);
@@ -1884,6 +2008,7 @@
   const restored = restoreLocal();
   if (restored && !('bs_layerHeight' in restored)) seedBendstool();
   if (restored && !('ve_layerHeight' in restored)) seedVessel();
+  if (restored && !('sp_layerHeight' in restored)) seedSpoon();
   showProject(activeProject());
   fitCanvases();
   updateShapeUI();
