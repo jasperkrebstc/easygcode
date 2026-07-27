@@ -97,26 +97,32 @@
     return pts;
   }
 
-  // Best-candidate is only an approximation of true blue noise — it can
-  // still leave a rare pair closer together than the rest of the field. This
-  // nudges any pair closer than the domain's own expected spacing apart by
-  // half their shortfall, a few rounds, so the handful of outlier-close
-  // pairs spread out while everywhere-else-fine points barely move — no
-  // culling (so the point count, and therefore density, never changes), no
-  // exposed min/max distance (the target is derived from the area and count
-  // themselves, the same way the density setting already is). Not a full
-  // physics simulation: symmetric pairwise correction converges in a handful
-  // of iterations at the point counts spikes run at (tens to a few hundred),
-  // same idea as the "resolve overlaps" step in force-directed layouts.
+  // Best-candidate is only an approximation of true blue noise — nearest-
+  // neighbor spacing across the field still varies more than it would in an
+  // evenly-packed layout. This nudges any pair closer than a target spacing
+  // apart by half their shortfall (damped, so many simultaneous violations
+  // near one point don't overshoot), a few rounds, so distances converge
+  // toward that target instead of spanning a wide range — no culling (so the
+  // point count, and therefore density, never changes), no exposed min/max
+  // distance (the target is derived from the area and count themselves, the
+  // same way the density setting already is). The target is the spacing of
+  // an ideal hexagonal packing of n points over the domain's area (each
+  // point's Voronoi cell a regular hexagon of area/n, side-to-side distance
+  // solved from that) — the most even a fixed number of points can be spread
+  // over a fixed area, so aiming for it (without requiring it exactly, since
+  // clamping to the domain and the placement's own randomness keep the
+  // result short of a perfect grid) tightens the spread of distances as much
+  // as a simple pairwise pass can. Not a full physics simulation: symmetric
+  // pairwise correction converges in a few dozen iterations at the point
+  // counts spikes run at (tens to a few hundred), same idea as the "resolve
+  // overlaps" step in force-directed layouts.
   function relaxSpacing(pts, sMin, sMax, zMin, zMax) {
     const n = pts.length;
     if (n < 2) return pts;
     const area = (sMax - sMin) * (zMax - zMin);
-    // Expected nearest-neighbor spacing for n points scattered evenly over
-    // that area; comfortably under 1 so only genuinely-crowded pairs (not
-    // every pair at roughly the "natural" spacing) get pushed.
-    const target = 0.6 * Math.sqrt(area / n);
-    const ITERS = 10;
+    const target = Math.sqrt((2 / Math.sqrt(3)) * (area / n));
+    const ITERS = 30;
+    const DAMP = 0.5;
     for (let iter = 0; iter < ITERS; iter++) {
       const dx = new Array(n).fill(0);
       const dz = new Array(n).fill(0);
@@ -134,7 +140,7 @@
             dx[j] += target * 0.5;
           } else if (dist < target) {
             anyClose = true;
-            const push = (target - dist) * 0.5;
+            const push = (target - dist) * 0.5 * DAMP;
             const nx = ddx / dist;
             const nz = ddz / dist;
             dx[i] -= nx * push;
@@ -474,7 +480,155 @@
     return { spec: spec, loops: loops, outline: outline, attrOn: attrOn };
   }
 
+  // Spoon: a flat Archimedean spiral + straight stick, stacked as identical
+  // passes at rising Z (not vase-mode — every layer is the same flat path,
+  // just one layerHeight higher, like stacking N solid coasters). Simple
+  // enough, and different enough in shape from the other three projects'
+  // spiral-wall vase mode, that it's kept as its own fully separate
+  // function rather than threaded through generate()'s existing branching —
+  // zero risk of disturbing coat hanger/bend stool/vessel output.
+  function generateSpoon(cfg) {
+    const warnings = [];
+    const lines = [];
+    const path = [];
+    let totalVolume = 0;
+    let pathLength = 0;
+    let moveCount = 0;
+
+    const cx = cfg.centerX;
+    const cy = cfg.centerY;
+    const lh = cfg.layerHeight;
+    const lw = cfg.lineWidth;
+
+    if (!(lw > 0) || !(lh > 0)) {
+      return {
+        gcode: '; ERROR: invalid line width/layer height',
+        warnings: ['Enter a valid line width and layer height.'],
+        stats: { volume: 0, pathLength: 0, moves: 0, loops: 0, timeMin: 0 },
+        path: [],
+      };
+    }
+    if (lw < lh) {
+      warnings.push('Line width is less than layer height — bead width clamped to layer height.');
+    }
+
+    const sp = cfg.spoon || {};
+    const turns = Math.max(0, sp.turns || 0);
+    const startRadius = Math.max(0, sp.startRadius || 0);
+    const stickLength = Math.max(0, sp.stickLength || 0);
+    const layers = Math.max(1, Math.round(sp.layers || 1));
+
+    if (turns <= 0 && stickLength <= 0) {
+      return {
+        gcode: '; ERROR: nothing to print',
+        warnings: ['Enter at least some turns or a stick length.'],
+        stats: { volume: 0, pathLength: 0, moves: 0, loops: 0, timeMin: 0 },
+        path: [],
+      };
+    }
+
+    const tol = 0.05; // fixed — the spiral is a single analytic curve, not worth a UI field
+    const spiralPts = Geo.spoonPath(turns, startRadius, lw, stickLength, tol);
+    const area = beadArea(lw, lh);
+
+    // ---- Printer / extrusion mode (same convention as generate()) ----
+    const printer = cfg.printer || {};
+    const mode = printer.mode === 'filament' ? 'filament' : 'pellet';
+    const mult = printer.multiplier > 0 ? printer.multiplier : 1;
+    const fil = printer.filament || {};
+    const pel = printer.pellet || {};
+    const filDia = fil.diameter > 0 ? fil.diameter : 1.75;
+    const eFactor = mult / (mode === 'filament' ? Math.PI * (filDia / 2) * (filDia / 2) : 1);
+    const includeStartEnd = !!printer.includeStartEnd;
+
+    lines.push('; EasyGCode — spoon (spiral + stick) generator');
+    lines.push('; ' + new Date().toISOString());
+    lines.push(
+      '; turns=' + turns + ' startRadius=' + startRadius + ' stickLength=' + stickLength + ' layers=' + layers
+    );
+    lines.push('; layerHeight=' + lh + ' lineWidth=' + lw);
+    lines.push(
+      '; printer=' + mode + ' multiplier=' + mult +
+        (mode === 'filament' ? ' filamentDiameter=' + filDia + ' (E in mm of filament)' : ' (E in mm^3, volumetric)')
+    );
+    if (includeStartEnd) {
+      (mode === 'filament' ? marlinStart(fil) : klipperStart(pel)).forEach((l) => lines.push(l));
+    }
+    lines.push('G90 ; absolute positioning');
+    lines.push('M83 ; relative extrusion');
+
+    let prev = null;
+    let lastFeed = null;
+    let firstExtrude = true;
+    let maxZEver = 0;
+    function noteZ(z) {
+      if (z > maxZEver) maxZEver = z;
+    }
+    function travelAbs(cur) {
+      lines.push('G0 X' + f3(cur.x) + ' Y' + f3(cur.y) + ' Z' + f3(cur.z) + ' F' + Math.round(cfg.travelFeed));
+      lastFeed = cfg.travelFeed;
+      path.push({ x: cur.x, y: cur.y, z: cur.z, travel: true, feed: cfg.travelFeed });
+      prev = cur;
+      moveCount++;
+    }
+    function hopTravel(dest, clearMargin) {
+      const clearZ = Math.max(prev.z, dest.z, clearMargin);
+      if (clearZ > prev.z + 1e-6) travelAbs({ x: prev.x, y: prev.y, z: clearZ });
+      travelAbs({ x: dest.x, y: dest.y, z: clearZ });
+      if (dest.z < clearZ - 1e-6) travelAbs(dest);
+    }
+    function emitSeg(cur, feed) {
+      const segLen = dist3(prev, cur);
+      if (segLen < 1e-7) {
+        prev = cur;
+        return;
+      }
+      const dVol = area * segLen;
+      totalVolume += dVol;
+      pathLength += segLen;
+      let line = 'G1 X' + f3(cur.x) + ' Y' + f3(cur.y) + ' Z' + f3(cur.z) + ' E' + f5(dVol * eFactor);
+      if (feed !== lastFeed || firstExtrude) {
+        line += ' F' + Math.round(feed);
+        lastFeed = feed;
+      }
+      lines.push(line);
+      path.push({ x: cur.x, y: cur.y, z: cur.z, travel: false, feed: feed });
+      firstExtrude = false;
+      moveCount++;
+      prev = cur;
+      noteZ(cur.z);
+    }
+
+    for (let L = 0; L < layers; L++) {
+      const z = (L + 1) * lh;
+      const start = { x: spiralPts[0].x + cx, y: spiralPts[0].y + cy, z: z };
+      if (prev === null) {
+        travelAbs(start);
+      } else {
+        hopTravel(start, z);
+      }
+      for (let i = 1; i < spiralPts.length; i++) {
+        emitSeg({ x: spiralPts[i].x + cx, y: spiralPts[i].y + cy, z: z }, cfg.printFeed);
+      }
+    }
+
+    if (includeStartEnd) {
+      const endLift = Math.max(5 * maxZEver, mode === 'filament' ? 5 : 10);
+      (mode === 'filament' ? marlinEnd(endLift) : klipperEnd(endLift)).forEach((l) => lines.push(l));
+    }
+
+    let timeMin = 0;
+    for (let i = 1; i < path.length; i++) {
+      const d = dist3(path[i - 1], path[i]);
+      if (path[i].feed > 0) timeMin += d / path[i].feed;
+    }
+    const stats = { volume: totalVolume, pathLength: pathLength, moves: moveCount, loops: layers, timeMin: timeMin };
+    return { gcode: lines.join('\n') + '\n', warnings, stats, path };
+  }
+
   function generate(cfg) {
+    if (cfg.project === 'spoon') return generateSpoon(cfg);
+
     const warnings = [];
     const lines = [];
     const path = [];

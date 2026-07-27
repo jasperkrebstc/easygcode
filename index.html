@@ -25,6 +25,7 @@
       <button type="button" id="tabCordhanger" class="tab active">Coat hanger</button>
       <button type="button" id="tabBendstool" class="tab">Bend stool</button>
       <button type="button" id="tabVessel" class="tab">Vessel</button>
+      <button type="button" id="tabSpoon" class="tab">Spoon</button>
     </nav>
     <input type="hidden" id="activeProject" value="cordhanger" />
 
@@ -554,6 +555,63 @@
           wall, leaving exactly one line width of gap for the wall itself. Mouse ears aren't
           available here (the vessel's wall is rescaled by its own bottom radius profile, coat
           hanger only for now) — normal offset loops are always used regardless of this setting.</p>
+      </section>
+
+      <section class="card" data-project="spoon" hidden>
+        <h2>
+          Printer &amp; material
+          <label class="toggle"><input type="checkbox" id="sp_startEndEnabled" checked /> start/end G-code</label>
+        </h2>
+        <div class="grid">
+          <div class="field">
+            <label>Printer</label>
+            <select id="sp_printerMode">
+              <option value="pellet">Pellet (Klipper)</option>
+              <option value="filament">Filament (Marlin)</option>
+            </select>
+          </div>
+          <div class="field"><label>Extrusion multiplier</label><input type="number" id="sp_extrusionMultiplier" value="1.0" min="0.01" step="0.01" /></div>
+        </div>
+        <div class="printer-params-sp grid" data-mode="pellet">
+          <div class="field"><label>Zone up temp (°C)</label><input type="number" id="sp_pelUpTemp" value="210" min="0" step="5" /></div>
+          <div class="field"><label>Zone mid temp (°C)</label><input type="number" id="sp_pelMidTemp" value="210" min="0" step="5" /></div>
+          <div class="field"><label>Zone down temp (°C)</label><input type="number" id="sp_pelDownTemp" value="210" min="0" step="5" /></div>
+          <div class="field"><label>Bed temp (°C)</label><input type="number" id="sp_pelBedTemp" value="50" min="0" step="5" /></div>
+          <div class="field"><label>Pressure advance</label><input type="number" id="sp_pelPA" value="0.3" min="0" step="0.05" /></div>
+          <div class="field"><label>Purge quantity</label><input type="number" id="sp_pelPurge" value="5000" min="0" step="100" /></div>
+          <div class="field"><label>Fan (%)</label><input type="number" id="sp_pelFan" value="0" min="0" max="100" step="5" /></div>
+        </div>
+        <div class="printer-params-sp grid" data-mode="filament" hidden>
+          <div class="field"><label>Filament diameter (mm)</label><input type="number" id="sp_filDiameter" value="1.75" min="0.1" step="0.05" /></div>
+          <div class="field"><label>Nozzle temp (°C)</label><input type="number" id="sp_filNozzleTemp" value="205" min="0" step="5" /></div>
+          <div class="field"><label>Bed temp (°C)</label><input type="number" id="sp_filBedTemp" value="60" min="0" step="5" /></div>
+          <div class="field"><label>Fan (%)</label><input type="number" id="sp_filFan" value="100" min="0" max="100" step="5" /></div>
+        </div>
+        <p class="hint" id="sp_printerHint"></p>
+      </section>
+
+      <section class="card" data-project="spoon" hidden>
+        <h2>Spiral &amp; stick</h2>
+        <div class="grid">
+          <div class="field"><label>Turns</label><input type="number" id="sp_turns" value="6" min="0" step="0.5" /></div>
+          <div class="field"><label>Start radius (mm)</label><input type="number" id="sp_startRadius" value="0" min="0" step="0.5" /></div>
+          <div class="field"><label>Stick length (mm)</label><input type="number" id="sp_stickLength" value="40" min="0" step="1" /></div>
+          <div class="field"><label>Layers (thickness)</label><input type="number" id="sp_layers" value="3" min="1" step="1" /></div>
+        </div>
+        <p class="hint" id="sp_hint"></p>
+        <canvas id="sp_preview" width="600" height="600"></canvas>
+      </section>
+
+      <section class="card" data-project="spoon" hidden>
+        <h2>Print settings</h2>
+        <div class="grid">
+          <div class="field"><label>Layer height (mm)</label><input type="number" id="sp_layerHeight" value="0.6" min="0.05" step="0.05" /></div>
+          <div class="field"><label>Line width (mm)</label><input type="number" id="sp_lineWidth" value="2.0" min="0.1" step="0.1" /></div>
+          <div class="field"><label>Print feed (mm/min)</label><input type="number" id="sp_printFeed" value="1200" min="1" step="50" /></div>
+          <div class="field"><label>Travel feed (mm/min)</label><input type="number" id="sp_travelFeed" value="6000" min="1" step="100" /></div>
+          <div class="field"><label>Bed center X (mm)</label><input type="number" id="sp_centerX" value="125" step="1" /></div>
+          <div class="field"><label>Bed center Y (mm)</label><input type="number" id="sp_centerY" value="125" step="1" /></div>
+        </div>
       </section>
 
       <section class="card">

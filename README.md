@@ -152,6 +152,17 @@ keep **fully independent settings** per project:
   stops, leaving an even full-width bead all the way to the end (with the spiral's
   one-layer helical step at the seam). Separate **brim** settings, like the other
   projects.
+- **Spoon** — a small fun one: a flat lollipop shape, an Archimedean **spiral**
+  (pitch = one line width per turn, so adjacent arms sit edge to edge, filling a solid
+  disc) that ends in a straight **stick** continuing past the last turn in the radial
+  direction — a ~90° turn away from the spiral's own tangential travel there, same as a
+  lollipop's stick sticking straight out from the candy. **Turns**, **start radius**,
+  **stick length**, and a **layers** count (the whole flat path repeated at rising Z, a
+  stack of identical passes rather than a vase-mode helix) are the only shape inputs;
+  everything else is the same print settings / printer modes as the other projects. No
+  brim, hanger, or pattern options — kept intentionally minimal. Its own fully separate
+  generator function (not threaded through the vase-mode one the other three projects
+  share), so it can't affect their output at all.
 
 The coat hanger is a dead-simple, phone-first tool to generate **vase-mode G-code** for
 **Klipper pellet 3D printing** (or the Bambu P1P in filament mode). Pick a cross-section
@@ -283,13 +294,19 @@ present and future) and **type-specific**:
   small or large, short or tall, or coverage/patternless-layer settings shrink the
   patterned band — instead of a fixed count spreading thinner (or bunching tighter) as
   those change. The derived count is rounded to the nearest whole spike and shown in the
-  G-code header comment. An optional **spacing balance** toggle (off by default) runs a
-  handful of relaxation passes over the blue-noise placement afterward: any pair of spikes
-  closer together than the layout's own expected spacing (derived from the density and
-  area, not a separate input) gets nudged apart by half the shortfall, a few rounds, so
-  the rare crowded outlier spreads out while everywhere-else-fine spikes barely move — no
-  spike is added or removed, so the density stays exact, and the layout still reads as
-  random rather than gridded. The stretch of wall each one replaces is pushed straight
+  G-code header comment. An optional **spacing balance** toggle (off by default) runs up
+  to 30 damped relaxation passes over the blue-noise placement afterward: any pair of
+  spikes closer together than an ideal hexagonal-packing spacing for that count and area
+  (not a separate input — the most even a fixed number of points can be spread over a
+  fixed area) gets nudged apart by half the shortfall, so the distances between neighbors
+  converge toward each other instead of spanning a wide range, without adding or removing
+  a single spike (density stays exact). This measures actual physical closeness (arc-length
+  position and real height, not toolpath order), so two spikes landing at nearly the same
+  position on adjacent layers — stacked right on top of each other — are caught by it same
+  as any other close pair. Aiming for a very even spacing does trade away some of the
+  "randomly scattered" look for consistency — push it hard enough and the layout starts
+  reading as regular rather than random — so treat it as a knob between those two
+  characters, not a pure bug fix. The stretch of wall each one replaces is pushed straight
   out (a 90° turn away from the wall), continues at that height for exactly the width it
   cut away (the same stretch of wall, just displaced outward — flat, not tapered, since
   both ends sit at the same amplitude), then turns 90° straight back in to rejoin the
@@ -457,6 +474,10 @@ brim with a warning rather than failing.
   top/bottom, bottom feedrate.
 - **Brim:** enable, outer style (normal/mouse ear), outer lines, inner lines, brim line
   width, brim layer height, brim feedrate.
+
+The **Spoon** tab has its own, much smaller set: printer & material (identical fields to
+above), turns, start radius, stick length, layers, layer height, line width, print feed,
+travel feed, bed center X/Y — no shape, pattern, brim, or hanger options.
 
 The **3D preview** orbits with a drag (Z-up), pinch/wheel zooms, two fingers pan, and a
 double-tap resets. The toolpath is colored by feedrate — blue = fastest, red = slowest —

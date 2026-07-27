@@ -1094,6 +1094,47 @@
     return { loops: loops, outline: outline };
   }
 
+  // Spoon project: a flat Archimedean spiral (pitch = one line width per
+  // full turn, so adjacent arms sit edge to edge like a solid filled disc)
+  // starting at startRadius (0 = a point at the center), out to
+  // startRadius + turns*lineWidth after `turns` revolutions, then a straight
+  // "stick" continuing stickLength mm past the last spiral point in the
+  // RADIAL direction (straight away from center) — a ~90 deg turn away from
+  // the spiral's own (mostly tangential) direction of travel there, same as
+  // a lollipop's stick sticking straight out from the candy. Angular step is
+  // sized off the OUTER radius (the sagitta/chord-tolerance formula already
+  // used elsewhere for arcs), since that's where a fixed angular step has
+  // the coarsest chord error.
+  function spoonPath(turns, startRadius, lineWidth, stickLength, tolerance) {
+    const pts = [];
+    const t = Math.max(0, turns || 0);
+    const r0 = Math.max(0, startRadius || 0);
+    const lw = lineWidth > 0 ? lineWidth : 1;
+    const totalAngle = t * 2 * Math.PI;
+    const endRadius = r0 + t * lw;
+    if (totalAngle > 1e-9) {
+      const tol = tolerance > 0 ? tolerance : 0.05;
+      const rStep = Math.max(endRadius, lw);
+      const dth = 2 * Math.acos(Math.max(-1, 1 - tol / rStep));
+      const steps = Math.max(8, Math.ceil(totalAngle / (isFinite(dth) && dth > 0 ? dth : 0.2)));
+      for (let i = 0; i <= steps; i++) {
+        const ang = (i / steps) * totalAngle;
+        const r = r0 + (ang / (2 * Math.PI)) * lw;
+        pts.push({ x: r * Math.cos(ang), y: r * Math.sin(ang) });
+      }
+    } else {
+      pts.push({ x: r0, y: 0 });
+    }
+    if (stickLength > 0) {
+      const last = pts[pts.length - 1];
+      const r = Math.hypot(last.x, last.y) || 1e-6;
+      const ux = last.x / r;
+      const uy = last.y / r;
+      pts.push({ x: last.x + ux * stickLength, y: last.y + uy * stickLength });
+    }
+    return pts;
+  }
+
   window.Geo = {
     bezierPts,
     buildHangerLoop,
@@ -1116,5 +1157,6 @@
     roundedRectFillets,
     pointInPolygon,
     polylineSelfIntersects,
+    spoonPath,
   };
 })();
