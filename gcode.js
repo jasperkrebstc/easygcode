@@ -582,11 +582,16 @@
     const flowCfg = sp.flowFeed || {};
     const flowOn = !!flowCfg.enabled && flowCfg.rate > 0;
     const areaStickEff = stickArea != null ? stickArea : area;
-    function feedForArea(a) {
-      return flowOn ? (flowCfg.rate * 60) / Math.max(a, 1e-6) : cfg.printFeed;
+    // A manual stick feed (0 = same as spiral) only applies in constant-feed
+    // mode — flow mode's whole point is deriving feed automatically, so it
+    // takes priority over a manual override when both are set.
+    function feedForArea(a, isStick) {
+      if (flowOn) return (flowCfg.rate * 60) / Math.max(a, 1e-6);
+      if (isStick && sp.stickFeed > 0) return sp.stickFeed;
+      return cfg.printFeed;
     }
-    const spiralFeed = feedForArea(area);
-    const stickFeed = feedForArea(areaStickEff);
+    const spiralFeed = feedForArea(area, false);
+    const stickFeed = feedForArea(areaStickEff, true);
 
     // ---- Printer / extrusion mode (same convention as generate()) ----
     const printer = cfg.printer || {};
@@ -619,9 +624,10 @@
         ? '; volumetric flow mode: target ' + flowCfg.rate + ' mm3/s -> spiralFeed=' +
           spiralFeed.toFixed(0) + ' stickFeed=' + stickFeed.toFixed(0) + ' mm/min (bead area ' +
           area.toFixed(2) + ' / ' + areaStickEff.toFixed(2) + ' mm2)'
-        : '; constant feed ' + cfg.printFeed + ' mm/min -> volumetric flow spiral=' +
-          ((cfg.printFeed * area) / 60).toFixed(2) + ' stick=' + ((cfg.printFeed * areaStickEff) / 60).toFixed(2) +
-          ' mm3/s (bead area ' + area.toFixed(2) + ' / ' + areaStickEff.toFixed(2) + ' mm2)'
+        : '; constant feed: spiralFeed=' + spiralFeed.toFixed(0) + ' stickFeed=' + stickFeed.toFixed(0) +
+          ' mm/min -> volumetric flow spiral=' + ((spiralFeed * area) / 60).toFixed(2) + ' stick=' +
+          ((stickFeed * areaStickEff) / 60).toFixed(2) + ' mm3/s (bead area ' + area.toFixed(2) + ' / ' +
+          areaStickEff.toFixed(2) + ' mm2)'
     );
     lines.push(
       '; printer=' + mode + ' multiplier=' + mult +

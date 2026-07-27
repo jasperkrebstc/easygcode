@@ -181,6 +181,7 @@
           startPoint: $('sp_startPoint').value === 'stick' ? 'stick' : 'center',
           stickLineWidth: Math.max(0, num('sp_stickLineWidth')),
           stickLayerHeight: Math.max(0, num('sp_stickLayerHeight')),
+          stickFeed: Math.max(0, num('sp_stickFeed')),
           flowFeed: {
             enabled: $('sp_flowFeedEnabled').checked,
             rate: num('sp_flowFeedRate'),
@@ -385,6 +386,8 @@
         return 'Stick line width must be 0 (same as spiral) or more.';
       if (!Number.isFinite(cfg.spoon.stickLayerHeight) || cfg.spoon.stickLayerHeight < 0)
         return 'Stick layer height must be 0 (same as spiral) or more.';
+      if (!Number.isFinite(cfg.spoon.stickFeed) || cfg.spoon.stickFeed < 0)
+        return 'Stick feed must be 0 (same as spiral) or more.';
       if (cfg.spoon.flowFeed.enabled && !isPos(cfg.spoon.flowFeed.rate)) {
         return 'Enter a valid target volumetric flow (mm³/s).';
       }
@@ -1475,12 +1478,15 @@
         : 'Feed ' + feedSpiral.toFixed(0) + ' mm/min (bead area ' + areaSpiral.toFixed(2) +
           ' mm²) to hold ' + ff.rate + ' mm³/s.';
     } else if (isPos(cfg.printFeed)) {
-      const flowSpiral = (cfg.printFeed * areaSpiral) / 60;
-      const flowStick = (cfg.printFeed * areaStick) / 60;
-      $('sp_flowFeedHint').textContent = hasStickOverride
-        ? 'At a constant ' + cfg.printFeed + ' mm/min: spiral flow ' + flowSpiral.toFixed(2) +
-          ' mm³/s, stick flow ' + flowStick.toFixed(2) + ' mm³/s (different bead areas).'
-        : 'At a constant ' + cfg.printFeed + ' mm/min: ' + flowSpiral.toFixed(2) + ' mm³/s.';
+      const spiralFeed = cfg.printFeed;
+      const stickFeed = sp.stickFeed > 0 ? sp.stickFeed : cfg.printFeed;
+      const flowSpiral = (spiralFeed * areaSpiral) / 60;
+      const flowStick = (stickFeed * areaStick) / 60;
+      $('sp_flowFeedHint').textContent =
+        hasStickOverride || sp.stickFeed > 0
+          ? 'Spiral: ' + spiralFeed + ' mm/min → ' + flowSpiral.toFixed(2) + ' mm³/s · Stick: ' +
+            stickFeed + ' mm/min → ' + flowStick.toFixed(2) + ' mm³/s.'
+          : 'At a constant ' + spiralFeed + ' mm/min: ' + flowSpiral.toFixed(2) + ' mm³/s.';
     } else {
       $('sp_flowFeedHint').textContent = '';
     }
