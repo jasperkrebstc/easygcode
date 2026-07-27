@@ -166,7 +166,17 @@ keep **fully independent settings** per project:
   which end starts: *center → stick* (default, spiral first) or *stick → center* (stick
   first) — a plain reversal of the same point list (unlike the coat hanger's CW/CCW
   setting, nothing here derives an inward/outward offset from the direction of travel,
-  so no compensating sign is needed anywhere else for it to come out correct).
+  so no compensating sign is needed anywhere else for it to come out correct). The whole
+  shape is rotated 45° and its (rotated) bounding box recentered on the bed — the disc +
+  stick's own axis-aligned box is much longer than it is wide, so tilting it onto a
+  square bed's diagonal fits a longer spoon (or needs a smaller bed) than printing it
+  axis-aligned; shares the same rotate+recenter helper the bend stool uses for its own
+  fixed bed-fit rotation, generalized to take an angle instead of a hardcoded one, so the
+  bend stool's own output is unaffected. Optional **stick line width** and **stick layer
+  height** (each 0 = same as the spiral) change ONLY the bead cross-section used to
+  compute `E` on the stick's own single segment — its length, direction, and Z are still
+  governed entirely by the spiral's own line width/layer height, same idea as the coat
+  hanger's per-spike extrusion override.
 
 The coat hanger is a dead-simple, phone-first tool to generate **vase-mode G-code** for
 **Klipper pellet 3D printing** (or the Bambu P1P in filament mode). Pick a cross-section
