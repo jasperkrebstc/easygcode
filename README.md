@@ -176,7 +176,11 @@ keep **fully independent settings** per project:
   height** (each 0 = same as the spiral) change ONLY the bead cross-section used to
   compute `E` on the stick's own single segment — its length, direction, and Z are still
   governed entirely by the spiral's own line width/layer height, same idea as the coat
-  hanger's per-spike extrusion override.
+  hanger's per-spike extrusion override. An optional **constant volumetric flow** toggle
+  (same idea as the bend stool's own) takes a target flow (mm³/s) instead of a fixed feed
+  and derives feed from each segment's own bead area — since the stick can have its own
+  bead area, this naturally resolves to two independent feeds (spiral and stick) rather
+  than one, shown live in the print settings hint and logged in the G-code header.
 
 The coat hanger is a dead-simple, phone-first tool to generate **vase-mode G-code** for
 **Klipper pellet 3D printing** (or the Bambu P1P in filament mode). Pick a cross-section

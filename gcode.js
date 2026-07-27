@@ -572,6 +572,22 @@
         : null;
     const stickSegAt = stickLength > 0 ? (sp.startPoint === 'stick' ? 1 : spiralPts.length - 1) : -1;
 
+    // ---- Volumetric flow feed mode ----
+    // Same idea as the bend stool's own constant-flow toggle: hold a target
+    // mm^3/s and derive feed from EACH segment's own bead area, instead of a
+    // fixed printFeed. Since the stick can have its own bead area (the
+    // override above), the two derived feeds are independent — a thinner
+    // stick bead prints faster, a thicker one slower, at the same flow. Off
+    // by default (byte-identical to a fixed printFeed).
+    const flowCfg = sp.flowFeed || {};
+    const flowOn = !!flowCfg.enabled && flowCfg.rate > 0;
+    const areaStickEff = stickArea != null ? stickArea : area;
+    function feedForArea(a) {
+      return flowOn ? (flowCfg.rate * 60) / Math.max(a, 1e-6) : cfg.printFeed;
+    }
+    const spiralFeed = feedForArea(area);
+    const stickFeed = feedForArea(areaStickEff);
+
     // ---- Printer / extrusion mode (same convention as generate()) ----
     const printer = cfg.printer || {};
     const mode = printer.mode === 'filament' ? 'filament' : 'pellet';
@@ -597,6 +613,15 @@
     lines.push(
       '; bed-fit: rotated ' + SPOON_ROTATION_DEG + ' deg, bounding box ' + spoonFit.width.toFixed(1) +
         ' x ' + spoonFit.height.toFixed(1) + ' mm, centered at bed (' + cx + ', ' + cy + ')'
+    );
+    lines.push(
+      flowOn
+        ? '; volumetric flow mode: target ' + flowCfg.rate + ' mm3/s -> spiralFeed=' +
+          spiralFeed.toFixed(0) + ' stickFeed=' + stickFeed.toFixed(0) + ' mm/min (bead area ' +
+          area.toFixed(2) + ' / ' + areaStickEff.toFixed(2) + ' mm2)'
+        : '; constant feed ' + cfg.printFeed + ' mm/min -> volumetric flow spiral=' +
+          ((cfg.printFeed * area) / 60).toFixed(2) + ' stick=' + ((cfg.printFeed * areaStickEff) / 60).toFixed(2) +
+          ' mm3/s (bead area ' + area.toFixed(2) + ' / ' + areaStickEff.toFixed(2) + ' mm2)'
     );
     lines.push(
       '; printer=' + mode + ' multiplier=' + mult +
@@ -659,10 +684,11 @@
         hopTravel(start, z);
       }
       for (let i = 1; i < spiralPts.length; i++) {
+        const isStickSeg = i === stickSegAt;
         emitSeg(
           { x: spiralPts[i].x + cx, y: spiralPts[i].y + cy, z: z },
-          cfg.printFeed,
-          i === stickSegAt ? stickArea : null
+          isStickSeg ? stickFeed : spiralFeed,
+          isStickSeg ? stickArea : null
         );
       }
     }
