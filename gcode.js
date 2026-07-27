@@ -528,7 +528,13 @@
     }
 
     const tol = 0.05; // fixed — the spiral is a single analytic curve, not worth a UI field
-    const spiralPts = Geo.spoonPath(turns, startRadius, lw, stickLength, tol);
+    let spiralPts = Geo.spoonPath(turns, startRadius, lw, stickLength, tol);
+    // 'stick' starts at the stick's far tip and winds IN to the center
+    // (pure array reversal — same points, same shape, opposite travel
+    // order; nothing here depends on the local tangent direction the way
+    // the coat hanger's offset/pattern math does, so no compensating sign
+    // is needed anywhere else).
+    if (sp.startPoint === 'stick') spiralPts = spiralPts.slice().reverse();
     const area = beadArea(lw, lh);
 
     // ---- Printer / extrusion mode (same convention as generate()) ----
@@ -544,7 +550,8 @@
     lines.push('; EasyGCode — spoon (spiral + stick) generator');
     lines.push('; ' + new Date().toISOString());
     lines.push(
-      '; turns=' + turns + ' startRadius=' + startRadius + ' stickLength=' + stickLength + ' layers=' + layers
+      '; turns=' + turns + ' startRadius=' + startRadius + ' stickLength=' + stickLength + ' layers=' + layers +
+        ' startPoint=' + (sp.startPoint === 'stick' ? 'stick' : 'center')
     );
     lines.push('; layerHeight=' + lh + ' lineWidth=' + lw);
     lines.push(

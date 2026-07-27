@@ -162,7 +162,11 @@ keep **fully independent settings** per project:
   everything else is the same print settings / printer modes as the other projects. No
   brim, hanger, or pattern options — kept intentionally minimal. Its own fully separate
   generator function (not threaded through the vase-mode one the other three projects
-  share), so it can't affect their output at all.
+  share), so it can't affect their output at all. A **print direction** dropdown picks
+  which end starts: *center → stick* (default, spiral first) or *stick → center* (stick
+  first) — a plain reversal of the same point list (unlike the coat hanger's CW/CCW
+  setting, nothing here derives an inward/outward offset from the direction of travel,
+  so no compensating sign is needed anywhere else for it to come out correct).
 
 The coat hanger is a dead-simple, phone-first tool to generate **vase-mode G-code** for
 **Klipper pellet 3D printing** (or the Bambu P1P in filament mode). Pick a cross-section

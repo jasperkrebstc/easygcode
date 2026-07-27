@@ -178,6 +178,7 @@
           startRadius: Math.max(0, num('sp_startRadius')),
           stickLength: Math.max(0, num('sp_stickLength')),
           layers: Math.max(1, Math.round(num('sp_layers'))),
+          startPoint: $('sp_startPoint').value === 'stick' ? 'stick' : 'center',
         },
       };
     }
@@ -639,13 +640,15 @@
       $('sp_hint').textContent = 'Enter at least some turns or a stick length.';
       return;
     }
-    const pts = window.Geo.spoonPath(sp.turns, sp.startRadius, cfg.lineWidth, sp.stickLength, 0.05);
+    let pts = window.Geo.spoonPath(sp.turns, sp.startRadius, cfg.lineWidth, sp.stickLength, 0.05);
+    if (sp.startPoint === 'stick') pts = pts.slice().reverse();
     const endRadius = (sp.startRadius || 0) + sp.turns * cfg.lineWidth;
     const tipRadius = endRadius + sp.stickLength;
     $('sp_hint').textContent =
       'Disc Ø' + (endRadius * 2).toFixed(1) + ' mm · stick tip ' + tipRadius.toFixed(1) +
       ' mm from center · ' + sp.layers + ' layer' + (sp.layers > 1 ? 's' : '') + ' (' +
-      (sp.layers * cfg.layerHeight).toFixed(2) + ' mm thick)';
+      (sp.layers * cfg.layerHeight).toFixed(2) + ' mm thick) · starts at ' +
+      (sp.startPoint === 'stick' ? 'the stick tip' : 'the center');
 
     const maxR = Math.max(tipRadius, endRadius, 1);
     const pad = 20 * sf;
@@ -664,9 +667,10 @@
     });
     ctx.stroke();
 
+    // Start point marker (green) — the actual first point of the toolpath.
     ctx.fillStyle = '#2bd9a0';
     ctx.beginPath();
-    ctx.arc(cxp, cyp, 3 * sf, 0, 2 * Math.PI);
+    ctx.arc(cxp + pts[0].x * scale, cyp - pts[0].y * scale, 3.5 * sf, 0, 2 * Math.PI);
     ctx.fill();
   }
 
