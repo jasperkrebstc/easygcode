@@ -268,12 +268,21 @@
   // printing it axis-aligned. See the bsFit/bsShiftX/Y setup in generate().
   const BS_ROTATION_DEG = 15;
 
-  // Rotated + bed-centered bounding box of a bend-stool outline (disc-centered
-  // input points). Shared by generate() and the 2D preview so both agree on
+  // Fixed bed-fit rotation for the spoon: the shape is a disc with a long
+  // straight stick off one side, so its own bounding box (axis-aligned) is
+  // much longer than it is wide — 45 deg tilts that long axis onto a square
+  // bed's diagonal, the longest straight line the bed offers, fitting a
+  // longer spoon (or needing a smaller bed) than printing it axis-aligned.
+  const SPOON_ROTATION_DEG = 45;
+
+  // Rotated + bed-centered bounding box of an outline (shape-centered input
+  // points). Shared by generate() and the 2D preview so both agree on
   // exactly the same numbers. Returns the box size and the shift that recenters
   // it on (centerX, centerY) — apply as: rotate(p) + {shiftX, shiftY} + {centerX, centerY}.
-  function discBedFit(outline, centerX, centerY) {
-    const rotRad = (BS_ROTATION_DEG * Math.PI) / 180;
+  // angleDeg defaults to the bend stool's own fixed rotation so its existing
+  // callers are unaffected; the spoon passes its own (45 deg).
+  function discBedFit(outline, centerX, centerY, angleDeg) {
+    const rotRad = ((angleDeg != null ? angleDeg : BS_ROTATION_DEG) * Math.PI) / 180;
     const cosR = Math.cos(rotRad);
     const sinR = Math.sin(rotRad);
     let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
@@ -528,8 +537,40 @@
     }
 
     const tol = 0.05; // fixed — the spiral is a single analytic curve, not worth a UI field
-    const spiralPts = Geo.spoonPath(turns, startRadius, lw, stickLength, tol);
+    let spiralPts = Geo.spoonPath(turns, startRadius, lw, stickLength, tol);
+    // 'stick' starts at the stick's far tip and winds IN to the center
+    // (pure array reversal — same points, same shape, opposite travel
+    // order; nothing here depends on the local tangent direction the way
+    // the coat hanger's offset/pattern math does, so no compensating sign
+    // is needed anywhere else).
+    if (sp.startPoint === 'stick') spiralPts = spiralPts.slice().reverse();
+    // Bed-fit: rotate 45 deg (the disc+stick shape's long axis onto the bed's
+    // diagonal) and recenter the ROTATED bounding box on (centerX, centerY) —
+    // shared with the 2D preview so both agree on the exact same numbers.
+    const spoonFit = discBedFit(spiralPts, cx, cy, SPOON_ROTATION_DEG);
+    spiralPts = spiralPts.map((p) => ({
+      x: p.x * spoonFit.cosR - p.y * spoonFit.sinR + spoonFit.shiftX,
+      y: p.x * spoonFit.sinR + p.y * spoonFit.cosR + spoonFit.shiftY,
+    }));
     const area = beadArea(lw, lh);
+    // Stick can extrude as if printed with a different line width/layer
+    // height than the spiral — 0 (either field) means "same as spiral," the
+    // ordinary bead area. This ONLY changes the bead cross-section used to
+    // compute E on the stick's own segment; its XYZ geometry (length,
+    // direction, Z) is still governed entirely by the spiral's own
+    // lineWidth/layerHeight, same idea as the coat hanger's per-spike
+    // extrusion override. The stick is always exactly one straight segment
+    // (Geo.spoonPath appends a single point past the last spiral point), so
+    // identifying it is just "the first segment" (stick-first direction) or
+    // "the last segment" (center-first) of the walked array — no per-point
+    // tagging needed.
+    const stickLineWidth = sp.stickLineWidth > 0 ? sp.stickLineWidth : lw;
+    const stickLayerHeightForArea = sp.stickLayerHeight > 0 ? sp.stickLayerHeight : lh;
+    const stickArea =
+      stickLength > 0 && (sp.stickLineWidth > 0 || sp.stickLayerHeight > 0)
+        ? beadArea(stickLineWidth, stickLayerHeightForArea)
+        : null;
+    const stickSegAt = stickLength > 0 ? (sp.startPoint === 'stick' ? 1 : spiralPts.length - 1) : -1;
 
     // ---- Printer / extrusion mode (same convention as generate()) ----
     const printer = cfg.printer || {};
@@ -544,9 +585,19 @@
     lines.push('; EasyGCode — spoon (spiral + stick) generator');
     lines.push('; ' + new Date().toISOString());
     lines.push(
-      '; turns=' + turns + ' startRadius=' + startRadius + ' stickLength=' + stickLength + ' layers=' + layers
+      '; turns=' + turns + ' startRadius=' + startRadius + ' stickLength=' + stickLength + ' layers=' + layers +
+        ' startPoint=' + (sp.startPoint === 'stick' ? 'stick' : 'center')
     );
-    lines.push('; layerHeight=' + lh + ' lineWidth=' + lw);
+    lines.push(
+      '; layerHeight=' + lh + ' lineWidth=' + lw +
+        (stickArea != null
+          ? ' stickExtrusion=' + stickLineWidth + 'x' + stickLayerHeightForArea + 'mm (geometry unaffected)'
+          : '')
+    );
+    lines.push(
+      '; bed-fit: rotated ' + SPOON_ROTATION_DEG + ' deg, bounding box ' + spoonFit.width.toFixed(1) +
+        ' x ' + spoonFit.height.toFixed(1) + ' mm, centered at bed (' + cx + ', ' + cy + ')'
+    );
     lines.push(
       '; printer=' + mode + ' multiplier=' + mult +
         (mode === 'filament' ? ' filamentDiameter=' + filDia + ' (E in mm of filament)' : ' (E in mm^3, volumetric)')
@@ -577,13 +628,13 @@
       travelAbs({ x: dest.x, y: dest.y, z: clearZ });
       if (dest.z < clearZ - 1e-6) travelAbs(dest);
     }
-    function emitSeg(cur, feed) {
+    function emitSeg(cur, feed, areaOvr) {
       const segLen = dist3(prev, cur);
       if (segLen < 1e-7) {
         prev = cur;
         return;
       }
-      const dVol = area * segLen;
+      const dVol = (areaOvr || area) * segLen;
       totalVolume += dVol;
       pathLength += segLen;
       let line = 'G1 X' + f3(cur.x) + ' Y' + f3(cur.y) + ' Z' + f3(cur.z) + ' E' + f5(dVol * eFactor);
@@ -608,7 +659,11 @@
         hopTravel(start, z);
       }
       for (let i = 1; i < spiralPts.length; i++) {
-        emitSeg({ x: spiralPts[i].x + cx, y: spiralPts[i].y + cy, z: z }, cfg.printFeed);
+        emitSeg(
+          { x: spiralPts[i].x + cx, y: spiralPts[i].y + cy, z: z },
+          cfg.printFeed,
+          i === stickSegAt ? stickArea : null
+        );
       }
     }
 
@@ -2355,6 +2410,7 @@
     LEG_ANGLES,
     makeProfile,
     BS_ROTATION_DEG,
+    SPOON_ROTATION_DEG,
     discBedFit,
     domeHeightRange,
   };

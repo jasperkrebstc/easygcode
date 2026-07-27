@@ -178,6 +178,9 @@
           startRadius: Math.max(0, num('sp_startRadius')),
           stickLength: Math.max(0, num('sp_stickLength')),
           layers: Math.max(1, Math.round(num('sp_layers'))),
+          startPoint: $('sp_startPoint').value === 'stick' ? 'stick' : 'center',
+          stickLineWidth: Math.max(0, num('sp_stickLineWidth')),
+          stickLayerHeight: Math.max(0, num('sp_stickLayerHeight')),
         },
       };
     }
@@ -374,6 +377,10 @@
       if (cfg.spoon.turns <= 0 && cfg.spoon.stickLength <= 0)
         return 'Enter at least some turns or a stick length.';
       if (!(cfg.spoon.layers >= 1)) return 'Layers must be at least 1.';
+      if (!Number.isFinite(cfg.spoon.stickLineWidth) || cfg.spoon.stickLineWidth < 0)
+        return 'Stick line width must be 0 (same as spiral) or more.';
+      if (!Number.isFinite(cfg.spoon.stickLayerHeight) || cfg.spoon.stickLayerHeight < 0)
+        return 'Stick layer height must be 0 (same as spiral) or more.';
       return validatePrinter(cfg);
     }
 
@@ -639,15 +646,33 @@
       $('sp_hint').textContent = 'Enter at least some turns or a stick length.';
       return;
     }
-    const pts = window.Geo.spoonPath(sp.turns, sp.startRadius, cfg.lineWidth, sp.stickLength, 0.05);
+    let pts = window.Geo.spoonPath(sp.turns, sp.startRadius, cfg.lineWidth, sp.stickLength, 0.05);
+    if (sp.startPoint === 'stick') pts = pts.slice().reverse();
     const endRadius = (sp.startRadius || 0) + sp.turns * cfg.lineWidth;
     const tipRadius = endRadius + sp.stickLength;
+
+    // Bed-fit: same 45 deg rotation + bounding-box recenter the generator
+    // applies, computed with the SAME shared helper so the preview always
+    // matches the actual G-code exactly.
+    const fit = window.GcodeGen.discBedFit(pts, cfg.centerX, cfg.centerY, window.GcodeGen.SPOON_ROTATION_DEG);
+    pts = pts.map((p) => ({
+      x: p.x * fit.cosR - p.y * fit.sinR + fit.shiftX,
+      y: p.x * fit.sinR + p.y * fit.cosR + fit.shiftY,
+    }));
+
     $('sp_hint').textContent =
       'Disc Ø' + (endRadius * 2).toFixed(1) + ' mm · stick tip ' + tipRadius.toFixed(1) +
       ' mm from center · ' + sp.layers + ' layer' + (sp.layers > 1 ? 's' : '') + ' (' +
-      (sp.layers * cfg.layerHeight).toFixed(2) + ' mm thick)';
+      (sp.layers * cfg.layerHeight).toFixed(2) + ' mm thick) · starts at ' +
+      (sp.startPoint === 'stick' ? 'the stick tip' : 'the center') + ' · bed-fit: rotated ' +
+      window.GcodeGen.SPOON_ROTATION_DEG + '° → ' + fit.width.toFixed(1) + ' × ' + fit.height.toFixed(1) +
+      ' mm, centered at (' + cfg.centerX + ', ' + cfg.centerY + ')' +
+      (sp.stickLineWidth > 0 || sp.stickLayerHeight > 0
+        ? ' · stick extrudes as ' + (sp.stickLineWidth > 0 ? sp.stickLineWidth : cfg.lineWidth) + 'x' +
+          (sp.stickLayerHeight > 0 ? sp.stickLayerHeight : cfg.layerHeight) + 'mm (shape unaffected)'
+        : '');
 
-    const maxR = Math.max(tipRadius, endRadius, 1);
+    const maxR = Math.max(fit.width, fit.height, 1) / 2;
     const pad = 20 * sf;
     const scale = (Math.min(W, H) / 2 - pad) / maxR;
     const cxp = W / 2;
@@ -664,9 +689,10 @@
     });
     ctx.stroke();
 
+    // Start point marker (green) — the actual first point of the toolpath.
     ctx.fillStyle = '#2bd9a0';
     ctx.beginPath();
-    ctx.arc(cxp, cyp, 3 * sf, 0, 2 * Math.PI);
+    ctx.arc(cxp + pts[0].x * scale, cyp - pts[0].y * scale, 3.5 * sf, 0, 2 * Math.PI);
     ctx.fill();
   }
 
