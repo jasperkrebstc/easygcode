@@ -283,13 +283,19 @@ present and future) and **type-specific**:
   small or large, short or tall, or coverage/patternless-layer settings shrink the
   patterned band — instead of a fixed count spreading thinner (or bunching tighter) as
   those change. The derived count is rounded to the nearest whole spike and shown in the
-  G-code header comment. An optional **spacing balance** toggle (off by default) runs a
-  handful of relaxation passes over the blue-noise placement afterward: any pair of spikes
-  closer together than the layout's own expected spacing (derived from the density and
-  area, not a separate input) gets nudged apart by half the shortfall, a few rounds, so
-  the rare crowded outlier spreads out while everywhere-else-fine spikes barely move — no
-  spike is added or removed, so the density stays exact, and the layout still reads as
-  random rather than gridded. The stretch of wall each one replaces is pushed straight
+  G-code header comment. An optional **spacing balance** toggle (off by default) runs up
+  to 30 damped relaxation passes over the blue-noise placement afterward: any pair of
+  spikes closer together than an ideal hexagonal-packing spacing for that count and area
+  (not a separate input — the most even a fixed number of points can be spread over a
+  fixed area) gets nudged apart by half the shortfall, so the distances between neighbors
+  converge toward each other instead of spanning a wide range, without adding or removing
+  a single spike (density stays exact). This measures actual physical closeness (arc-length
+  position and real height, not toolpath order), so two spikes landing at nearly the same
+  position on adjacent layers — stacked right on top of each other — are caught by it same
+  as any other close pair. Aiming for a very even spacing does trade away some of the
+  "randomly scattered" look for consistency — push it hard enough and the layout starts
+  reading as regular rather than random — so treat it as a knob between those two
+  characters, not a pure bug fix. The stretch of wall each one replaces is pushed straight
   out (a 90° turn away from the wall), continues at that height for exactly the width it
   cut away (the same stretch of wall, just displaced outward — flat, not tapered, since
   both ends sit at the same amplitude), then turns 90° straight back in to rejoin the

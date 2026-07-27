@@ -97,26 +97,32 @@
     return pts;
   }
 
-  // Best-candidate is only an approximation of true blue noise — it can
-  // still leave a rare pair closer together than the rest of the field. This
-  // nudges any pair closer than the domain's own expected spacing apart by
-  // half their shortfall, a few rounds, so the handful of outlier-close
-  // pairs spread out while everywhere-else-fine points barely move — no
-  // culling (so the point count, and therefore density, never changes), no
-  // exposed min/max distance (the target is derived from the area and count
-  // themselves, the same way the density setting already is). Not a full
-  // physics simulation: symmetric pairwise correction converges in a handful
-  // of iterations at the point counts spikes run at (tens to a few hundred),
-  // same idea as the "resolve overlaps" step in force-directed layouts.
+  // Best-candidate is only an approximation of true blue noise — nearest-
+  // neighbor spacing across the field still varies more than it would in an
+  // evenly-packed layout. This nudges any pair closer than a target spacing
+  // apart by half their shortfall (damped, so many simultaneous violations
+  // near one point don't overshoot), a few rounds, so distances converge
+  // toward that target instead of spanning a wide range — no culling (so the
+  // point count, and therefore density, never changes), no exposed min/max
+  // distance (the target is derived from the area and count themselves, the
+  // same way the density setting already is). The target is the spacing of
+  // an ideal hexagonal packing of n points over the domain's area (each
+  // point's Voronoi cell a regular hexagon of area/n, side-to-side distance
+  // solved from that) — the most even a fixed number of points can be spread
+  // over a fixed area, so aiming for it (without requiring it exactly, since
+  // clamping to the domain and the placement's own randomness keep the
+  // result short of a perfect grid) tightens the spread of distances as much
+  // as a simple pairwise pass can. Not a full physics simulation: symmetric
+  // pairwise correction converges in a few dozen iterations at the point
+  // counts spikes run at (tens to a few hundred), same idea as the "resolve
+  // overlaps" step in force-directed layouts.
   function relaxSpacing(pts, sMin, sMax, zMin, zMax) {
     const n = pts.length;
     if (n < 2) return pts;
     const area = (sMax - sMin) * (zMax - zMin);
-    // Expected nearest-neighbor spacing for n points scattered evenly over
-    // that area; comfortably under 1 so only genuinely-crowded pairs (not
-    // every pair at roughly the "natural" spacing) get pushed.
-    const target = 0.6 * Math.sqrt(area / n);
-    const ITERS = 10;
+    const target = Math.sqrt((2 / Math.sqrt(3)) * (area / n));
+    const ITERS = 30;
+    const DAMP = 0.5;
     for (let iter = 0; iter < ITERS; iter++) {
       const dx = new Array(n).fill(0);
       const dz = new Array(n).fill(0);
@@ -134,7 +140,7 @@
             dx[j] += target * 0.5;
           } else if (dist < target) {
             anyClose = true;
-            const push = (target - dist) * 0.5;
+            const push = (target - dist) * 0.5 * DAMP;
             const nx = ddx / dist;
             const nz = ddz / dist;
             dx[i] -= nx * push;
