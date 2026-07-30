@@ -709,7 +709,17 @@
       const d = dist3(path[i - 1], path[i]);
       if (path[i].feed > 0) timeMin += d / path[i].feed;
     }
-    const stats = { volume: totalVolume, pathLength: pathLength, moves: moveCount, loops: layers, timeMin: timeMin };
+    // No foam mode here, so the "actual" numbers are just the nominal ones —
+    // same fields as generate()'s stats, so app.js can read them uniformly.
+    const stats = {
+      volume: totalVolume,
+      pathLength: pathLength,
+      moves: moveCount,
+      loops: layers,
+      timeMin: timeMin,
+      materialVolume: totalVolume,
+      actualTimeMin: timeMin,
+    };
     return { gcode: lines.join('\n') + '\n', warnings, stats, path };
   }
 
@@ -722,6 +732,18 @@
     let totalVolume = 0;
     let pathLength = 0;
     let moveCount = 0;
+    // Raw material actually consumed, accounting for the bend stool's foam
+    // mode: totalVolume/timeMin (below) reflect the NOMINAL G-code numbers —
+    // full bead area and the commanded F feedrate — since that's what the
+    // firmware's own M221/M220 overrides act on at print time, not something
+    // the generator itself scales. For accurate cost/weight and an accurate
+    // print-time estimate, materialVolume and actualTimeMin separately track
+    // the REAL, foam-reduced numbers using the same M221 percentage the
+    // firmware would apply — equal to totalVolume/timeMin whenever foam
+    // never activates (every project but the bend stool, and the bend stool
+    // itself with foam off).
+    let materialVolume = 0;
+    let foamZoneActive = false;
 
     const cx = cfg.centerX;
     const cy = cfg.centerY;
@@ -1227,7 +1249,7 @@
     function travelAbs(cur) {
       lines.push('G0 X' + f3(cur.x) + ' Y' + f3(cur.y) + ' Z' + f3(cur.z) + ' F' + Math.round(cfg.travelFeed));
       lastFeed = cfg.travelFeed;
-      path.push({ x: cur.x, y: cur.y, z: cur.z, travel: true, feed: cfg.travelFeed });
+      path.push({ x: cur.x, y: cur.y, z: cur.z, travel: true, feed: cfg.travelFeed, foamZone: foamZoneActive });
       prev = cur;
       moveCount++;
     }
@@ -1262,6 +1284,7 @@
       }
       const dVol = (areaOvr || area) * segLen * ramp;
       totalVolume += dVol;
+      materialVolume += dVol * (foamZoneActive ? foamCfg.extrusionPct / 100 : 1);
       pathLength += segLen;
       let line = 'G1 X' + f3(cur.x) + ' Y' + f3(cur.y) + ' Z' + f3(cur.z) + ' E' + f5(dVol * eFactor);
       if (feed !== lastFeed || firstExtrude) {
@@ -1269,7 +1292,7 @@
         lastFeed = feed;
       }
       lines.push(line);
-      path.push({ x: cur.x, y: cur.y, z: cur.z, travel: false, feed: feed });
+      path.push({ x: cur.x, y: cur.y, z: cur.z, travel: false, feed: feed, foamZone: foamZoneActive });
       firstExtrude = false;
       moveCount++;
       prev = cur;
@@ -1337,6 +1360,11 @@
       if (!entering) {
         lines.push('M220 S100 ; foam exit: restore speed factor before priming');
         lines.push('M221 S100 ; foam exit: restore extrude factor before priming');
+        // Mirrors reality exactly here, not just after the transition
+        // finishes: the firmware is back to 100%/100% from this line on, so
+        // the exit primer (and the travel to the next print point below)
+        // must NOT be foam-scaled, same as reality.
+        foamZoneActive = false;
       }
       const tUp = entering ? foamCfg.tempUp : pel.up;
       const tMid = entering ? foamCfg.tempMid : pel.mid;
@@ -1368,6 +1396,11 @@
       if (entering) {
         lines.push('M221 S' + foamCfg.extrusionPct + ' ; foam: reduced extrusion');
         lines.push('M220 S' + foamSpeedPct + ' ; foam: increased speed (flow-matched)');
+        // Same idea as the exit case above, mirrored: the enter primer just
+        // printed at 100%/100% (before this line), and the firmware is only
+        // switched to the foam overrides from here on — so the travel to
+        // the next print point below IS at the foam-sped-up rate.
+        foamZoneActive = true;
       }
       hopTravel(dest, 2 * maxZEver);
     }
@@ -2423,14 +2456,31 @@
       (mode === 'filament' ? marlinEnd(endLift) : klipperEnd(endLift)).forEach((l) => lines.push(l));
     }
 
-    // Estimated print time from the actual path and feeds.
+    // Estimated print time from the actual path and feeds — the NOMINAL
+    // time the F values in the file imply, same as before this existed.
+    // actualTimeMin below is the REAL time, correcting for the M220 speed-up
+    // during foam-active moves (equal to timeMin whenever foam never
+    // activates), same idea as materialVolume vs totalVolume above.
     let timeMin = 0;
+    let actualTimeMin = 0;
     for (let i = 1; i < path.length; i++) {
       const d = dist3(path[i - 1], path[i]);
-      if (path[i].feed > 0) timeMin += d / path[i].feed;
+      if (path[i].feed > 0) {
+        const dt = d / path[i].feed;
+        timeMin += dt;
+        actualTimeMin += dt * (path[i].foamZone ? foamCfg.extrusionPct / 100 : 1);
+      }
     }
 
-    const stats = { volume: totalVolume, pathLength: pathLength, moves: moveCount, loops: T, timeMin: timeMin };
+    const stats = {
+      volume: totalVolume,
+      pathLength: pathLength,
+      moves: moveCount,
+      loops: T,
+      timeMin: timeMin,
+      materialVolume: materialVolume,
+      actualTimeMin: actualTimeMin,
+    };
     return { gcode: lines.join('\n') + '\n', warnings, stats, path };
   }
 

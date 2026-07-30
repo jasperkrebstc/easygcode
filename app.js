@@ -80,6 +80,8 @@
       return {
         project: 'bendstool',
         printer: readPrinter('bs_'),
+        materialDensity: num('bs_materialDensity'),
+        materialPrice: num('bs_materialPrice'),
         layerHeight: num('bs_layerHeight'),
         lineWidth: num('bs_lineWidth'),
         printFeed: num('bs_printFeed'),
@@ -196,6 +198,8 @@
       shape: cs.shape,
       shapeParams: cs.shapeParams,
       printer: readPrinter(''),
+      materialDensity: num('materialDensity'),
+      materialPrice: num('materialPrice'),
       layerHeight: num('layerHeight'),
       lineWidth: num('lineWidth'),
       totalHeight: num('totalHeight'),
@@ -293,6 +297,10 @@
       }
       if (!Number.isFinite(cfg.centerX) || !Number.isFinite(cfg.centerY))
         return 'Enter valid bed center X/Y.';
+      if (!Number.isFinite(cfg.materialDensity) || cfg.materialDensity < 0)
+        return 'Material density must be 0 (skip cost) or more.';
+      if (!Number.isFinite(cfg.materialPrice) || cfg.materialPrice < 0)
+        return 'Material price must be 0 (skip cost) or more.';
       if (!(cfg.disc.layers >= 1)) return 'Disc needs at least 1 layer.';
       if (!Number.isFinite(cfg.disc.dome) || cfg.disc.dome <= 0 || cfg.disc.dome > 1)
         return 'Dome multiplier must be between 0 and 1 (1 = flat).';
@@ -406,6 +414,10 @@
     }
     if (!Number.isFinite(cfg.centerX) || !Number.isFinite(cfg.centerY))
       return 'Enter valid bed center X/Y.';
+    if (!Number.isFinite(cfg.materialDensity) || cfg.materialDensity < 0)
+      return 'Material density must be 0 (skip cost) or more.';
+    if (!Number.isFinite(cfg.materialPrice) || cfg.materialPrice < 0)
+      return 'Material price must be 0 (skip cost) or more.';
     const pErr = validatePrinter(cfg);
     if (pErr) return pErr;
     if (!isPos(cfg.tolerance)) return 'Chord tolerance must be greater than 0.';
@@ -1524,10 +1536,26 @@
     View3D.setPath(result.path || []);
 
     const s = result.stats;
-    $('stats').textContent =
+    // materialVolume/actualTimeMin correct for the bend stool's own foam
+    // mode (less raw material, faster print, during the foamed middle
+    // layers than the nominal G-code numbers alone would suggest) — equal
+    // to volume/timeMin whenever foam never applies, so this is always at
+    // least as accurate as the plain G-code-implied numbers.
+    let statsText =
       Math.round(s.loops) + ' loops · ' + s.moves + ' moves · ' +
-      s.volume.toFixed(0) + ' mm³ · ' + (s.pathLength / 1000).toFixed(1) + ' m path' +
-      (s.timeMin > 0 ? ' · ~' + fmtTime(s.timeMin) : '');
+      s.materialVolume.toFixed(0) + ' mm³ · ' + (s.pathLength / 1000).toFixed(1) + ' m path' +
+      (s.actualTimeMin > 0 ? ' · ~' + fmtTime(s.actualTimeMin) : '');
+    if (
+      (cfg.project === 'cordhanger' || cfg.project === 'bendstool') &&
+      isPos(cfg.materialDensity) &&
+      isPos(cfg.materialPrice)
+    ) {
+      // mm^3 -> cm^3 (/1000) -> g (x density) -> kg (/1000): /1e6 combined.
+      const massKg = (s.materialVolume * cfg.materialDensity) / 1e6;
+      const cost = massKg * cfg.materialPrice;
+      statsText += ' · ' + massKg.toFixed(3) + ' kg · ' + cost.toFixed(2) + ' material cost';
+    }
+    $('stats').textContent = statsText;
 
     showWarnings(result.warnings, false);
   }
@@ -1799,6 +1827,7 @@
     printFeed: 'bs_printFeed', travelFeed: 'bs_travelFeed',
     tolerance: 'bs_tolerance', centerX: 'bs_centerX', centerY: 'bs_centerY',
     printerMode: 'bs_printerMode', extrusionMultiplier: 'bs_extrusionMultiplier',
+    materialDensity: 'bs_materialDensity', materialPrice: 'bs_materialPrice',
     startEndEnabled: 'bs_startEndEnabled',
     filDiameter: 'bs_filDiameter', filNozzleTemp: 'bs_filNozzleTemp',
     filBedTemp: 'bs_filBedTemp', filFan: 'bs_filFan',
