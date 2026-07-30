@@ -114,7 +114,16 @@ keep **fully independent settings** per project:
   (like the brim/foam clearance hops) would instead leave a small blob of oozed
   material sitting on the print, worse under foaming — so this stays to exactly the
   two moves, always applied (harmless — two quick non-extruding moves — even on a
-  flat, undomed disc where it isn't strictly needed).
+  flat, undomed disc where it isn't strictly needed). Optional **material density
+  (g/cm³)** and **material price (per kg)** (0 = skip, the default) show a raw
+  material cost estimate alongside the print time. Both correctly account for
+  foaming: the nominal G-code numbers (bead area, commanded feedrate) reflect what
+  the firmware's own `M221`/`M220` overrides act on at print time, not something the
+  generator scales itself — so the stats line tracks the REAL raw material consumed
+  and REAL print time separately (equal to the nominal numbers whenever foam never
+  activates), weighting each foam-active layer's contribution by the foam extrusion
+  % and scaling its time by the same factor (foam mode keeps flow constant by
+  moving faster in exact proportion to using less material, so both scale together).
 
 - **Vessel** — simple trays, vases and cylinders. Reuses the same base **shapes**
   (circle, rounded rectangle, ellipse, polygon, star, squircle) and **print
@@ -487,7 +496,10 @@ brim with a warning rather than failing.
 
 - **Printer & material:** printer mode (pellet/filament), extrusion multiplier,
   start/end toggle; filament → diameter, nozzle temp, bed temp, fan %; pellet → 3 zone
-  temps, bed temp, pressure advance, purge quantity, fan %.
+  temps, bed temp, pressure advance, purge quantity, fan %; material density (g/cm³)
+  and material price (per kg), each 0 = skip, for a raw material cost estimate
+  alongside the print time (also on the bend stool, accounting for its foam mode;
+  not on vessel or spoon).
 - **Shape:** circle (radius); rounded rectangle (width, length, fillet); ellipse;
   polygon; star; squircle.
 - **Print:** layer height, line width, total height, print feed, travel feed,
