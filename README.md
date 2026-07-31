@@ -194,6 +194,44 @@ keep **fully independent settings** per project:
   print settings hint and logged in the G-code header. Flow mode takes priority over the
   manual stick feed when both are set, since deriving feed automatically is the whole
   point of turning it on.
+- **Lampshade** — a shade that screws straight onto a standard **E14** or **E27**
+  lampholder. The mount is the interesting part: instead of modelling a thread, the
+  **throat is a plain vase-mode helix whose pitch equals the socket's own thread pitch**,
+  so the lampholder's thread crests groove into the inside of the wall as it's screwed
+  on. That makes **layer height a derived value, not an input** — it *is* the pitch. The
+  relevant standard is **IEC 60399** ("barrel thread for lampholders with shade holder
+  ring", i.e. the external thread the decorative ring screws onto — not the M10×1 internal
+  fixing thread): **E14 = ⌀28 × 2.0 mm**, **E27 = ⌀40 × 2.5 mm**, both built in, plus a
+  **custom** option for measuring your own. The wall's inner surface lands on the thread,
+  so the toolpath sits half a line width outside it; a **fit tolerance** (± mm) shifts
+  that inner surface — negative for an interference fit where the crests press further
+  into the plastic. The helix always runs counter-clockwise as it rises, which is a
+  **right-hand thread** (what Edison sockets use); handedness survives flipping the part,
+  so it's correct in both print orientations.
+  The profile is a **revolve curve in r/z**: a straight **throat** (the length given is
+  the full-diameter section that actually grips — the fillet is added *above* it rather
+  than eating into it), a tangent-arc **fillet**, then a straight cone out to the
+  **bottom opening ⌀** over a given **transition height**. It's carried as a dense
+  `(r, z, angle)` polyline rather than an analytic description, so future profile shapes
+  (bezier flares, spheres) drop in by producing the same polyline without the generator or
+  the compensation math changing. **Print orientation** picks throat-down or wide-edge-down.
+  **Overhang compensation:** a wall leaning `a` from vertical steps sideways by
+  `lh·tan(a)` per turn, putting consecutive bead centres `lh/cos(a)` apart measured along
+  the wall — so `cos(a)` is the whole story, and it's offered two ways. **Line width**
+  mode widens the bead by `1/cos(a)` (1.41× at 45°, 2× at 60°, clamped by a max
+  multiplier). **Layer height** mode shrinks the physical Z rise by `cos(a)` while
+  extrusion keeps using the **full** layer height — that deliberate over-fill *is* the
+  squeeze that spreads the bead sideways, and extruding for the reduced height instead
+  would just print a thinner wall and achieve nothing. A **strength %** blends between no
+  compensation and the full geometric factor. Both modes are recomputed per revolution
+  from the local wall angle, so the fillet's continuously-varying slope is followed
+  properly rather than one flat number being applied. The live hint and G-code header
+  report the wall angle, the resulting bead width / layer rise, and the **support ratio**
+  — the fraction of each bead that lands on the one below, which is the number that
+  actually predicts drooping. Warns past ~50°. Reuses the standard first-turn extrusion
+  ramp-up, an outer **brim**, and a closing revolution that holds both z *and* radius
+  constant while ramping extrusion to zero (a spiral still flaring there would leave the
+  ramp-down hanging in mid-air).
 
 The coat hanger is a dead-simple, phone-first tool to generate **vase-mode G-code** for
 **Klipper pellet 3D printing** (or the Bambu P1P in filament mode). Pick a cross-section
@@ -512,6 +550,12 @@ brim with a warning rather than failing.
 The **Spoon** tab has its own, much smaller set: printer & material (identical fields to
 above), turns, start radius, stick length, layers, layer height, line width, print feed,
 travel feed, bed center X/Y — no shape, pattern, brim, or hanger options.
+
+The **Lampshade** tab: printer & material (identical fields to above), socket
+(E14/E27/custom), fit tolerance, throat length, fillet radius, bottom opening ⌀,
+transition height, print orientation, line width, print feed, travel feed, chord
+tolerance, bed center X/Y, overhang compensation mode/strength/max multiplier, and an
+outer-only brim — **no layer height**, which is the socket's thread pitch.
 
 The **3D preview** orbits with a drag (Z-up), pinch/wheel zooms, two fingers pan, and a
 double-tap resets. The toolpath is colored by feedrate — blue = fastest, red = slowest —

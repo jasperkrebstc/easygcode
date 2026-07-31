@@ -26,6 +26,7 @@
       <button type="button" id="tabBendstool" class="tab">Bend stool</button>
       <button type="button" id="tabVessel" class="tab">Vessel</button>
       <button type="button" id="tabSpoon" class="tab">Spoon</button>
+      <button type="button" id="tabLamp" class="tab">Lampshade</button>
     </nav>
     <input type="hidden" id="activeProject" value="cordhanger" />
 
@@ -633,6 +634,115 @@
           <div class="field"><label>Target flow (mm³/s)</label><input type="number" id="sp_flowFeedRate" value="20" min="0.1" step="0.5" /></div>
         </div>
         <p class="hint" id="sp_flowFeedHint"></p>
+      </section>
+
+      <section class="card" data-project="lamp" hidden>
+        <h2>
+          Printer &amp; material
+          <label class="toggle"><input type="checkbox" id="ls_startEndEnabled" checked /> start/end G-code</label>
+        </h2>
+        <div class="grid">
+          <div class="field">
+            <label>Printer</label>
+            <select id="ls_printerMode">
+              <option value="pellet">Pellet (Klipper)</option>
+              <option value="filament">Filament (Marlin)</option>
+            </select>
+          </div>
+          <div class="field"><label>Extrusion multiplier</label><input type="number" id="ls_extrusionMultiplier" value="1.0" min="0.01" step="0.01" /></div>
+        </div>
+        <div class="printer-params-ls grid" data-mode="pellet">
+          <div class="field"><label>Zone up temp (°C)</label><input type="number" id="ls_pelUpTemp" value="210" min="0" step="5" /></div>
+          <div class="field"><label>Zone mid temp (°C)</label><input type="number" id="ls_pelMidTemp" value="210" min="0" step="5" /></div>
+          <div class="field"><label>Zone down temp (°C)</label><input type="number" id="ls_pelDownTemp" value="210" min="0" step="5" /></div>
+          <div class="field"><label>Bed temp (°C)</label><input type="number" id="ls_pelBedTemp" value="50" min="0" step="5" /></div>
+          <div class="field"><label>Pressure advance</label><input type="number" id="ls_pelPA" value="0.3" min="0" step="0.05" /></div>
+          <div class="field"><label>Purge quantity</label><input type="number" id="ls_pelPurge" value="5000" min="0" step="100" /></div>
+          <div class="field"><label>Fan (%)</label><input type="number" id="ls_pelFan" value="0" min="0" max="100" step="5" /></div>
+        </div>
+        <div class="printer-params-ls grid" data-mode="filament" hidden>
+          <div class="field"><label>Filament diameter (mm)</label><input type="number" id="ls_filDiameter" value="1.75" min="0.1" step="0.05" /></div>
+          <div class="field"><label>Nozzle temp (°C)</label><input type="number" id="ls_filNozzleTemp" value="205" min="0" step="5" /></div>
+          <div class="field"><label>Bed temp (°C)</label><input type="number" id="ls_filBedTemp" value="60" min="0" step="5" /></div>
+          <div class="field"><label>Fan (%)</label><input type="number" id="ls_filFan" value="100" min="0" max="100" step="5" /></div>
+        </div>
+        <p class="hint" id="ls_printerHint"></p>
+      </section>
+
+      <section class="card" data-project="lamp" hidden>
+        <h2>Socket &amp; shade</h2>
+        <div class="grid">
+          <div class="field">
+            <label>Socket</label>
+            <select id="ls_socket">
+              <option value="e27">E27 — ⌀40 × 2.5 mm</option>
+              <option value="e14">E14 — ⌀28 × 2.0 mm</option>
+              <option value="custom">Custom (measure your own)</option>
+            </select>
+          </div>
+          <div class="field"><label>Fit tolerance (mm, − = tighter)</label><input type="number" id="ls_fitTolerance" value="0" step="0.1" /></div>
+        </div>
+        <div class="lamp-socket-params grid" data-socket="custom" hidden>
+          <div class="field"><label>Thread diameter (mm)</label><input type="number" id="ls_customDiameter" value="40" min="1" step="0.1" /></div>
+          <div class="field"><label>Thread pitch (mm)</label><input type="number" id="ls_customPitch" value="2.5" min="0.1" step="0.1" /></div>
+        </div>
+        <div class="grid">
+          <div class="field"><label>Throat length (mm, straight section)</label><input type="number" id="ls_throatLength" value="20" min="0" step="1" /></div>
+          <div class="field"><label>Fillet radius (mm)</label><input type="number" id="ls_fillet" value="10" min="0" step="1" /></div>
+          <div class="field"><label>Bottom opening ⌀ (mm)</label><input type="number" id="ls_bottomDiameter" value="150" min="1" step="5" /></div>
+          <div class="field"><label>Transition height (mm)</label><input type="number" id="ls_transitionHeight" value="52" min="1" step="5" /></div>
+          <div class="field">
+            <label>Print orientation</label>
+            <select id="ls_orientation">
+              <option value="throat">Throat down (on the bed)</option>
+              <option value="wide">Wide edge down (on the bed)</option>
+            </select>
+          </div>
+        </div>
+        <p class="hint" id="ls_hint"></p>
+        <canvas id="ls_preview" width="600" height="600"></canvas>
+      </section>
+
+      <section class="card" data-project="lamp" hidden>
+        <h2>Print settings</h2>
+        <div class="grid">
+          <div class="field"><label>Line width (mm)</label><input type="number" id="ls_lineWidth" value="6.0" min="0.1" step="0.1" /></div>
+          <div class="field"><label>Print feed (mm/min)</label><input type="number" id="ls_printFeed" value="1200" min="1" step="50" /></div>
+          <div class="field"><label>Travel feed (mm/min)</label><input type="number" id="ls_travelFeed" value="6000" min="1" step="100" /></div>
+          <div class="field"><label>Chord tolerance (mm)</label><input type="number" id="ls_tolerance" value="0.1" min="0.001" step="0.01" /></div>
+          <div class="field"><label>Bed center X (mm)</label><input type="number" id="ls_centerX" value="125" step="1" /></div>
+          <div class="field"><label>Bed center Y (mm)</label><input type="number" id="ls_centerY" value="125" step="1" /></div>
+        </div>
+        <p class="hint">Layer height isn't set here — it <em>is</em> the socket's thread pitch, which is what
+          makes the printed helix screw onto the lampholder.</p>
+        <div class="grid">
+          <div class="field">
+            <label>Overhang compensation</label>
+            <select id="ls_compMode">
+              <option value="width">Line width (wider bead)</option>
+              <option value="layerHeight">Layer height (squeeze)</option>
+              <option value="off">Off</option>
+            </select>
+          </div>
+          <div class="field"><label>Compensation strength (%)</label><input type="number" id="ls_compStrength" value="100" min="0" max="100" step="5" /></div>
+          <div class="field"><label>Max line width (× base)</label><input type="number" id="ls_compMaxMult" value="2.5" min="1" step="0.1" /></div>
+        </div>
+        <p class="hint" id="ls_compHint"></p>
+      </section>
+
+      <section class="card" data-project="lamp" hidden>
+        <h2>
+          Brim
+          <label class="toggle"><input type="checkbox" id="ls_brimEnabled" /> enable</label>
+        </h2>
+        <div id="ls_brimFields" class="grid" hidden>
+          <div class="field"><label>Outer lines</label><input type="number" id="ls_brimLinesOuter" value="4" min="0" step="1" /></div>
+          <div class="field"><label>Brim line width (mm)</label><input type="number" id="ls_brimLineWidth" value="6.0" min="0.1" step="0.1" /></div>
+          <div class="field"><label>Brim layer height (mm)</label><input type="number" id="ls_brimLayerHeight" value="2.5" min="0.05" step="0.05" /></div>
+          <div class="field"><label>Brim feedrate (mm/min)</label><input type="number" id="ls_brimFeed" value="900" min="1" step="50" /></div>
+        </div>
+        <p class="hint">Outer rings only — printed outermost first, working inward and leaving one line
+          width of gap for the wall itself.</p>
       </section>
 
       <section class="card">

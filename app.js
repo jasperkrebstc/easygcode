@@ -16,7 +16,7 @@
 
   function activeProject() {
     const v = $('activeProject').value;
-    return v === 'bendstool' || v === 'vessel' || v === 'spoon' ? v : 'cordhanger';
+    return v === 'bendstool' || v === 'vessel' || v === 'spoon' || v === 'lamp' ? v : 'cordhanger';
   }
 
   // Read a shape select + its params for the given input-id prefix ('' for the
@@ -188,6 +188,42 @@
             enabled: $('sp_flowFeedEnabled').checked,
             rate: num('sp_flowFeedRate'),
           },
+        },
+      };
+    }
+
+    if (activeProject() === 'lamp') {
+      return {
+        project: 'lamp',
+        printer: readPrinter('ls_'),
+        lineWidth: num('ls_lineWidth'),
+        printFeed: num('ls_printFeed'),
+        travelFeed: num('ls_travelFeed'),
+        tolerance: num('ls_tolerance'),
+        centerX: num('ls_centerX'),
+        centerY: num('ls_centerY'),
+        lamp: {
+          socket: ['e14', 'e27', 'custom'].indexOf($('ls_socket').value) >= 0 ? $('ls_socket').value : 'e27',
+          customDiameter: num('ls_customDiameter'),
+          customPitch: num('ls_customPitch'),
+          fitTolerance: num('ls_fitTolerance'),
+          throatLength: Math.max(0, num('ls_throatLength')),
+          fillet: Math.max(0, num('ls_fillet')),
+          bottomDiameter: num('ls_bottomDiameter'),
+          transitionHeight: num('ls_transitionHeight'),
+          orientation: $('ls_orientation').value === 'wide' ? 'wide' : 'throat',
+          compMode: ['width', 'layerHeight', 'off'].indexOf($('ls_compMode').value) >= 0 ? $('ls_compMode').value : 'width',
+          compStrength: Math.max(0, Math.min(100, num('ls_compStrength'))),
+          compMaxMult: num('ls_compMaxMult'),
+        },
+        brim: {
+          enabled: $('ls_brimEnabled').checked,
+          outerStyle: 'normal',
+          linesOuter: Math.max(0, Math.round(num('ls_brimLinesOuter'))),
+          linesInner: 0,
+          lineWidth: num('ls_brimLineWidth'),
+          layerHeight: num('ls_brimLayerHeight'),
+          feed: num('ls_brimFeed'),
         },
       };
     }
@@ -402,6 +438,35 @@
       return validatePrinter(cfg);
     }
 
+    if (cfg.project === 'lamp') {
+      const lchecks = {
+        'line width': cfg.lineWidth,
+        'print feed': cfg.printFeed,
+        'travel feed': cfg.travelFeed,
+        'chord tolerance': cfg.tolerance,
+        'bottom opening diameter': cfg.lamp.bottomDiameter,
+        'transition height': cfg.lamp.transitionHeight,
+      };
+      for (const name in lchecks) {
+        if (!isPos(lchecks[name])) return 'Enter a valid ' + name + ' (must be greater than 0).';
+      }
+      if (!Number.isFinite(cfg.centerX) || !Number.isFinite(cfg.centerY))
+        return 'Enter valid bed center X/Y.';
+      if (cfg.lamp.socket === 'custom') {
+        if (!isPos(cfg.lamp.customDiameter)) return 'Enter a valid custom thread diameter.';
+        if (!isPos(cfg.lamp.customPitch)) return 'Enter a valid custom thread pitch.';
+      }
+      if (!Number.isFinite(cfg.lamp.fitTolerance)) return 'Enter a valid fit tolerance.';
+      if (!(cfg.lamp.throatLength >= 0)) return 'Throat length must be 0 or more.';
+      if (!(cfg.lamp.fillet >= 0)) return 'Fillet radius must be 0 or more.';
+      if (!isPos(cfg.lamp.compMaxMult) || cfg.lamp.compMaxMult < 1)
+        return 'Max line width multiplier must be 1 or more.';
+      const thread = lampThread(cfg);
+      if (cfg.lamp.bottomDiameter < thread.diameter)
+        return 'Bottom opening must be at least as wide as the socket thread (⌀' + thread.diameter + ' mm).';
+      return validatePrinter(cfg) || validateBrim(cfg.brim);
+    }
+
     const checks = {
       'layer height': cfg.layerHeight,
       'line width': cfg.lineWidth,
@@ -486,6 +551,7 @@
       ['bs_printerMode', 'printer-params-bs', 'bs_printerHint'],
       ['ve_printerMode', 'printer-params-ve', 've_printerHint'],
       ['sp_printerMode', 'printer-params-sp', 'sp_printerHint'],
+      ['ls_printerMode', 'printer-params-ls', 'ls_printerHint'],
     ].forEach(([selId, cls, hintId]) => {
       const sel = $(selId);
       if (!sel) return;
@@ -508,6 +574,7 @@
     $('tabBendstool').classList.toggle('active', p === 'bendstool');
     $('tabVessel').classList.toggle('active', p === 'vessel');
     $('tabSpoon').classList.toggle('active', p === 'spoon');
+    $('tabLamp').classList.toggle('active', p === 'lamp');
   }
 
   function showPatternParams(type) {
@@ -649,6 +716,135 @@
     return out;
   }
 
+  // The custom thread diameter/pitch fields only matter when the socket
+  // dropdown is on "custom" — the E14/E27 values come from the built-in table.
+  function showLampSocketParams(socket) {
+    document.querySelectorAll('.lamp-socket-params').forEach((el) => {
+      el.hidden = el.getAttribute('data-socket') !== socket;
+    });
+  }
+
+  // Resolve the lampshade's socket thread (diameter + pitch) — from the
+  // built-in IEC 60399 table the generator itself exports, so the preview and
+  // the G-code can never disagree about what an E14 or E27 actually is.
+  function lampThread(cfg) {
+    const ls = cfg.lamp || {};
+    if (ls.socket === 'custom') return { diameter: ls.customDiameter, pitch: ls.customPitch, label: 'custom' };
+    return window.GcodeGen.LAMP_SOCKETS[ls.socket] || window.GcodeGen.LAMP_SOCKETS.e27;
+  }
+
+  // Lampshade: side elevation of the revolve profile (both sides mirrored
+  // about the axis), built from the same Geo.lampProfile the generator uses.
+  // The profile is the thing worth seeing here — the wall angle, where the
+  // fillet lands, and how much straight throat is left to grip the socket.
+  function drawPreviewLamp(cfg) {
+    const canvas = $('ls_preview');
+    const ctx = canvas.getContext('2d');
+    const W = canvas.width;
+    const H = canvas.height;
+    ctx.clearRect(0, 0, W, H);
+    const sf = W / 600;
+
+    const ls = cfg.lamp || {};
+    const thread = lampThread(cfg);
+    if (!isPos(cfg.lineWidth) || !isPos(thread.diameter) || !isPos(thread.pitch) ||
+        !isPos(ls.bottomDiameter) || !isPos(ls.transitionHeight)) {
+      $('ls_hint').textContent = 'Enter a valid socket, line width, bottom opening and transition height.';
+      $('ls_compHint').textContent = '';
+      return;
+    }
+    const innerD = thread.diameter + (ls.fitTolerance || 0);
+    const rThroat = (innerD + cfg.lineWidth) / 2;
+    const prof = window.Geo.lampProfile({
+      rThroat: rThroat,
+      rBottom: ls.bottomDiameter / 2,
+      throatLen: ls.throatLength,
+      transitionH: ls.transitionHeight,
+      fillet: ls.fillet,
+    });
+    let pts = prof.pts;
+    if (ls.orientation === 'wide') pts = window.Geo.flipLampProfile(pts);
+    const totalH = pts[pts.length - 1].z;
+    const coneDeg = (Math.abs(prof.angle) * 180) / Math.PI;
+
+    $('ls_hint').textContent =
+      'Throat inner ⌀' + innerD.toFixed(2) + ' mm on a ⌀' + thread.diameter + ' × ' + thread.pitch +
+      ' mm thread · layer height locked to ' + thread.pitch + ' mm (the pitch) · wall ' + coneDeg.toFixed(1) +
+      '° from vertical · total height ' + totalH.toFixed(1) + ' mm' +
+      (prof.fillet !== ls.fillet ? ' · fillet clamped to ' + prof.fillet.toFixed(1) + ' mm' : '');
+
+    // Compensation read-out: the resulting bead width / layer rise at the
+    // steepest point, plus the support ratio (how much of each bead lands on
+    // the one below) — the number that actually predicts drooping.
+    const a = Math.abs(prof.angle);
+    const c = Math.max(0.05, Math.cos(a));
+    const k = Math.max(0, Math.min(1, (ls.compStrength != null ? ls.compStrength : 100) / 100));
+    const maxMult = ls.compMaxMult > 0 ? ls.compMaxMult : 2.5;
+    let wEff = cfg.lineWidth;
+    let dzEff = thread.pitch;
+    if (ls.compMode === 'width') wEff = cfg.lineWidth * Math.min(maxMult, 1 + k * (1 / c - 1));
+    else if (ls.compMode === 'layerHeight') dzEff = thread.pitch * (1 - k * (1 - c));
+    const support = Math.max(0, 1 - (dzEff * Math.tan(a)) / wEff);
+    $('ls_compHint').textContent =
+      ls.compMode === 'off'
+        ? 'No compensation: ' + cfg.lineWidth + ' mm bead, ' + thread.pitch + ' mm rise — ' +
+          Math.round(support * 100) + '% of each bead lands on the one below at the steepest point.'
+        : 'At ' + coneDeg.toFixed(1) + '°: bead ' + wEff.toFixed(2) + ' mm, rise ' + dzEff.toFixed(2) +
+          ' mm → ' + Math.round(support * 100) + '% of each bead lands on the one below' +
+          (ls.compMode === 'layerHeight' ? ' (extrusion still uses the full ' + thread.pitch + ' mm, so it squeezes wider).' : '.');
+
+    // Draw: axis, then the profile mirrored either side of it.
+    const maxR = Math.max(...pts.map((p) => p.r));
+    const pad = 26 * sf;
+    const scale = Math.min((W / 2 - pad) / (maxR || 1), (H - 2 * pad) / (totalH || 1));
+    const cxp = W / 2;
+    const baseY = H - pad;
+    const X = (r) => cxp + r * scale;
+    const Y = (z) => baseY - z * scale;
+
+    ctx.strokeStyle = 'rgba(255,255,255,0.25)';
+    ctx.lineWidth = 1 * sf;
+    ctx.setLineDash([4 * sf, 4 * sf]);
+    ctx.beginPath();
+    ctx.moveTo(cxp, Y(0));
+    ctx.lineTo(cxp, Y(totalH));
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Bed line.
+    ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+    ctx.beginPath();
+    ctx.moveTo(pad, Y(0));
+    ctx.lineTo(W - pad, Y(0));
+    ctx.stroke();
+
+    ctx.strokeStyle = '#4f9dff';
+    ctx.lineWidth = 2 * sf;
+    [1, -1].forEach((side) => {
+      ctx.beginPath();
+      pts.forEach((p, i) => {
+        const px = cxp + side * p.r * scale;
+        const py = Y(p.z);
+        if (i === 0) ctx.moveTo(px, py);
+        else ctx.lineTo(px, py);
+      });
+      ctx.stroke();
+    });
+
+    // Mark the straight throat — the part that actually grips the socket.
+    const throatPts = pts.filter((p) => Math.abs(p.a) < 1e-9);
+    if (throatPts.length > 1) {
+      ctx.strokeStyle = '#2bd9a0';
+      ctx.lineWidth = 3.5 * sf;
+      [1, -1].forEach((side) => {
+        ctx.beginPath();
+        ctx.moveTo(cxp + side * throatPts[0].r * scale, Y(throatPts[0].z));
+        ctx.lineTo(cxp + side * throatPts[throatPts.length - 1].r * scale, Y(throatPts[throatPts.length - 1].z));
+        ctx.stroke();
+      });
+    }
+  }
+
   // Spoon: single flat spiral + stick path, same Geo.spoonPath the generator
   // itself uses, so the preview always matches the actual G-code exactly.
   function drawPreviewSpoon(cfg) {
@@ -730,6 +926,10 @@
     }
     if (cfg.project === 'spoon') {
       drawPreviewSpoon(cfg);
+      return;
+    }
+    if (cfg.project === 'lamp') {
+      drawPreviewLamp(cfg);
       return;
     }
     const canvas = $('preview');
@@ -1400,6 +1600,8 @@
       syncFlowFeedHint(cfg);
     } else if (cfg.project === 'spoon') {
       syncSpoonFlowFeedHint(cfg);
+    } else if (cfg.project === 'lamp') {
+      showLampSocketParams(cfg.lamp.socket);
     }
     syncPrinterCards();
   }
@@ -1599,6 +1801,8 @@
         ? 'vessel_' + $('ve_shape').value
         : p === 'spoon'
         ? 'spoon'
+        : p === 'lamp'
+        ? 'lampshade'
         : 'vase_' + $('shape').value;
     return stem + '_' + Date.now() + '.gcode';
   }
@@ -1766,7 +1970,7 @@
   // Size canvas backing stores to the displayed size × devicePixelRatio so
   // lines are crisp on retina screens (drawing code scales strokes via W/600).
   function fitCanvases() {
-    ['preview', 'previewBS', 've_preview', 've_profile', 'sp_preview', 'preview3d'].forEach((id) => {
+    ['preview', 'previewBS', 've_preview', 've_profile', 'sp_preview', 'ls_preview', 'preview3d'].forEach((id) => {
       const c = $(id);
       const dpr = Math.min(window.devicePixelRatio || 1, 2.5);
       const w = c.clientWidth || 600;
@@ -1816,6 +2020,8 @@
     $('bs_flowFeedFields').hidden = !$('bs_flowFeedEnabled').checked;
     $('ve_brimFields').hidden = !$('ve_brimEnabled').checked;
     $('sp_flowFeedFields').hidden = !$('sp_flowFeedEnabled').checked;
+    $('ls_brimFields').hidden = !$('ls_brimEnabled').checked;
+    showLampSocketParams($('ls_socket').value);
     showProject(activeProject());
   }
 
@@ -1906,6 +2112,32 @@
       if (a.type === 'checkbox') b.checked = a.checked;
       else b.value = a.value;
     });
+  }
+
+  // Same again for the lampshade. Layer height is deliberately NOT seeded —
+  // it's the socket's thread pitch, not a free setting on this project.
+  const SEED_MAP_LS = {
+    lineWidth: 'ls_lineWidth', printFeed: 'ls_printFeed', travelFeed: 'ls_travelFeed',
+    tolerance: 'ls_tolerance', centerX: 'ls_centerX', centerY: 'ls_centerY',
+    printerMode: 'ls_printerMode', extrusionMultiplier: 'ls_extrusionMultiplier',
+    startEndEnabled: 'ls_startEndEnabled',
+    filDiameter: 'ls_filDiameter', filNozzleTemp: 'ls_filNozzleTemp',
+    filBedTemp: 'ls_filBedTemp', filFan: 'ls_filFan',
+    pelUpTemp: 'ls_pelUpTemp', pelMidTemp: 'ls_pelMidTemp', pelDownTemp: 'ls_pelDownTemp',
+    pelBedTemp: 'ls_pelBedTemp', pelPA: 'ls_pelPA', pelPurge: 'ls_pelPurge', pelFan: 'ls_pelFan',
+    brimEnabled: 'ls_brimEnabled', brimLinesOuter: 'ls_brimLinesOuter',
+    brimLineWidth: 'ls_brimLineWidth', brimFeed: 'ls_brimFeed',
+  };
+
+  function seedLamp() {
+    Object.keys(SEED_MAP_LS).forEach((src) => {
+      const a = $(src);
+      const b = $(SEED_MAP_LS[src]);
+      if (!a || !b) return;
+      if (a.type === 'checkbox') b.checked = a.checked;
+      else b.value = a.value;
+    });
+    $('ls_brimFields').hidden = !$('ls_brimEnabled').checked;
   }
 
   // Double-buffered save: the previous good state is kept under a backup key,
@@ -2045,6 +2277,11 @@
     updateShapeUI();
   });
 
+  $('ls_brimEnabled').addEventListener('change', () => {
+    $('ls_brimFields').hidden = !$('ls_brimEnabled').checked;
+    updateShapeUI();
+  });
+
   $('ve_brimEnabled').addEventListener('change', () => {
     $('ve_brimFields').hidden = !$('ve_brimEnabled').checked;
     updateShapeUI();
@@ -2061,6 +2298,7 @@
   $('tabBendstool').addEventListener('click', () => switchProject('bendstool'));
   $('tabVessel').addEventListener('click', () => switchProject('vessel'));
   $('tabSpoon').addEventListener('click', () => switchProject('spoon'));
+  $('tabLamp').addEventListener('click', () => switchProject('lamp'));
 
   $('regenBtn').addEventListener('click', regenerate);
   $('copyBtn').addEventListener('click', copy);
@@ -2125,6 +2363,7 @@
   if (restored && !('bs_layerHeight' in restored)) seedBendstool();
   if (restored && !('ve_layerHeight' in restored)) seedVessel();
   if (restored && !('sp_layerHeight' in restored)) seedSpoon();
+  if (restored && !('ls_lineWidth' in restored)) seedLamp();
   showProject(activeProject());
   fitCanvases();
   updateShapeUI();
