@@ -723,8 +723,342 @@
     return { gcode: lines.join('\n') + '\n', warnings, stats, path };
   }
 
+  // Standard lampholder shade-ring threads (IEC 60399 "barrel thread for
+  // lampholders with shade holder ring" — the external thread the decorative
+  // ring screws onto, NOT the M10x1 internal fixing thread most searches turn
+  // up). The printed throat is a plain helix whose pitch matches the socket's,
+  // so the socket's thread crests groove into the inside of the wall as it is
+  // screwed on — which means the LAYER HEIGHT is not a free setting on this
+  // project, it IS the thread pitch.
+  const LAMP_SOCKETS = {
+    e14: { diameter: 28, pitch: 2.0, label: 'E14 28x2.0' },
+    e27: { diameter: 40, pitch: 2.5, label: 'E27 40x2.5' },
+  };
+
+  // Lampshade: a threaded throat that screws onto an E14/E27 lampholder,
+  // flaring through a tangent fillet into a conical shade. One continuous
+  // vase-mode helix from the bed to the rim. Kept as its own generator (like
+  // the spoon) rather than threaded through generate()'s branching — the
+  // radius follows an arbitrary r/z profile with per-turn extrusion
+  // compensation, which shares no logic with the other projects' walls.
+  function generateLamp(cfg) {
+    const warnings = [];
+    const lines = [];
+    const path = [];
+    let totalVolume = 0;
+    let pathLength = 0;
+    let moveCount = 0;
+
+    const cx = cfg.centerX;
+    const cy = cfg.centerY;
+    const ls = cfg.lamp || {};
+    const lwBase = cfg.lineWidth;
+
+    function bail(msg) {
+      return {
+        gcode: '; ERROR: ' + msg,
+        warnings: [msg],
+        stats: { volume: 0, pathLength: 0, moves: 0, loops: 0, timeMin: 0, materialVolume: 0, actualTimeMin: 0 },
+        path: [],
+      };
+    }
+
+    const sock =
+      ls.socket === 'custom'
+        ? { diameter: ls.customDiameter, pitch: ls.customPitch, label: 'custom' }
+        : LAMP_SOCKETS[ls.socket] || LAMP_SOCKETS.e27;
+    if (!(sock.diameter > 0) || !(sock.pitch > 0)) return bail('Enter a valid socket thread diameter and pitch.');
+    // Layer height IS the thread pitch — that is what makes the printed helix
+    // mate with the socket's own thread.
+    const lh = sock.pitch;
+    if (!(lwBase > 0)) return bail('Enter a valid line width.');
+    if (lwBase < lh) {
+      warnings.push('Line width is less than the thread pitch (layer height) — bead width clamped to layer height.');
+    }
+
+    // The wall's INNER surface has to land on the socket thread, so the
+    // toolpath centreline sits half a line width outside it on each side.
+    // Fit tolerance shifts the inner surface: negative = tighter (the socket's
+    // crests press further into the plastic), positive = looser.
+    const innerD = sock.diameter + (ls.fitTolerance || 0);
+    const rThroat = (innerD + lwBase) / 2;
+    const rBottom = (ls.bottomDiameter || 0) / 2;
+    if (!(rBottom > 0)) return bail('Enter a valid bottom opening diameter.');
+    if (!(ls.transitionHeight > 0)) return bail('Enter a valid transition height.');
+
+    const prof = Geo.lampProfile({
+      rThroat: rThroat,
+      rBottom: rBottom,
+      throatLen: Math.max(0, ls.throatLength || 0),
+      transitionH: ls.transitionHeight,
+      fillet: Math.max(0, ls.fillet || 0),
+    });
+    prof.warnings.forEach((w) => warnings.push(w));
+
+    let ppts = prof.pts;
+    if (ls.orientation === 'wide') ppts = Geo.flipLampProfile(ppts);
+    const sampler = Geo.makeLampSampler(ppts);
+    const H = sampler.height;
+    if (!(H > lh)) return bail('Shade is shorter than one layer — increase throat length or transition height.');
+
+    const coneDeg = (Math.abs(prof.angle) * 180) / Math.PI;
+    if (coneDeg > 50) {
+      warnings.push(
+        'Wall leans ' + coneDeg.toFixed(1) + ' deg from vertical — past roughly 50 deg a vase-mode wall ' +
+          'usually needs a wider bead, slower moves and strong cooling to not droop.'
+      );
+    }
+
+    // ---- Overhang compensation ----
+    // A wall leaning `a` from vertical steps sideways by lh*tan(a) per turn,
+    // and consecutive bead centres end up lh/cos(a) apart measured ALONG the
+    // wall — so cos(a) is the whole story, applied either to the bead width
+    // (a wider bead spans the step) or to the physical Z rise (squeeze the
+    // same material into a shorter gap so it spreads sideways). Strength
+    // blends linearly between no compensation and the full geometric factor.
+    const compMode = ls.compMode === 'layerHeight' || ls.compMode === 'width' ? ls.compMode : 'off';
+    const compK = Math.max(0, Math.min(1, (ls.compStrength != null ? ls.compStrength : 100) / 100));
+    const compMax = ls.compMaxMult > 0 ? ls.compMaxMult : 2.5;
+    function compAt(a) {
+      const c = Math.max(0.05, Math.cos(Math.abs(a)));
+      if (compMode === 'width') {
+        const mult = Math.min(compMax, 1 + compK * (1 / c - 1));
+        return { w: lwBase * mult, dz: lh, hExtrude: null };
+      }
+      if (compMode === 'layerHeight') {
+        // Physical rise shrinks, but the extrusion below still uses the FULL
+        // layer height — that deliberate over-fill IS the squeeze that
+        // widens the bead into the overhang. Extruding for the reduced
+        // height instead would just print a thinner wall and do nothing.
+        return { w: lwBase, dz: lh * (1 - compK * (1 - c)), hExtrude: lh };
+      }
+      return { w: lwBase, dz: lh, hExtrude: null };
+    }
+    const areaFor = (t) => beadArea(t.w, t.hExtrude != null ? t.hExtrude : t.dz);
+
+    // Walk the spiral turn by turn, reading the local wall angle at the start
+    // of each turn — the angle changes slowly next to a whole revolution, and
+    // per-turn is the finest granularity compensation can act at anyway.
+    const turns = [];
+    let zc = 0;
+    let guard = 0;
+    while (zc < H - 1e-6 && guard++ < 200000) {
+      const c = compAt(sampler.at(zc).a);
+      let dz = c.dz;
+      if (zc + dz > H) dz = H - zc;
+      // A hair-thin final turn would badly over-extrude in layer-height mode
+      // (its E is computed for a full layer height) and gains nothing — stop
+      // and let the closing turn finish the rim instead.
+      if (dz < c.dz * 0.25) break;
+      turns.push({ z: zc, dz: dz, w: c.w, a: sampler.at(zc).a, hExtrude: c.hExtrude });
+      zc += dz;
+    }
+    if (!turns.length) return bail('Shade is too short to print — increase throat length or transition height.');
+
+    let wMin = Infinity;
+    let wMax = 0;
+    let dzMin = Infinity;
+    let dzMax = 0;
+    turns.forEach((t) => {
+      if (t.w < wMin) wMin = t.w;
+      if (t.w > wMax) wMax = t.w;
+      if (t.dz < dzMin) dzMin = t.dz;
+      if (t.dz > dzMax) dzMax = t.dz;
+    });
+    // Support ratio: the fraction of each bead that lands on the one below.
+    // This is the number that actually predicts drooping, so it is worth
+    // surfacing rather than leaving the compensation as a black box.
+    const worst = turns.reduce((m, t) => (Math.abs(t.a) > Math.abs(m.a) ? t : m), turns[0]);
+    const support = Math.max(0, 1 - (worst.dz * Math.tan(Math.abs(worst.a))) / worst.w);
+
+    // ---- Printer / extrusion mode ----
+    const printer = cfg.printer || {};
+    const mode = printer.mode === 'filament' ? 'filament' : 'pellet';
+    const mult = printer.multiplier > 0 ? printer.multiplier : 1;
+    const fil = printer.filament || {};
+    const pel = printer.pellet || {};
+    const filDia = fil.diameter > 0 ? fil.diameter : 1.75;
+    const eFactor = mult / (mode === 'filament' ? Math.PI * (filDia / 2) * (filDia / 2) : 1);
+    const includeStartEnd = !!printer.includeStartEnd;
+    const tol = cfg.tolerance > 0 ? cfg.tolerance : 0.05;
+
+    lines.push('; EasyGCode — lampshade (threaded throat + conical shade) generator');
+    lines.push('; ' + new Date().toISOString());
+    lines.push(
+      '; socket=' + sock.label + ' threadDia=' + sock.diameter + ' pitch=' + sock.pitch +
+        ' fit=' + (ls.fitTolerance || 0) + 'mm -> throat inner dia=' + innerD.toFixed(2)
+    );
+    lines.push(
+      '; throat=' + (ls.throatLength || 0) + ' transition=' + ls.transitionHeight + ' fillet=' +
+        prof.fillet.toFixed(1) + ' bottomDia=' + (ls.bottomDiameter || 0) + ' totalHeight=' + H.toFixed(2)
+    );
+    lines.push(
+      '; layerHeight=' + lh + ' (= thread pitch) lineWidth=' + lwBase +
+        ' orientation=' + (ls.orientation === 'wide' ? 'wide edge down' : 'throat down')
+    );
+    lines.push(
+      '; wall angle=' + coneDeg.toFixed(1) + ' deg from vertical, compensation=' + compMode +
+        (compMode === 'off' ? '' : ' @' + Math.round(compK * 100) + '%') +
+        ' -> lineWidth ' + wMin.toFixed(2) + '..' + wMax.toFixed(2) +
+        ' layerRise ' + dzMin.toFixed(2) + '..' + dzMax.toFixed(2) +
+        ', support ' + Math.round(support * 100) + '% at the steepest point'
+    );
+    lines.push(
+      '; printer=' + mode + ' multiplier=' + mult +
+        (mode === 'filament' ? ' filamentDiameter=' + filDia + ' (E in mm of filament)' : ' (E in mm^3, volumetric)')
+    );
+    if (includeStartEnd) {
+      (mode === 'filament' ? marlinStart(fil) : klipperStart(pel)).forEach((l) => lines.push(l));
+    }
+    lines.push('G90 ; absolute positioning');
+    lines.push('M83 ; relative extrusion');
+
+    let prev = null;
+    let lastFeed = null;
+    let firstExtrude = true;
+    let maxZEver = 0;
+    function noteZ(z) {
+      if (z > maxZEver) maxZEver = z;
+    }
+    function travelAbs(cur) {
+      lines.push('G0 X' + f3(cur.x) + ' Y' + f3(cur.y) + ' Z' + f3(cur.z) + ' F' + Math.round(cfg.travelFeed));
+      lastFeed = cfg.travelFeed;
+      path.push({ x: cur.x, y: cur.y, z: cur.z, travel: true, feed: cfg.travelFeed });
+      prev = cur;
+      moveCount++;
+    }
+    function hopTravel(dest, clearMargin) {
+      const clearZ = Math.max(prev.z, dest.z, clearMargin);
+      if (clearZ > prev.z + 1e-6) travelAbs({ x: prev.x, y: prev.y, z: clearZ });
+      travelAbs({ x: dest.x, y: dest.y, z: clearZ });
+      if (dest.z < clearZ - 1e-6) travelAbs(dest);
+    }
+    function emitSeg(cur, feed, ramp, area) {
+      const segLen = dist3(prev, cur);
+      if (segLen < 1e-7) {
+        prev = cur;
+        return;
+      }
+      const dVol = area * segLen * ramp;
+      totalVolume += dVol;
+      pathLength += segLen;
+      let line = 'G1 X' + f3(cur.x) + ' Y' + f3(cur.y) + ' Z' + f3(cur.z) + ' E' + f5(dVol * eFactor);
+      if (feed !== lastFeed || firstExtrude) {
+        line += ' F' + Math.round(feed);
+        lastFeed = feed;
+      }
+      lines.push(line);
+      path.push({ x: cur.x, y: cur.y, z: cur.z, travel: false, feed: feed });
+      firstExtrude = false;
+      moveCount++;
+      prev = cur;
+      noteZ(cur.z);
+    }
+    // Seam at the back (+Y). The helix always runs counter-clockwise as it
+    // rises: that is a RIGHT-hand thread, which is what Edison sockets use.
+    // (Handedness survives flipping the part end-over-end, so this is correct
+    // for both print orientations.)
+    const SEAM = Math.PI / 2;
+    const stepsFor = (r) => {
+      let dth = 2 * Math.acos(Math.max(-1, 1 - tol / Math.max(r, 1e-6)));
+      if (!isFinite(dth) || dth <= 0) dth = 0.2;
+      return Math.max(24, Math.ceil((2 * Math.PI) / dth));
+    };
+    const ptAt = (r, th, z) => ({ x: cx + r * Math.cos(th), y: cy + r * Math.sin(th), z: z });
+
+    // ---- Brim (outer rings) ----
+    const brim = cfg.brim || {};
+    const brimOn = !!brim.enabled && brim.linesOuter > 0 && brim.lineWidth > 0 && brim.layerHeight > 0;
+    let brimPrinted = false;
+    if (brimOn) {
+      const bArea = beadArea(brim.lineWidth, brim.layerHeight);
+      const brimFeed = brim.feed > 0 ? brim.feed : cfg.printFeed;
+      const r0 = sampler.at(0).r;
+      lines.push('; --- brim: ' + brim.linesOuter + ' outer ring(s) ---');
+      // Outermost ring first, working inward toward the wall and leaving
+      // exactly one line width of gap for the wall itself — same convention
+      // as every other project's brim.
+      for (let k = brim.linesOuter; k >= 1; k--) {
+        const rr = r0 + brim.lineWidth / 2 + lwBase / 2 + (k - 1) * brim.lineWidth;
+        const steps = stepsFor(rr);
+        const p0 = ptAt(rr, SEAM, brim.layerHeight);
+        if (prev === null) travelAbs(p0);
+        else hopTravel(p0, 2 * brim.layerHeight);
+        for (let s = 1; s <= steps; s++) {
+          emitSeg(ptAt(rr, SEAM + (2 * Math.PI * s) / steps, brim.layerHeight), brimFeed, 1, bArea);
+        }
+      }
+      brimPrinted = true;
+    }
+
+    // ---- The spiral ----
+    const feed = cfg.printFeed;
+    const start = ptAt(sampler.at(0).r, SEAM, 0);
+    if (prev === null) travelAbs(start);
+    else hopTravel(start, brimPrinted ? 2 * brim.layerHeight : lh);
+
+    lines.push('; --- shade: ' + turns.length + ' revolutions to z=' + H.toFixed(2) + ' ---');
+    for (let i = 0; i < turns.length; i++) {
+      const t = turns[i];
+      const area = areaFor(t);
+      const steps = stepsFor(Math.max(sampler.at(t.z).r, sampler.at(t.z + t.dz).r));
+      for (let s = 1; s <= steps; s++) {
+        const u = s / steps;
+        const zp = t.z + t.dz * u;
+        // First revolution ramps extrusion 0 -> 100% (midpoint-averaged over
+        // each segment), arriving at exactly one layer height, so the spiral
+        // starts flush with the bed instead of with a step.
+        const ramp = i === 0 ? (u + (s - 1) / steps) / 2 : 1;
+        emitSeg(ptAt(sampler.at(zp).r, SEAM + 2 * Math.PI * u, zp), feed, ramp, area);
+      }
+    }
+
+    // Closing revolution: no rise AND no radius gain, so it lands exactly on
+    // top of the turn below (a spiral that kept flaring here would leave the
+    // ramp-down hanging in mid-air), with extrusion ramping back to zero to
+    // finish the rim cleanly.
+    const last = turns[turns.length - 1];
+    const zTop = last.z + last.dz;
+    const rTop = sampler.at(zTop).r;
+    const capArea = areaFor(last);
+    const capSteps = stepsFor(rTop);
+    lines.push('; --- closing revolution: flat, extrusion ramped to zero ---');
+    for (let s = 1; s <= capSteps; s++) {
+      const u = s / capSteps;
+      const ramp = Math.max(0, 1 - (u + (s - 1) / capSteps) / 2);
+      emitSeg(ptAt(rTop, SEAM + 2 * Math.PI * u, zTop), feed, ramp, capArea);
+    }
+
+    if (includeStartEnd) {
+      const endLift = Math.max(5 * maxZEver, mode === 'filament' ? 5 : 10);
+      (mode === 'filament' ? marlinEnd(endLift) : klipperEnd(endLift)).forEach((l) => lines.push(l));
+    }
+
+    let timeMin = 0;
+    for (let i = 1; i < path.length; i++) {
+      const d = dist3(path[i - 1], path[i]);
+      if (path[i].feed > 0) timeMin += d / path[i].feed;
+    }
+    const stats = {
+      volume: totalVolume,
+      pathLength: pathLength,
+      moves: moveCount,
+      loops: turns.length + 1,
+      timeMin: timeMin,
+      materialVolume: totalVolume,
+      actualTimeMin: timeMin,
+      lampHeight: H,
+      lampAngle: coneDeg,
+      lampSupport: support,
+      lampWidthRange: [wMin, wMax],
+      lampRiseRange: [dzMin, dzMax],
+    };
+    return { gcode: lines.join('\n') + '\n', warnings, stats, path };
+  }
+
   function generate(cfg) {
     if (cfg.project === 'spoon') return generateSpoon(cfg);
+    if (cfg.project === 'lamp') return generateLamp(cfg);
 
     const warnings = [];
     const lines = [];
@@ -2493,6 +2827,7 @@
     makeProfile,
     BS_ROTATION_DEG,
     SPOON_ROTATION_DEG,
+    LAMP_SOCKETS,
     discBedFit,
     domeHeightRange,
   };

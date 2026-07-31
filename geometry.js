@@ -1135,12 +1135,125 @@
     return pts;
   }
 
+  // ---- Lampshade profile (the revolve curve, in r/z) ----
+  // Built bottom-up in PRINT orientation: a straight throat, a tangent-arc
+  // fillet, then a straight cone out to the bottom opening. `throatLen` is
+  // the length of the FULL-diameter straight section that grips the socket —
+  // the fillet is inserted ABOVE it, so the total height comes out as
+  // throatLen + filletTangent + transitionH (the fillet lengthens the shade
+  // rather than eating into the part that has to hold onto the lampholder).
+  //
+  // Returned as a DENSE (r, z, a) polyline — `a` = local wall angle from
+  // vertical, in radians, signed (+ = flaring outward going up) — rather than
+  // as an analytic description. Everything downstream only ever asks "what is
+  // the radius and the local angle at this z", so future profile shapes
+  // (bezier flares, spheres) can drop straight in by producing the same
+  // polyline, without the generator or the compensation math changing at all.
+  function lampProfile(p) {
+    const rThroat = p.rThroat;
+    const rBottom = p.rBottom;
+    const throatLen = Math.max(0, p.throatLen);
+    const transitionH = Math.max(1e-6, p.transitionH);
+    const dr = rBottom - rThroat;
+    const aCone = Math.atan2(Math.abs(dr), transitionH);
+    const sgn = dr >= 0 ? 1 : -1;
+    const warnings = [];
+
+    const pts = [{ r: rThroat, z: 0, a: 0 }];
+    if (throatLen > 1e-9) pts.push({ r: rThroat, z: throatLen, a: 0 });
+
+    // No flare at all — a plain cylinder, nothing to fillet.
+    if (aCone < 1e-6) {
+      pts.push({ r: rBottom, z: throatLen + transitionH, a: 0 });
+      return { pts: pts, angle: 0, fillet: 0, warnings: warnings };
+    }
+
+    // Fillet tangent length t = R*tan(a/2), inserted between the throat's top
+    // and the cone's (virtual) corner. Clamped so the straight cone section
+    // past the fillet can never vanish — t has to stay inside the cone's own
+    // slant length.
+    let R = Math.max(0, p.fillet || 0);
+    const slant = transitionH / Math.cos(aCone);
+    const maxR = (0.95 * slant) / Math.tan(aCone / 2);
+    if (R > maxR) {
+      R = maxR;
+      warnings.push(
+        'Fillet radius is too large for this transition height — clamped to ' + R.toFixed(1) + 'mm.'
+      );
+    }
+    const t = R * Math.tan(aCone / 2);
+
+    if (R > 1e-9) {
+      // Arc centre sits one radius to the side of the throat wall, level with
+      // the throat's top (which is the arc's lower tangent point).
+      const cr = rThroat + sgn * R;
+      const steps = Math.max(6, Math.ceil(aCone / 0.05));
+      for (let i = 1; i <= steps; i++) {
+        const phi = (aCone * i) / steps;
+        pts.push({
+          r: cr - sgn * R * Math.cos(phi),
+          z: throatLen + R * Math.sin(phi),
+          a: sgn * phi,
+        });
+      }
+    } else {
+      // Sharp corner: repeat the point with the cone's angle so the angle
+      // steps discontinuously here instead of ramping across the cone.
+      pts.push({ r: rThroat, z: throatLen, a: sgn * aCone });
+    }
+    pts.push({ r: rBottom, z: throatLen + t + transitionH, a: sgn * aCone });
+    return { pts: pts, angle: sgn * aCone, fillet: R, warnings: warnings };
+  }
+
+  // Radius + local wall angle anywhere along a lampshade profile, by linear
+  // interpolation between the two bracketing points (binary search, so it
+  // stays cheap however dense the profile gets).
+  function makeLampSampler(pts) {
+    const n = pts.length;
+    const top = pts[n - 1].z;
+    return {
+      height: top,
+      at: function (z) {
+        if (z <= pts[0].z) return { r: pts[0].r, a: pts[0].a };
+        if (z >= top) return { r: pts[n - 1].r, a: pts[n - 1].a };
+        let lo = 0;
+        let hi = n - 1;
+        while (hi - lo > 1) {
+          const mid = (lo + hi) >> 1;
+          if (pts[mid].z <= z) lo = mid;
+          else hi = mid;
+        }
+        const A = pts[lo];
+        const B = pts[hi];
+        const span = B.z - A.z;
+        if (span < 1e-9) return { r: B.r, a: B.a };
+        const f = Math.max(0, Math.min(1, (z - A.z) / span));
+        return { r: A.r + (B.r - A.r) * f, a: A.a + (B.a - A.a) * f };
+      },
+    };
+  }
+
+  // Mirror a profile top-to-bottom — print the wide rim on the bed instead of
+  // the throat. Same wall and same angle magnitudes; it just leans inward
+  // going up rather than outward.
+  function flipLampProfile(pts) {
+    const top = pts[pts.length - 1].z;
+    const out = [];
+    for (let i = pts.length - 1; i >= 0; i--) {
+      out.push({ r: pts[i].r, z: top - pts[i].z, a: -pts[i].a });
+    }
+    return out;
+  }
+
   window.Geo = {
     bezierPts,
     buildHangerLoop,
     buildDoubleHangerLoop,
     stoolLoop,
     ringFill,
+    lampProfile,
+    makeLampSampler,
+    flipLampProfile,
     rdpClosed,
     adaptiveShape,
     rotateToSeam,
