@@ -786,12 +786,21 @@
     if (!(rBottom > 0)) return bail('Enter a valid bottom opening diameter.');
     if (!(ls.transitionHeight > 0)) return bail('Enter a valid transition height.');
 
+    const shape = ['cone', 'arcOut', 'arcIn', 'sphere'].indexOf(ls.shape) >= 0 ? ls.shape : 'cone';
+    const rSphere = (ls.sphereDiameter || 0) / 2;
+    if (shape === 'sphere') {
+      if (!(rSphere > rThroat)) return bail('Sphere diameter must be larger than the throat.');
+      if (!(rSphere > rBottom)) return bail('Sphere diameter must be larger than the bottom opening.');
+    }
     const prof = Geo.lampProfile({
       rThroat: rThroat,
       rBottom: rBottom,
       throatLen: Math.max(0, ls.throatLength || 0),
       transitionH: ls.transitionHeight,
       fillet: Math.max(0, ls.fillet || 0),
+      shape: shape,
+      maxAngle: ((ls.maxAngle || 0) * Math.PI) / 180,
+      sphereRadius: rSphere,
     });
     prof.warnings.forEach((w) => warnings.push(w));
 
@@ -804,7 +813,7 @@
     const coneDeg = (Math.abs(prof.angle) * 180) / Math.PI;
     if (coneDeg > 50) {
       warnings.push(
-        'Wall leans ' + coneDeg.toFixed(1) + ' deg from vertical — past roughly 50 deg a vase-mode wall ' +
+        'Wall reaches ' + coneDeg.toFixed(1) + ' deg from vertical — past roughly 50 deg a vase-mode wall ' +
           'usually needs a wider bead, slower moves and strong cooling to not droop.'
       );
     }
@@ -843,14 +852,20 @@
     let zc = 0;
     let guard = 0;
     while (zc < H - 1e-6 && guard++ < 200000) {
-      const c = compAt(sampler.at(zc).a);
+      // Sample the angle at the turn's MIDPOINT, not its start. On the arc
+      // and sphere shapes the wall angle swings a long way within a single
+      // revolution, and reading it at the start alone would leave the
+      // compensation a full turn behind wherever the curve bends hardest.
+      // One refinement pass is enough: guess the rise from the start angle,
+      // then re-read halfway up that guess.
+      const c = compAt(sampler.at(Math.min(H, zc + compAt(sampler.at(zc).a).dz / 2)).a);
       let dz = c.dz;
       if (zc + dz > H) dz = H - zc;
       // A hair-thin final turn would badly over-extrude in layer-height mode
       // (its E is computed for a full layer height) and gains nothing — stop
       // and let the closing turn finish the rim instead.
       if (dz < c.dz * 0.25) break;
-      turns.push({ z: zc, dz: dz, w: c.w, a: sampler.at(zc).a, hExtrude: c.hExtrude });
+      turns.push({ z: zc, dz: dz, w: c.w, a: sampler.at(Math.min(H, zc + dz / 2)).a, hExtrude: c.hExtrude });
       zc += dz;
     }
     if (!turns.length) return bail('Shade is too short to print — increase throat length or transition height.');
@@ -889,15 +904,18 @@
         ' fit=' + (ls.fitTolerance || 0) + 'mm -> throat inner dia=' + innerD.toFixed(2)
     );
     lines.push(
-      '; throat=' + (ls.throatLength || 0) + ' transition=' + ls.transitionHeight + ' fillet=' +
-        prof.fillet.toFixed(1) + ' bottomDia=' + (ls.bottomDiameter || 0) + ' totalHeight=' + H.toFixed(2)
+      '; shape=' + shape + ' throat=' + (ls.throatLength || 0) +
+        (shape === 'sphere' ? ' sphereDia=' + (ls.sphereDiameter || 0) : ' transition=' + ls.transitionHeight) +
+        ' fillet=' + prof.fillet.toFixed(1) + ' bottomDia=' + (ls.bottomDiameter || 0) +
+        ' totalHeight=' + H.toFixed(2)
     );
     lines.push(
       '; layerHeight=' + lh + ' (= thread pitch) lineWidth=' + lwBase +
         ' orientation=' + (ls.orientation === 'wide' ? 'wide edge down' : 'throat down')
     );
     lines.push(
-      '; wall angle=' + coneDeg.toFixed(1) + ' deg from vertical, compensation=' + compMode +
+      '; wall angle: max=' + coneDeg.toFixed(1) + ' deg at the throat join=' +
+        ((Math.abs(prof.joinAngle) * 180) / Math.PI).toFixed(1) + ' deg, compensation=' + compMode +
         (compMode === 'off' ? '' : ' @' + Math.round(compK * 100) + '%') +
         ' -> lineWidth ' + wMin.toFixed(2) + '..' + wMax.toFixed(2) +
         ' layerRise ' + dzMin.toFixed(2) + '..' + dzMax.toFixed(2) +
@@ -1049,6 +1067,7 @@
       actualTimeMin: timeMin,
       lampHeight: H,
       lampAngle: coneDeg,
+      lampJoinAngle: (Math.abs(prof.joinAngle) * 180) / Math.PI,
       lampSupport: support,
       lampWidthRange: [wMin, wMax],
       lampRiseRange: [dzMin, dzMax],

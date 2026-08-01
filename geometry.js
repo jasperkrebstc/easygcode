@@ -1149,60 +1149,209 @@
   // the radius and the local angle at this z", so future profile shapes
   // (bezier flares, spheres) can drop straight in by producing the same
   // polyline, without the generator or the compensation math changing at all.
+  // --- Flare curves -----------------------------------------------------
+  // Each builds the flare ALONE as a dense [{r, z, a}] polyline starting at
+  // (rThroat, 0) and running to the rim, where `a` is the local wall angle
+  // from vertical, signed (+ = widening as it rises). They are deliberately
+  // plain point lists that share no interface beyond that: the fillet blend,
+  // the sampler and the extrusion compensation downstream never need to know
+  // which shape produced them, so a new shade shape only has to be added
+  // here.
+  const FLARE_STEP = 0.04; // rad between samples on curved flares (~2.3 deg)
+
+  function flareCone(rThroat, rBottom, h) {
+    const a = Math.atan2(rBottom - rThroat, h);
+    return [
+      { r: rThroat, z: 0, a: a },
+      { r: rBottom, z: h, a: a },
+    ];
+  }
+
+  // Leaves the throat tangentially (0 deg) and bends outward as it rises.
+  // Fitted to the box (dr, h) the arc is fully determined and ends at exactly
+  // 2*atan(dr/h) — twice the equivalent cone's angle, so a box that gives a
+  // 45 deg cone gives an arc that finishes horizontal. `maxAngle` caps that:
+  // beyond the cap the curve carries on as a straight cone at the cap angle,
+  // so the rim still lands exactly where it was asked to.
+  function flareArcOut(rThroat, rBottom, h, maxAngle) {
+    const dr = rBottom - rThroat;
+    if (dr <= 1e-9) return flareCone(rThroat, rBottom, h);
+    const coneA = Math.atan2(dr, h);
+    const natural = 2 * coneA;
+    const cap = maxAngle > 0 ? Math.min(maxAngle, Math.PI / 2 - 1e-4) : natural;
+    const pts = [];
+    // A cap at or below the straight-line angle is unreachable — the wall
+    // would have to lean back inward to make the rim. Fall through to a cone.
+    if (cap <= coneA + 1e-6) return flareCone(rThroat, rBottom, h);
+
+    if (cap >= natural - 1e-6) {
+      const R = h / Math.sin(natural);
+      const steps = Math.max(12, Math.ceil(natural / FLARE_STEP));
+      for (let i = 0; i <= steps; i++) {
+        const phi = (natural * i) / steps;
+        pts.push({ r: rThroat + R * (1 - Math.cos(phi)), z: R * Math.sin(phi), a: phi });
+      }
+      return pts;
+    }
+    // Capped: arc up to the cap angle, then straight. Solving the box for R
+    // collapses to (h*tan(cap) - dr) / (sec(cap) - 1).
+    const R = (h * Math.tan(cap) - dr) / (1 / Math.cos(cap) - 1);
+    const steps = Math.max(12, Math.ceil(cap / FLARE_STEP));
+    for (let i = 0; i <= steps; i++) {
+      const phi = (cap * i) / steps;
+      pts.push({ r: rThroat + R * (1 - Math.cos(phi)), z: R * Math.sin(phi), a: phi });
+    }
+    pts.push({ r: rBottom, z: h, a: cap });
+    return pts;
+  }
+
+  // The mirror image: leaves the throat steeply and curves back to vertical
+  // at the rim. Starts at 2*atan(dr/h) — 90 deg when dr equals h, which is
+  // the "sharp turn straight out from the throat" this shape exists for. The
+  // fillet is what makes that printable: it blends the throat into the curve
+  // at a point where the curve has already flattened off.
+  function flareArcIn(rThroat, rBottom, h) {
+    const dr = rBottom - rThroat;
+    if (dr <= 1e-9) return flareCone(rThroat, rBottom, h);
+    const start = 2 * Math.atan2(dr, h);
+    const R = h / Math.sin(start);
+    const steps = Math.max(12, Math.ceil(start / FLARE_STEP));
+    const pts = [];
+    for (let i = 0; i <= steps; i++) {
+      // psi runs from -start up to 0; the rim is where the arc goes vertical.
+      const psi = -start + (start * i) / steps;
+      pts.push({
+        r: rBottom - R + R * Math.cos(psi),
+        z: h + R * Math.sin(psi),
+        a: -psi,
+      });
+    }
+    return pts;
+  }
+
+  // A sphere, with the throat cutting one hole in it and the rim the other.
+  // Parametrised by polar angle rather than z so samples stay even near the
+  // poles — which is exactly where the wall angle changes fastest and the
+  // compensation needs the resolution. Conveniently the wall angle at polar
+  // angle L is just -L, so it falls straight out of the parametrisation.
+  function flareSphere(rThroat, rOpening, rSphere) {
+    const R = rSphere;
+    const l1 = -Math.acos(Math.max(-1, Math.min(1, rThroat / R)));
+    const l2 = Math.acos(Math.max(-1, Math.min(1, rOpening / R)));
+    const z0 = R * Math.sin(l1);
+    const steps = Math.max(16, Math.ceil((l2 - l1) / FLARE_STEP));
+    const pts = [];
+    for (let i = 0; i <= steps; i++) {
+      const L = l1 + ((l2 - l1) * i) / steps;
+      pts.push({ r: R * Math.cos(L), z: R * Math.sin(L) - z0, a: -L });
+    }
+    return pts;
+  }
+
+  // Blend a flare onto the vertical throat with a tangent arc of radius F.
+  // Generic over the curve: a circle of radius F tangent to the throat wall
+  // has its centre at rThroat + F, so the blend point is wherever the curve
+  // first satisfies r + F*cos(a) = rThroat + F. Everything on the curve below
+  // that point is dropped.
+  //
+  // On a straight cone this reproduces the closed-form t = F*tan(a/2)
+  // exactly. On the arcs and the sphere it lands further up the curve, and
+  // that is precisely what makes a near-90-degree departure printable: by the
+  // time the fillet ends, the curve has flattened to something reasonable,
+  // and a bigger fillet pushes the join further up (shallower) still.
+  // Returns the fillet arc plus the surviving curve, or null if no radius of
+  // this size can touch the curve at all.
+  function filletFlare(curve, rThroat, F) {
+    const target = rThroat + F;
+    const g = (p) => p.r + F * Math.cos(p.a) - target;
+    if (F <= 1e-9 || g(curve[0]) >= -1e-9) return { fillet: [], curve: curve, angle: curve[0].a };
+    let hit = -1;
+    for (let i = 1; i < curve.length; i++) {
+      if (g(curve[i]) >= 0) {
+        hit = i;
+        break;
+      }
+    }
+    if (hit < 0) return null; // fillet too big for this curve
+    const A = curve[hit - 1];
+    const B = curve[hit];
+    const gA = g(A);
+    const f = Math.max(0, Math.min(1, gA / (gA - g(B))));
+    const P = { r: A.r + (B.r - A.r) * f, z: A.z + (B.z - A.z) * f, a: A.a + (B.a - A.a) * f };
+    // Fillet centre sits level with P offset along P's own outward normal;
+    // its lower tangent point is where the straight throat ends.
+    const zStart = P.z - F * Math.sin(P.a);
+    const arc = [];
+    const steps = Math.max(4, Math.ceil(Math.abs(P.a) / FLARE_STEP));
+    for (let i = 0; i <= steps; i++) {
+      const phi = (P.a * i) / steps;
+      arc.push({ r: rThroat + F * (1 - Math.cos(phi)), z: zStart + F * Math.sin(phi), a: phi });
+    }
+    return { fillet: arc, curve: [P].concat(curve.slice(hit)), angle: P.a, zStart: zStart };
+  }
+
   function lampProfile(p) {
     const rThroat = p.rThroat;
     const rBottom = p.rBottom;
     const throatLen = Math.max(0, p.throatLen);
     const transitionH = Math.max(1e-6, p.transitionH);
-    const dr = rBottom - rThroat;
-    const aCone = Math.atan2(Math.abs(dr), transitionH);
-    const sgn = dr >= 0 ? 1 : -1;
     const warnings = [];
+    const shape = p.shape || 'cone';
+
+    let flare;
+    if (shape === 'arcOut') {
+      // A cap shallower than the equivalent straight line is unreachable —
+      // the wall would have to lean back inward to still make the rim — so
+      // flareArcOut falls through to a cone. Say so rather than silently
+      // producing a wall steeper than the cap that was asked for.
+      const coneA = Math.atan2(rBottom - rThroat, transitionH);
+      if (p.maxAngle > 0 && p.maxAngle <= coneA + 1e-6) {
+        warnings.push(
+          'Max angle is shallower than the straight-line angle this opening and height need (' +
+            ((coneA * 180) / Math.PI).toFixed(1) + ' deg) — ignored, using a straight cone.'
+        );
+      }
+      flare = flareArcOut(rThroat, rBottom, transitionH, p.maxAngle || 0);
+    }
+    else if (shape === 'arcIn') flare = flareArcIn(rThroat, rBottom, transitionH);
+    else if (shape === 'sphere') flare = flareSphere(rThroat, rBottom, p.sphereRadius);
+    else flare = flareCone(rThroat, rBottom, transitionH);
+
+    // Blend onto the throat, shrinking the fillet if it is too big to touch
+    // the curve at all rather than failing outright.
+    let F = Math.max(0, p.fillet || 0);
+    let blend = filletFlare(flare, rThroat, F);
+    if (!blend) {
+      let lo = 0;
+      let hi = F;
+      for (let i = 0; i < 40; i++) {
+        const mid = (lo + hi) / 2;
+        if (filletFlare(flare, rThroat, mid)) lo = mid;
+        else hi = mid;
+      }
+      F = lo;
+      blend = filletFlare(flare, rThroat, F) || { fillet: [], curve: flare, angle: flare[0].a };
+      warnings.push('Fillet radius is too large for this shade shape — clamped to ' + F.toFixed(1) + 'mm.');
+    }
 
     const pts = [{ r: rThroat, z: 0, a: 0 }];
+    const zJoin = throatLen;
     if (throatLen > 1e-9) pts.push({ r: rThroat, z: throatLen, a: 0 });
+    // The fillet's own lower tangent point becomes the top of the straight
+    // throat, so `throatLen` stays exactly the full-diameter grip length.
+    const shift = zJoin - (blend.zStart != null ? blend.zStart : 0);
+    blend.fillet.forEach((q) => pts.push({ r: q.r, z: q.z + shift, a: q.a }));
+    const cShift = blend.fillet.length ? shift : zJoin;
+    blend.curve.forEach((q, i) => {
+      if (i === 0 && blend.fillet.length) return; // already the fillet's top point
+      pts.push({ r: q.r, z: q.z + cShift, a: q.a });
+    });
 
-    // No flare at all — a plain cylinder, nothing to fillet.
-    if (aCone < 1e-6) {
-      pts.push({ r: rBottom, z: throatLen + transitionH, a: 0 });
-      return { pts: pts, angle: 0, fillet: 0, warnings: warnings };
-    }
-
-    // Fillet tangent length t = R*tan(a/2), inserted between the throat's top
-    // and the cone's (virtual) corner. Clamped so the straight cone section
-    // past the fillet can never vanish — t has to stay inside the cone's own
-    // slant length.
-    let R = Math.max(0, p.fillet || 0);
-    const slant = transitionH / Math.cos(aCone);
-    const maxR = (0.95 * slant) / Math.tan(aCone / 2);
-    if (R > maxR) {
-      R = maxR;
-      warnings.push(
-        'Fillet radius is too large for this transition height — clamped to ' + R.toFixed(1) + 'mm.'
-      );
-    }
-    const t = R * Math.tan(aCone / 2);
-
-    if (R > 1e-9) {
-      // Arc centre sits one radius to the side of the throat wall, level with
-      // the throat's top (which is the arc's lower tangent point).
-      const cr = rThroat + sgn * R;
-      const steps = Math.max(6, Math.ceil(aCone / 0.05));
-      for (let i = 1; i <= steps; i++) {
-        const phi = (aCone * i) / steps;
-        pts.push({
-          r: cr - sgn * R * Math.cos(phi),
-          z: throatLen + R * Math.sin(phi),
-          a: sgn * phi,
-        });
-      }
-    } else {
-      // Sharp corner: repeat the point with the cone's angle so the angle
-      // steps discontinuously here instead of ramping across the cone.
-      pts.push({ r: rThroat, z: throatLen, a: sgn * aCone });
-    }
-    pts.push({ r: rBottom, z: throatLen + t + transitionH, a: sgn * aCone });
-    return { pts: pts, angle: sgn * aCone, fillet: R, warnings: warnings };
+    let maxA = 0;
+    pts.forEach((q) => {
+      if (Math.abs(q.a) > Math.abs(maxA)) maxA = q.a;
+    });
+    return { pts: pts, angle: maxA, joinAngle: blend.angle, fillet: F, warnings: warnings };
   }
 
   // Radius + local wall angle anywhere along a lampshade profile, by linear

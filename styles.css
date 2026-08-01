@@ -178,6 +178,8 @@ canvas#preview,
 canvas#previewBS,
 canvas#ve_preview,
 canvas#ve_profile,
+canvas#sp_preview,
+canvas#ls_preview,
 canvas#preview3d {
   width: 100%;
   height: auto;
@@ -191,6 +193,11 @@ canvas#preview3d {
 
 canvas#ve_profile {
   aspect-ratio: 5 / 3;
+}
+
+/* Side elevation of the shade profile — wider than tall for most shades. */
+canvas#ls_preview {
+  aspect-ratio: 4 / 3;
 }
 
 h3.subhead {

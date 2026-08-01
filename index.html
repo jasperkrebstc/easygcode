@@ -687,10 +687,29 @@
           <div class="field"><label>Thread pitch (mm)</label><input type="number" id="ls_customPitch" value="2.5" min="0.1" step="0.1" /></div>
         </div>
         <div class="grid">
+          <div class="field">
+            <label>Shade shape</label>
+            <select id="ls_shape">
+              <option value="cone">Straight cone</option>
+              <option value="arcOut">Arc — flares outward (bell)</option>
+              <option value="arcIn">Arc — turns out, curls back (dome)</option>
+              <option value="sphere">Sphere</option>
+            </select>
+          </div>
           <div class="field"><label>Throat length (mm, straight section)</label><input type="number" id="ls_throatLength" value="20" min="0" step="1" /></div>
           <div class="field"><label>Fillet radius (mm)</label><input type="number" id="ls_fillet" value="10" min="0" step="1" /></div>
           <div class="field"><label>Bottom opening ⌀ (mm)</label><input type="number" id="ls_bottomDiameter" value="150" min="1" step="5" /></div>
+        </div>
+        <div class="lamp-shape-params grid" data-shape="cone arcOut arcIn">
           <div class="field"><label>Transition height (mm)</label><input type="number" id="ls_transitionHeight" value="52" min="1" step="5" /></div>
+        </div>
+        <div class="lamp-shape-params grid" data-shape="arcOut" hidden>
+          <div class="field"><label>Max angle (°, 0 = uncapped)</label><input type="number" id="ls_maxAngle" value="0" min="0" max="89" step="5" /></div>
+        </div>
+        <div class="lamp-shape-params grid" data-shape="sphere" hidden>
+          <div class="field"><label>Sphere ⌀ (mm)</label><input type="number" id="ls_sphereDiameter" value="200" min="1" step="5" /></div>
+        </div>
+        <div class="grid">
           <div class="field">
             <label>Print orientation</label>
             <select id="ls_orientation">

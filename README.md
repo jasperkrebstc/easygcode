@@ -210,11 +210,37 @@ keep **fully independent settings** per project:
   so it's correct in both print orientations.
   The profile is a **revolve curve in r/z**: a straight **throat** (the length given is
   the full-diameter section that actually grips — the fillet is added *above* it rather
-  than eating into it), a tangent-arc **fillet**, then a straight cone out to the
-  **bottom opening ⌀** over a given **transition height**. It's carried as a dense
-  `(r, z, angle)` polyline rather than an analytic description, so future profile shapes
-  (bezier flares, spheres) drop in by producing the same polyline without the generator or
-  the compensation math changing. **Print orientation** picks throat-down or wide-edge-down.
+  than eating into it), a tangent-arc **fillet**, then one of four **shade shapes** out to
+  the **bottom opening ⌀**. It's carried as a dense `(r, z, angle)` polyline rather than
+  an analytic description, so a new shape only has to produce that polyline — nothing
+  downstream needs to know which shape made it. **Print orientation** picks throat-down or
+  wide-edge-down.
+  - **Straight cone** — constant angle over a given **transition height**.
+  - **Arc, flaring outward (bell)** — leaves the throat tangentially and bends outward.
+    Fitted to the same box the arc is fully determined and ends at exactly *twice* the
+    equivalent cone's angle (a box that gives a 45° cone gives an arc finishing
+    horizontal). An optional **max angle** caps that; past the cap the curve carries on
+    straight at the cap angle so the rim still lands where it was asked to. A cap
+    shallower than the straight-line angle is unreachable and is reported rather than
+    silently ignored.
+  - **Arc, turning out then curling back (dome)** — the mirror image: leaves the throat
+    steeply and curves back to vertical at the rim, starting at 90° when the opening and
+    height are equal. The **fillet** is what makes that printable — see below.
+  - **Sphere** — the throat cuts one hole and the **bottom opening ⌀** the other, sized by
+    **sphere ⌀**. Parametrised by polar angle rather than z so samples stay even at the
+    poles, which is exactly where the wall angle changes fastest. The wall is steep just
+    above the throat, vertical at the equator, and steepens again as it closes — a small
+    opening pushes the closing overhang past 80°, so it's the shape most worth testing
+    the machine's limits with.
+
+  The **fillet is generic over the curve**, not a closed form per shape: a circle of
+  radius F tangent to the throat wall has its centre at `rThroat + F`, so the blend point
+  is wherever the curve first satisfies `r + F·cos(a) = rThroat + F`, and everything below
+  that is dropped. On a straight cone this reproduces the textbook `t = F·tan(a/2)`
+  exactly; on the arcs and the sphere it lands *further up* the curve, which is what makes
+  a near-90° departure printable — by the time the fillet ends the curve has flattened, and
+  a bigger fillet pushes the join shallower still (on the dome shape, fillet 0/10/35/120 mm
+  gives a join angle of 90°/81°/66°/46°).
   **Overhang compensation:** a wall leaning `a` from vertical steps sideways by
   `lh·tan(a)` per turn, putting consecutive bead centres `lh/cos(a)` apart measured along
   the wall — so `cos(a)` is the whole story, and it's offered two ways. **Line width**
@@ -223,9 +249,12 @@ keep **fully independent settings** per project:
   extrusion keeps using the **full** layer height — that deliberate over-fill *is* the
   squeeze that spreads the bead sideways, and extruding for the reduced height instead
   would just print a thinner wall and achieve nothing. A **strength %** blends between no
-  compensation and the full geometric factor. Both modes are recomputed per revolution
-  from the local wall angle, so the fillet's continuously-varying slope is followed
-  properly rather than one flat number being applied. The live hint and G-code header
+  compensation and the full geometric factor. Both modes are recomputed **per revolution
+  from the local wall angle, sampled at the turn's midpoint** — on the arc and sphere
+  shapes the angle swings a long way within a single turn, and reading it at the turn's
+  start alone would leave the compensation a full revolution behind wherever the curve
+  bends hardest. On a sphere the bead width traces the shape: base width at the throat,
+  widest on the steep flank, back to base at the equator, wide again as it closes. The live hint and G-code header
   report the wall angle, the resulting bead width / layer rise, and the **support ratio**
   — the fraction of each bead that lands on the one below, which is the number that
   actually predicts drooping. Warns past ~50°. Reuses the standard first-turn extrusion
@@ -552,8 +581,9 @@ above), turns, start radius, stick length, layers, layer height, line width, pri
 travel feed, bed center X/Y — no shape, pattern, brim, or hanger options.
 
 The **Lampshade** tab: printer & material (identical fields to above), socket
-(E14/E27/custom), fit tolerance, throat length, fillet radius, bottom opening ⌀,
-transition height, print orientation, line width, print feed, travel feed, chord
+(E14/E27/custom), fit tolerance, shade shape (cone / bell / dome / sphere) and its own
+parameter (transition height, max angle, or sphere ⌀), throat length, fillet radius,
+bottom opening ⌀, print orientation, line width, print feed, travel feed, chord
 tolerance, bed center X/Y, overhang compensation mode/strength/max multiplier, and an
 outer-only brim — **no layer height**, which is the socket's thread pitch.
 
