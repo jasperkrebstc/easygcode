@@ -218,6 +218,10 @@
           compMode: ['width', 'layerHeight', 'off'].indexOf($('ls_compMode').value) >= 0 ? $('ls_compMode').value : 'width',
           compStrength: Math.max(0, Math.min(100, num('ls_compStrength'))),
           compMaxMult: num('ls_compMaxMult'),
+          flowFeed: {
+            enabled: $('ls_flowFeedEnabled').checked,
+            rate: num('ls_flowFeedRate'),
+          },
         },
         brim: {
           enabled: $('ls_brimEnabled').checked,
@@ -464,6 +468,8 @@
       if (!(cfg.lamp.fillet >= 0)) return 'Fillet radius must be 0 or more.';
       if (!isPos(cfg.lamp.compMaxMult) || cfg.lamp.compMaxMult < 1)
         return 'Max line width multiplier must be 1 or more.';
+      if (cfg.lamp.flowFeed.enabled && !isPos(cfg.lamp.flowFeed.rate))
+        return 'Enter a valid target volumetric flow (mm³/s).';
       if (!Number.isFinite(cfg.lamp.maxAngle) || cfg.lamp.maxAngle < 0 || cfg.lamp.maxAngle > 89)
         return 'Max angle must be between 0 (uncapped) and 89 degrees.';
       if (cfg.lamp.shape === 'sphere') {
@@ -770,6 +776,7 @@
         !isPos(ls.bottomDiameter) || !isPos(ls.transitionHeight)) {
       $('ls_hint').textContent = 'Enter a valid socket, line width, bottom opening and transition height.';
       $('ls_compHint').textContent = '';
+      $('ls_flowFeedHint').textContent = '';
       return;
     }
     const innerD = thread.diameter + (ls.fitTolerance || 0);
@@ -777,6 +784,7 @@
     if (ls.shape === 'sphere' && !(ls.sphereDiameter / 2 > rThroat)) {
       $('ls_hint').textContent = 'Sphere diameter must be larger than the throat (⌀' + (rThroat * 2).toFixed(1) + ' mm).';
       $('ls_compHint').textContent = '';
+      $('ls_flowFeedHint').textContent = '';
       return;
     }
     const prof = window.Geo.lampProfile({
@@ -815,6 +823,25 @@
     if (ls.compMode === 'width') wEff = cfg.lineWidth * Math.min(maxMult, 1 + k * (1 / c - 1));
     else if (ls.compMode === 'layerHeight') dzEff = thread.pitch * (1 - k * (1 - c));
     const support = Math.max(0, 1 - (dzEff * Math.tan(a)) / wEff);
+
+    // Feed/flow read-out. The two extremes are the base bead and the
+    // compensated one, which is exactly the range flow mode has to span.
+    const ff = ls.flowFeed || {};
+    const aLo = window.GcodeGen.beadArea(cfg.lineWidth, ls.compMode === 'layerHeight' ? thread.pitch : dzEff);
+    const aHi = window.GcodeGen.beadArea(wEff, ls.compMode === 'layerHeight' ? thread.pitch : dzEff);
+    if (ff.enabled && isPos(ff.rate)) {
+      $('ls_flowFeedHint').textContent =
+        'Feed varies ' + ((ff.rate * 60) / aHi).toFixed(0) + '–' + ((ff.rate * 60) / aLo).toFixed(0) +
+        ' mm/min (bead area ' + aLo.toFixed(2) + '–' + aHi.toFixed(2) + ' mm²) to hold ' + ff.rate + ' mm³/s.';
+    } else if (isPos(cfg.printFeed)) {
+      $('ls_flowFeedHint').textContent =
+        aHi - aLo > 0.01
+          ? 'At a constant ' + cfg.printFeed + ' mm/min, flow varies ' + ((cfg.printFeed * aLo) / 60).toFixed(2) +
+            '–' + ((cfg.printFeed * aHi) / 60).toFixed(2) + ' mm³/s as compensation widens the bead.'
+          : 'At a constant ' + cfg.printFeed + ' mm/min: ' + ((cfg.printFeed * aLo) / 60).toFixed(2) + ' mm³/s.';
+    } else {
+      $('ls_flowFeedHint').textContent = '';
+    }
     $('ls_compHint').textContent =
       ls.compMode === 'off'
         ? 'No compensation: ' + cfg.lineWidth + ' mm bead, ' + thread.pitch + ' mm rise — ' +
@@ -2055,6 +2082,7 @@
     $('ve_brimFields').hidden = !$('ve_brimEnabled').checked;
     $('sp_flowFeedFields').hidden = !$('sp_flowFeedEnabled').checked;
     $('ls_brimFields').hidden = !$('ls_brimEnabled').checked;
+    $('ls_flowFeedFields').hidden = !$('ls_flowFeedEnabled').checked;
     showLampSocketParams($('ls_socket').value);
     showLampShapeParams($('ls_shape').value);
     showProject(activeProject());
@@ -2162,6 +2190,7 @@
     pelBedTemp: 'ls_pelBedTemp', pelPA: 'ls_pelPA', pelPurge: 'ls_pelPurge', pelFan: 'ls_pelFan',
     brimEnabled: 'ls_brimEnabled', brimLinesOuter: 'ls_brimLinesOuter',
     brimLayerHeight: 'ls_brimLayerHeight',
+    bs_flowFeedEnabled: 'ls_flowFeedEnabled', bs_flowFeedRate: 'ls_flowFeedRate',
     brimLineWidth: 'ls_brimLineWidth', brimFeed: 'ls_brimFeed',
   };
 
@@ -2174,6 +2203,7 @@
       else b.value = a.value;
     });
     $('ls_brimFields').hidden = !$('ls_brimEnabled').checked;
+    $('ls_flowFeedFields').hidden = !$('ls_flowFeedEnabled').checked;
   }
 
   // Double-buffered save: the previous good state is kept under a backup key,
@@ -2315,6 +2345,11 @@
 
   $('ls_brimEnabled').addEventListener('change', () => {
     $('ls_brimFields').hidden = !$('ls_brimEnabled').checked;
+    updateShapeUI();
+  });
+
+  $('ls_flowFeedEnabled').addEventListener('change', () => {
+    $('ls_flowFeedFields').hidden = !$('ls_flowFeedEnabled').checked;
     updateShapeUI();
   });
 

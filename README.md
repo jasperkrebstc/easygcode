@@ -257,10 +257,20 @@ keep **fully independent settings** per project:
   widest on the steep flank, back to base at the equator, wide again as it closes. The live hint and G-code header
   report the wall angle, the resulting bead width / layer rise, and the **support ratio**
   — the fraction of each bead that lands on the one below, which is the number that
-  actually predicts drooping. Warns past ~50°. Reuses the standard first-turn extrusion
-  ramp-up, an outer **brim**, and a closing revolution that holds both z *and* radius
-  constant while ramping extrusion to zero (a spiral still flaring there would leave the
-  ramp-down hanging in mid-air).
+  actually predicts drooping. Warns past ~50°. An optional **constant volumetric flow** toggle takes a
+  target flow (mm³/s) instead of a fixed print feed and derives the feed from each
+  revolution's own bead area. It matters more here than anywhere else in the app: width
+  compensation deliberately grows the bead on the overhangs, and at a constant feed that
+  is a straight flow increase exactly where the material is least supported — deriving
+  the feed backs the head off in proportion instead. Both the opening and closing
+  revolutions hold a **constant radius**: the closing one so it lands squarely on the turn
+  below rather than still flaring into mid-air, and the opening one so it is a true circle
+  — the brim outside it is perfectly circular, and a radius drifting across that first
+  revolution would make the gap wobble around the circumference. The opening revolution
+  takes the radius the *second* one begins at, so that turn stacks straight onto it. With
+  the throat on the bed this changes nothing (the throat is a cylinder, so the radius is
+  already constant); it matters when the wide rim goes down first and the wall is already
+  sloping at z=0.
 
 The coat hanger is a dead-simple, phone-first tool to generate **vase-mode G-code** for
 **Klipper pellet 3D printing** (or the Bambu P1P in filament mode). Pick a cross-section
@@ -584,8 +594,9 @@ The **Lampshade** tab: printer & material (identical fields to above), socket
 (E14/E27/custom), fit tolerance, shade shape (cone / bell / dome / sphere) and its own
 parameter (transition height, max angle, or sphere ⌀), throat length, fillet radius,
 bottom opening ⌀, print orientation, line width, print feed, travel feed, chord
-tolerance, bed center X/Y, overhang compensation mode/strength/max multiplier, and an
-outer-only brim — **no layer height**, which is the socket's thread pitch.
+tolerance, bed center X/Y, overhang compensation mode/strength/max multiplier, an optional
+constant-volumetric-flow target, and an outer-only brim — **no layer height**, which is
+the socket's thread pitch.
 
 The **3D preview** orbits with a drag (Z-up), pinch/wheel zooms, two fingers pan, and a
 double-tap resets. The toolpath is colored by feedrate — blue = fastest, red = slowest —
