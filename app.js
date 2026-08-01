@@ -207,6 +207,9 @@
           customDiameter: num('ls_customDiameter'),
           customPitch: num('ls_customPitch'),
           fitTolerance: num('ls_fitTolerance'),
+          shape: ['cone', 'arcOut', 'arcIn', 'sphere'].indexOf($('ls_shape').value) >= 0 ? $('ls_shape').value : 'cone',
+          maxAngle: Math.max(0, num('ls_maxAngle')),
+          sphereDiameter: num('ls_sphereDiameter'),
           throatLength: Math.max(0, num('ls_throatLength')),
           fillet: Math.max(0, num('ls_fillet')),
           bottomDiameter: num('ls_bottomDiameter'),
@@ -461,6 +464,13 @@
       if (!(cfg.lamp.fillet >= 0)) return 'Fillet radius must be 0 or more.';
       if (!isPos(cfg.lamp.compMaxMult) || cfg.lamp.compMaxMult < 1)
         return 'Max line width multiplier must be 1 or more.';
+      if (!Number.isFinite(cfg.lamp.maxAngle) || cfg.lamp.maxAngle < 0 || cfg.lamp.maxAngle > 89)
+        return 'Max angle must be between 0 (uncapped) and 89 degrees.';
+      if (cfg.lamp.shape === 'sphere') {
+        if (!isPos(cfg.lamp.sphereDiameter)) return 'Enter a valid sphere diameter.';
+        if (cfg.lamp.sphereDiameter <= cfg.lamp.bottomDiameter)
+          return 'Sphere diameter must be larger than the bottom opening.';
+      }
       const thread = lampThread(cfg);
       if (cfg.lamp.bottomDiameter < thread.diameter)
         return 'Bottom opening must be at least as wide as the socket thread (⌀' + thread.diameter + ' mm).';
@@ -724,6 +734,15 @@
     });
   }
 
+  // Shade-shape parameter blocks. data-shape may list several shapes (the
+  // transition height is shared by all three non-sphere shapes), so match on
+  // membership rather than equality.
+  function showLampShapeParams(shape) {
+    document.querySelectorAll('.lamp-shape-params').forEach((el) => {
+      el.hidden = (el.getAttribute('data-shape') || '').split(/\s+/).indexOf(shape) < 0;
+    });
+  }
+
   // Resolve the lampshade's socket thread (diameter + pitch) — from the
   // built-in IEC 60399 table the generator itself exports, so the preview and
   // the G-code can never disagree about what an E14 or E27 actually is.
@@ -755,23 +774,34 @@
     }
     const innerD = thread.diameter + (ls.fitTolerance || 0);
     const rThroat = (innerD + cfg.lineWidth) / 2;
+    if (ls.shape === 'sphere' && !(ls.sphereDiameter / 2 > rThroat)) {
+      $('ls_hint').textContent = 'Sphere diameter must be larger than the throat (⌀' + (rThroat * 2).toFixed(1) + ' mm).';
+      $('ls_compHint').textContent = '';
+      return;
+    }
     const prof = window.Geo.lampProfile({
       rThroat: rThroat,
       rBottom: ls.bottomDiameter / 2,
       throatLen: ls.throatLength,
       transitionH: ls.transitionHeight,
       fillet: ls.fillet,
+      shape: ls.shape,
+      maxAngle: ((ls.maxAngle || 0) * Math.PI) / 180,
+      sphereRadius: (ls.sphereDiameter || 0) / 2,
     });
     let pts = prof.pts;
     if (ls.orientation === 'wide') pts = window.Geo.flipLampProfile(pts);
     const totalH = pts[pts.length - 1].z;
     const coneDeg = (Math.abs(prof.angle) * 180) / Math.PI;
 
+    const joinDeg = (Math.abs(prof.joinAngle) * 180) / Math.PI;
+    const widest = Math.max(...pts.map((p) => p.r)) * 2;
     $('ls_hint').textContent =
       'Throat inner ⌀' + innerD.toFixed(2) + ' mm on a ⌀' + thread.diameter + ' × ' + thread.pitch +
-      ' mm thread · layer height locked to ' + thread.pitch + ' mm (the pitch) · wall ' + coneDeg.toFixed(1) +
-      '° from vertical · total height ' + totalH.toFixed(1) + ' mm' +
-      (prof.fillet !== ls.fillet ? ' · fillet clamped to ' + prof.fillet.toFixed(1) + ' mm' : '');
+      ' mm thread · layer height locked to ' + thread.pitch + ' mm (the pitch) · wall reaches ' +
+      coneDeg.toFixed(1) + '° from vertical (' + joinDeg.toFixed(1) + '° where it leaves the throat) · ⌀' +
+      widest.toFixed(0) + ' at its widest · total height ' + totalH.toFixed(1) + ' mm' +
+      (Math.abs(prof.fillet - ls.fillet) > 0.05 ? ' · fillet clamped to ' + prof.fillet.toFixed(1) + ' mm' : '');
 
     // Compensation read-out: the resulting bead width / layer rise at the
     // steepest point, plus the support ratio (how much of each bead lands on
@@ -788,8 +818,9 @@
     $('ls_compHint').textContent =
       ls.compMode === 'off'
         ? 'No compensation: ' + cfg.lineWidth + ' mm bead, ' + thread.pitch + ' mm rise — ' +
-          Math.round(support * 100) + '% of each bead lands on the one below at the steepest point.'
-        : 'At ' + coneDeg.toFixed(1) + '°: bead ' + wEff.toFixed(2) + ' mm, rise ' + dzEff.toFixed(2) +
+          Math.round(support * 100) + '% of each bead lands on the one below at the steepest point.' +
+          (coneDeg > 50 ? ' That is steep — compensation is worth turning on.' : '')
+        : 'At the steepest ' + coneDeg.toFixed(1) + '°: bead ' + wEff.toFixed(2) + ' mm, rise ' + dzEff.toFixed(2) +
           ' mm → ' + Math.round(support * 100) + '% of each bead lands on the one below' +
           (ls.compMode === 'layerHeight' ? ' (extrusion still uses the full ' + thread.pitch + ' mm, so it squeezes wider).' : '.');
 
@@ -1602,6 +1633,7 @@
       syncSpoonFlowFeedHint(cfg);
     } else if (cfg.project === 'lamp') {
       showLampSocketParams(cfg.lamp.socket);
+      showLampShapeParams(cfg.lamp.shape);
     }
     syncPrinterCards();
   }
@@ -1977,7 +2009,9 @@
       // Cap the backing store so a canvas can never feed back into its own
       // layout size and grow without bound (belt-and-braces vs missing CSS).
       const px = Math.min(1600, Math.round(w * dpr));
-      const py = id === 've_profile' ? Math.round(px * 0.6) : px; // profile is wide, not square
+      // Backing store must match the CSS aspect ratio or the drawing skews.
+      const ratio = { ve_profile: 0.6, ls_preview: 0.75 }[id] || 1;
+      const py = Math.round(px * ratio);
       if (px > 0 && (c.width !== px || c.height !== py)) {
         c.width = px;
         c.height = py;
@@ -2022,6 +2056,7 @@
     $('sp_flowFeedFields').hidden = !$('sp_flowFeedEnabled').checked;
     $('ls_brimFields').hidden = !$('ls_brimEnabled').checked;
     showLampSocketParams($('ls_socket').value);
+    showLampShapeParams($('ls_shape').value);
     showProject(activeProject());
   }
 
@@ -2126,6 +2161,7 @@
     pelUpTemp: 'ls_pelUpTemp', pelMidTemp: 'ls_pelMidTemp', pelDownTemp: 'ls_pelDownTemp',
     pelBedTemp: 'ls_pelBedTemp', pelPA: 'ls_pelPA', pelPurge: 'ls_pelPurge', pelFan: 'ls_pelFan',
     brimEnabled: 'ls_brimEnabled', brimLinesOuter: 'ls_brimLinesOuter',
+    brimLayerHeight: 'ls_brimLayerHeight',
     brimLineWidth: 'ls_brimLineWidth', brimFeed: 'ls_brimFeed',
   };
 
