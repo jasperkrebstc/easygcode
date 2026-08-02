@@ -584,7 +584,11 @@ brim with a warning rather than failing.
 - **Pattern:** enable, amplitude, bumps/revolution, coverage %, patternless layers
   top/bottom, bottom feedrate.
 - **Brim:** enable, outer style (normal/mouse ear), outer lines, inner lines, brim line
-  width, brim layer height, brim feedrate.
+  width, brim layer height, brim feedrate, brim extrusion multiplier (0 = same as the
+  wall's) — a line printed flat on the bed spreads differently from a wall bead, so it
+  gets its own. It's absolute, not relative: brim 1.0 against a wall multiplier of 2.0
+  extrudes at 1.0. Present on every project that has a brim (coat hanger, bend stool,
+  vessel, lampshade).
 
 The **Spoon** tab has its own, much smaller set: printer & material (identical fields to
 above), turns, start radius, stick length, layers, layer height, line width, print feed,

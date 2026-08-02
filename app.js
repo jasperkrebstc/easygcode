@@ -72,6 +72,7 @@
       lineWidth: num(pre + 'brimLineWidth'),
       layerHeight: num(pre + 'brimLayerHeight'),
       feed: num(pre + 'brimFeed'),
+      multiplier: num(pre + 'brimMultiplier'),
     };
   }
 
@@ -231,6 +232,7 @@
           lineWidth: num('ls_brimLineWidth'),
           layerHeight: num('ls_brimLayerHeight'),
           feed: num('ls_brimFeed'),
+          multiplier: num('ls_brimMultiplier'),
         },
       };
     }
@@ -321,6 +323,8 @@
     if (!isPos(brim.lineWidth)) return 'Enter a valid brim line width.';
     if (!isPos(brim.layerHeight)) return 'Enter a valid brim layer height.';
     if (!isPos(brim.feed)) return 'Enter a valid brim feedrate.';
+    if (!Number.isFinite(brim.multiplier) || brim.multiplier < 0)
+      return 'Brim extrusion multiplier must be 0 (same as wall) or more.';
     return null;
   }
 
@@ -2105,6 +2109,7 @@
     brimEnabled: 'bs_brimEnabled', brimOuterStyle: 'bs_brimOuterStyle',
     brimLinesOuter: 'bs_brimLinesOuter', brimLinesInner: 'bs_brimLinesInner',
     brimLineWidth: 'bs_brimLineWidth', brimLayerHeight: 'bs_brimLayerHeight', brimFeed: 'bs_brimFeed',
+    brimMultiplier: 'bs_brimMultiplier',
   };
 
   function seedBendstool() {
@@ -2139,6 +2144,7 @@
     brimEnabled: 've_brimEnabled', brimOuterStyle: 've_brimOuterStyle',
     brimLinesOuter: 've_brimLinesOuter', brimLinesInner: 've_brimLinesInner',
     brimLineWidth: 've_brimLineWidth', brimLayerHeight: 've_brimLayerHeight', brimFeed: 've_brimFeed',
+    brimMultiplier: 've_brimMultiplier',
   };
 
   function seedVessel() {
@@ -2189,7 +2195,7 @@
     pelUpTemp: 'ls_pelUpTemp', pelMidTemp: 'ls_pelMidTemp', pelDownTemp: 'ls_pelDownTemp',
     pelBedTemp: 'ls_pelBedTemp', pelPA: 'ls_pelPA', pelPurge: 'ls_pelPurge', pelFan: 'ls_pelFan',
     brimEnabled: 'ls_brimEnabled', brimLinesOuter: 'ls_brimLinesOuter',
-    brimLayerHeight: 'ls_brimLayerHeight',
+    brimLayerHeight: 'ls_brimLayerHeight', brimMultiplier: 'ls_brimMultiplier',
     bs_flowFeedEnabled: 'ls_flowFeedEnabled', bs_flowFeedRate: 'ls_flowFeedRate',
     brimLineWidth: 'ls_brimLineWidth', brimFeed: 'ls_brimFeed',
   };

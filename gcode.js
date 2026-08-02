@@ -1041,7 +1041,12 @@
     const brimOn = !!brim.enabled && brim.linesOuter > 0 && brim.lineWidth > 0 && brim.layerHeight > 0;
     let brimPrinted = false;
     if (brimOn) {
-      const bArea = beadArea(brim.lineWidth, brim.layerHeight);
+      // A brim line printed flat on the bed spreads differently from a wall
+      // bead, so it gets its own extrusion multiplier (0 = same as the wall).
+      // eFactor already carries the wall's multiplier, so scaling the bead
+      // area by the ratio nets out to the brim's own.
+      const bArea =
+        beadArea(brim.lineWidth, brim.layerHeight) * (brim.multiplier > 0 ? brim.multiplier / mult : 1);
       const brimFeed = brim.feed > 0 ? brim.feed : cfg.printFeed;
       const r0 = rFirst;
       lines.push('; --- brim: ' + brim.linesOuter + ' outer ring(s) ---');
@@ -1910,7 +1915,12 @@
       warnings.push('Inner brim skipped — the disc is solid there; use an outer brim.');
     }
     if (brim && brim.enabled && brimBase) {
-      const bArea = beadArea(brim.lineWidth, brim.layerHeight);
+      // A brim line printed flat on the bed spreads differently from a wall
+      // bead, so it gets its own extrusion multiplier (0 = same as the wall).
+      // eFactor already carries the wall's multiplier, so scaling the bead
+      // area by the ratio nets out to the brim's own.
+      const bArea =
+        beadArea(brim.lineWidth, brim.layerHeight) * (brim.multiplier > 0 ? brim.multiplier / mult : 1);
       const brimFeed = brim.feed > 0 ? brim.feed : cfg.printFeed;
       const centroid = brimBase.reduce((s, p) => ({ x: s.x + p.x, y: s.y + p.y }), { x: 0, y: 0 });
       centroid.x /= brimBase.length;
