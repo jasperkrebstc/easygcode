@@ -1341,6 +1341,14 @@
     // throat, so `throatLen` stays exactly the full-diameter grip length.
     const shift = zJoin - (blend.zStart != null ? blend.zStart : 0);
     blend.fillet.forEach((q) => pts.push({ r: q.r, z: q.z + shift, a: q.a }));
+    // Where the fillet begins and ends, in profile coordinates. The fillet is
+    // the natural place to ramp anything that differs between the throat and
+    // the shade — it is exactly the stretch where one becomes the other — so
+    // callers need its extent, not just its shape. Equal values mean there is
+    // no fillet (a curve leaving the throat tangentially never gets one), so
+    // the two regions meet at a hard edge.
+    const filletZ0 = zJoin;
+    const filletZ1 = blend.fillet.length ? blend.fillet[blend.fillet.length - 1].z + shift : zJoin;
     const cShift = blend.fillet.length ? shift : zJoin;
     blend.curve.forEach((q, i) => {
       if (i === 0 && blend.fillet.length) return; // already the fillet's top point
@@ -1351,7 +1359,15 @@
     pts.forEach((q) => {
       if (Math.abs(q.a) > Math.abs(maxA)) maxA = q.a;
     });
-    return { pts: pts, angle: maxA, joinAngle: blend.angle, fillet: F, warnings: warnings };
+    return {
+      pts: pts,
+      angle: maxA,
+      joinAngle: blend.angle,
+      fillet: F,
+      filletZ0: filletZ0,
+      filletZ1: filletZ1,
+      warnings: warnings,
+    };
   }
 
   // Radius + local wall angle anywhere along a lampshade profile, by linear

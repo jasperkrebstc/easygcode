@@ -259,6 +259,7 @@
           <div class="field"><label>Brim line width (mm)</label><input type="number" id="brimLineWidth" value="2.0" min="0.1" step="0.1" /></div>
           <div class="field"><label>Brim layer height (mm)</label><input type="number" id="brimLayerHeight" value="0.6" min="0.05" step="0.05" /></div>
           <div class="field"><label>Brim feedrate (mm/min)</label><input type="number" id="brimFeed" value="1800" min="1" step="50" /></div>
+          <div class="field"><label>Brim extrusion multiplier (0 = same as wall)</label><input type="number" id="brimMultiplier" value="0" min="0" step="0.01" /></div>
         </div>
         <p class="hint">Outer and inner brim can both be enabled at once. Each always starts at its
           own far end (outer at the outermost line, inner at the innermost) and prints toward the
@@ -398,6 +399,7 @@
           <div class="field"><label>Brim line width (mm)</label><input type="number" id="bs_brimLineWidth" value="2.0" min="0.1" step="0.1" /></div>
           <div class="field"><label>Brim layer height (mm)</label><input type="number" id="bs_brimLayerHeight" value="0.6" min="0.05" step="0.05" /></div>
           <div class="field"><label>Brim feedrate (mm/min)</label><input type="number" id="bs_brimFeed" value="1800" min="1" step="50" /></div>
+          <div class="field"><label>Brim extrusion multiplier (0 = same as wall)</label><input type="number" id="bs_brimMultiplier" value="0" min="0" step="0.01" /></div>
         </div>
         <p class="hint">Outer and inner brim can both be enabled at once (inner is ignored on the
           disc — it's solid there). Each always starts at its own far end and prints toward the
@@ -554,6 +556,7 @@
           <div class="field"><label>Brim line width (mm)</label><input type="number" id="ve_brimLineWidth" value="2.0" min="0.1" step="0.1" /></div>
           <div class="field"><label>Brim layer height (mm)</label><input type="number" id="ve_brimLayerHeight" value="0.6" min="0.05" step="0.05" /></div>
           <div class="field"><label>Brim feedrate (mm/min)</label><input type="number" id="ve_brimFeed" value="1800" min="1" step="50" /></div>
+          <div class="field"><label>Brim extrusion multiplier (0 = same as wall)</label><input type="number" id="ve_brimMultiplier" value="0" min="0" step="0.01" /></div>
         </div>
         <p class="hint">Outer and inner brim can both be enabled at once. Each always starts at its
           own far end (outer at the outermost line, inner at the innermost) and prints toward the
@@ -751,7 +754,9 @@
           <label class="toggle"><input type="checkbox" id="ls_flowFeedEnabled" /> constant volumetric flow (instead of constant feed rate)</label>
         </div>
         <div id="ls_flowFeedFields" class="grid" hidden>
-          <div class="field"><label>Target flow (mm³/s)</label><input type="number" id="ls_flowFeedRate" value="20" min="0.1" step="0.5" /></div>
+          <div class="field"><label>Throat flow (mm³/s)</label><input type="number" id="ls_flowFeedRate" value="20" min="0.1" step="0.5" /></div>
+          <div class="field"><label>Shade flow (mm³/s, 0 = same as throat)</label><input type="number" id="ls_flowShadeRate" value="0" min="0" step="0.5" /></div>
+          <div class="field"><label>Flow ramp height (mm, 0 = over the fillet)</label><input type="number" id="ls_flowTransitionHeight" value="0" min="0" step="1" /></div>
         </div>
         <p class="hint" id="ls_flowFeedHint"></p>
       </section>
@@ -766,6 +771,7 @@
           <div class="field"><label>Brim line width (mm)</label><input type="number" id="ls_brimLineWidth" value="6.0" min="0.1" step="0.1" /></div>
           <div class="field"><label>Brim layer height (mm)</label><input type="number" id="ls_brimLayerHeight" value="2.5" min="0.05" step="0.05" /></div>
           <div class="field"><label>Brim feedrate (mm/min)</label><input type="number" id="ls_brimFeed" value="900" min="1" step="50" /></div>
+          <div class="field"><label>Brim extrusion multiplier (0 = same as wall)</label><input type="number" id="ls_brimMultiplier" value="0" min="0" step="0.01" /></div>
         </div>
         <p class="hint">Outer rings only — printed outermost first, working inward and leaving one line
           width of gap for the wall itself.</p>
