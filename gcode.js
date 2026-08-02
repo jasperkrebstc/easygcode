@@ -845,6 +845,18 @@
     }
     const areaFor = (t) => beadArea(t.w, t.hExtrude != null ? t.hExtrude : t.dz);
 
+    // ---- Volumetric flow feed mode ----
+    // Same idea as the bend stool's own toggle: hold a target mm^3/s and
+    // derive the feed from each revolution's OWN bead area instead of a fixed
+    // print feed. It matters more here than anywhere else in the app, because
+    // width compensation deliberately grows the bead on the overhangs — at a
+    // constant feed that is a straight flow increase exactly where the
+    // material is least supported. Deriving the feed backs the head off in
+    // proportion instead. Off by default (byte-identical to a fixed feed).
+    const flowCfg = ls.flowFeed || {};
+    const flowOn = !!flowCfg.enabled && flowCfg.rate > 0;
+    const feedForArea = (a) => (flowOn ? (flowCfg.rate * 60) / Math.max(a, 1e-6) : cfg.printFeed);
+
     // Walk the spiral turn by turn, reading the local wall angle at the start
     // of each turn — the angle changes slowly next to a whole revolution, and
     // per-turn is the finest granularity compensation can act at anyway.
@@ -921,6 +933,21 @@
         ' layerRise ' + dzMin.toFixed(2) + '..' + dzMax.toFixed(2) +
         ', support ' + Math.round(support * 100) + '% at the steepest point'
     );
+    {
+      // Bead areas at the two extremes of whatever compensation is doing, so
+      // the reported feed/flow range covers the whole print.
+      const aLo = beadArea(wMin, compMode === 'layerHeight' ? lh : dzMax);
+      const aHi = beadArea(wMax, compMode === 'layerHeight' ? lh : dzMax);
+      lines.push(
+        flowOn
+          ? '; volumetric flow mode: target ' + flowCfg.rate + ' mm3/s -> feed ' +
+            feedForArea(aHi).toFixed(0) + '..' + feedForArea(aLo).toFixed(0) +
+            ' mm/min (bead area ' + aLo.toFixed(2) + '..' + aHi.toFixed(2) + ' mm2, slowest..fastest)'
+          : '; constant feed ' + cfg.printFeed + ' mm/min -> volumetric flow ' +
+            ((cfg.printFeed * aLo) / 60).toFixed(2) + '..' + ((cfg.printFeed * aHi) / 60).toFixed(2) +
+            ' mm3/s (bead area ' + aLo.toFixed(2) + '..' + aHi.toFixed(2) + ' mm2)'
+      );
+    }
     lines.push(
       '; printer=' + mode + ' multiplier=' + mult +
         (mode === 'filament' ? ' filamentDiameter=' + filDia + ' (E in mm of filament)' : ' (E in mm^3, volumetric)')
@@ -985,13 +1012,24 @@
     const ptAt = (r, th, z) => ({ x: cx + r * Math.cos(th), y: cy + r * Math.sin(th), z: z });
 
     // ---- Brim (outer rings) ----
+    // The opening revolution ramps extrusion up from nothing, so it has to be
+    // a true circle rather than a spiral arc: the brim outside it is
+    // perfectly circular, and a radius that drifted across the revolution
+    // would make that gap wobble around the circumference. It holds the
+    // radius the SECOND revolution begins at, so that one lands exactly on
+    // top of it — the mirror of the closing revolution at the other end.
+    // With the throat on the bed this changes nothing (the throat is a
+    // cylinder, so the radius is already constant there); it matters when the
+    // wide rim goes down first and the wall is already sloping at z=0.
+    const rFirst = sampler.at(Math.min(H, turns[0].z + turns[0].dz)).r;
+
     const brim = cfg.brim || {};
     const brimOn = !!brim.enabled && brim.linesOuter > 0 && brim.lineWidth > 0 && brim.layerHeight > 0;
     let brimPrinted = false;
     if (brimOn) {
       const bArea = beadArea(brim.lineWidth, brim.layerHeight);
       const brimFeed = brim.feed > 0 ? brim.feed : cfg.printFeed;
-      const r0 = sampler.at(0).r;
+      const r0 = rFirst;
       lines.push('; --- brim: ' + brim.linesOuter + ' outer ring(s) ---');
       // Outermost ring first, working inward toward the wall and leaving
       // exactly one line width of gap for the wall itself — same convention
@@ -1010,8 +1048,7 @@
     }
 
     // ---- The spiral ----
-    const feed = cfg.printFeed;
-    const start = ptAt(sampler.at(0).r, SEAM, 0);
+    const start = ptAt(rFirst, SEAM, 0);
     if (prev === null) travelAbs(start);
     else hopTravel(start, brimPrinted ? 2 * brim.layerHeight : lh);
 
@@ -1019,15 +1056,18 @@
     for (let i = 0; i < turns.length; i++) {
       const t = turns[i];
       const area = areaFor(t);
-      const steps = stepsFor(Math.max(sampler.at(t.z).r, sampler.at(t.z + t.dz).r));
+      const feed = feedForArea(area);
+      const first = i === 0;
+      const steps = stepsFor(first ? rFirst : Math.max(sampler.at(t.z).r, sampler.at(t.z + t.dz).r));
       for (let s = 1; s <= steps; s++) {
         const u = s / steps;
         const zp = t.z + t.dz * u;
         // First revolution ramps extrusion 0 -> 100% (midpoint-averaged over
         // each segment), arriving at exactly one layer height, so the spiral
-        // starts flush with the bed instead of with a step.
-        const ramp = i === 0 ? (u + (s - 1) / steps) / 2 : 1;
-        emitSeg(ptAt(sampler.at(zp).r, SEAM + 2 * Math.PI * u, zp), feed, ramp, area);
+        // starts flush with the bed instead of with a step — and holds a
+        // constant radius while it does (see rFirst above).
+        const ramp = first ? (u + (s - 1) / steps) / 2 : 1;
+        emitSeg(ptAt(first ? rFirst : sampler.at(zp).r, SEAM + 2 * Math.PI * u, zp), feed, ramp, area);
       }
     }
 
@@ -1039,12 +1079,13 @@
     const zTop = last.z + last.dz;
     const rTop = sampler.at(zTop).r;
     const capArea = areaFor(last);
+    const capFeed = feedForArea(capArea);
     const capSteps = stepsFor(rTop);
     lines.push('; --- closing revolution: flat, extrusion ramped to zero ---');
     for (let s = 1; s <= capSteps; s++) {
       const u = s / capSteps;
       const ramp = Math.max(0, 1 - (u + (s - 1) / capSteps) / 2);
-      emitSeg(ptAt(rTop, SEAM + 2 * Math.PI * u, zTop), feed, ramp, capArea);
+      emitSeg(ptAt(rTop, SEAM + 2 * Math.PI * u, zTop), capFeed, ramp, capArea);
     }
 
     if (includeStartEnd) {
