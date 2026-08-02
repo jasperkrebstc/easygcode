@@ -222,6 +222,8 @@
           flowFeed: {
             enabled: $('ls_flowFeedEnabled').checked,
             rate: num('ls_flowFeedRate'),
+            shadeRate: Math.max(0, num('ls_flowShadeRate')),
+            transitionHeight: Math.max(0, num('ls_flowTransitionHeight')),
           },
         },
         brim: {
@@ -472,8 +474,13 @@
       if (!(cfg.lamp.fillet >= 0)) return 'Fillet radius must be 0 or more.';
       if (!isPos(cfg.lamp.compMaxMult) || cfg.lamp.compMaxMult < 1)
         return 'Max line width multiplier must be 1 or more.';
-      if (cfg.lamp.flowFeed.enabled && !isPos(cfg.lamp.flowFeed.rate))
-        return 'Enter a valid target volumetric flow (mm³/s).';
+      if (cfg.lamp.flowFeed.enabled) {
+        if (!isPos(cfg.lamp.flowFeed.rate)) return 'Enter a valid throat flow (mm³/s).';
+        if (!Number.isFinite(cfg.lamp.flowFeed.shadeRate) || cfg.lamp.flowFeed.shadeRate < 0)
+          return 'Shade flow must be 0 (same as throat) or more.';
+        if (!Number.isFinite(cfg.lamp.flowFeed.transitionHeight) || cfg.lamp.flowFeed.transitionHeight < 0)
+          return 'Flow ramp height must be 0 (use the fillet) or more.';
+      }
       if (!Number.isFinite(cfg.lamp.maxAngle) || cfg.lamp.maxAngle < 0 || cfg.lamp.maxAngle > 89)
         return 'Max angle must be between 0 (uncapped) and 89 degrees.';
       if (cfg.lamp.shape === 'sphere') {
@@ -834,9 +841,16 @@
     const aLo = window.GcodeGen.beadArea(cfg.lineWidth, ls.compMode === 'layerHeight' ? thread.pitch : dzEff);
     const aHi = window.GcodeGen.beadArea(wEff, ls.compMode === 'layerHeight' ? thread.pitch : dzEff);
     if (ff.enabled && isPos(ff.rate)) {
+      const shadeRate = ff.shadeRate > 0 ? ff.shadeRate : ff.rate;
+      const span = ff.transitionHeight > 0 ? ff.transitionHeight : prof.filletZ1 - prof.filletZ0;
       $('ls_flowFeedHint').textContent =
-        'Feed varies ' + ((ff.rate * 60) / aHi).toFixed(0) + '–' + ((ff.rate * 60) / aLo).toFixed(0) +
-        ' mm/min (bead area ' + aLo.toFixed(2) + '–' + aHi.toFixed(2) + ' mm²) to hold ' + ff.rate + ' mm³/s.';
+        shadeRate === ff.rate
+          ? 'Feed varies ' + ((ff.rate * 60) / aHi).toFixed(0) + '–' + ((ff.rate * 60) / aLo).toFixed(0) +
+            ' mm/min (bead area ' + aLo.toFixed(2) + '–' + aHi.toFixed(2) + ' mm²) to hold ' + ff.rate + ' mm³/s.'
+          : 'Throat ' + ff.rate + ' → shade ' + shadeRate + ' mm³/s, ramped over ' +
+            (span > 1e-9 ? span.toFixed(1) + ' mm of fillet' : '0 mm — no fillet on this shape, set a ramp height') +
+            ' · feed ' + ((ff.rate * 60) / aLo).toFixed(0) + ' mm/min at the throat, ' +
+            ((shadeRate * 60) / aHi).toFixed(0) + '–' + ((shadeRate * 60) / aLo).toFixed(0) + ' in the shade.';
     } else if (isPos(cfg.printFeed)) {
       $('ls_flowFeedHint').textContent =
         aHi - aLo > 0.01

@@ -862,7 +862,30 @@
     // proportion instead. Off by default (byte-identical to a fixed feed).
     const flowCfg = ls.flowFeed || {};
     const flowOn = !!flowCfg.enabled && flowCfg.rate > 0;
-    const feedForArea = (a) => (flowOn ? (flowCfg.rate * 60) / Math.max(a, 1e-6) : cfg.printFeed);
+    const flowThroat = flowCfg.rate;
+    const flowShade = flowCfg.shadeRate > 0 ? flowCfg.shadeRate : flowThroat;
+    // The shade can usually run faster than the throat: its revolutions are
+    // longer, so each layer gets more cooling time before the nozzle comes
+    // back round to it. Stepping straight from one flow to the other would
+    // leave a visible band, so it ramps across the FILLET — the stretch where
+    // the throat literally becomes the shade, and the one place where a
+    // gradual change is already geometrically justified. A shape that leaves
+    // the throat tangentially (the bell) never gets a fillet, so a manual
+    // transition height gives the ramp somewhere to happen there too.
+    const rampZ0 = prof.filletZ0;
+    const rampSpan =
+      flowCfg.transitionHeight > 0 ? flowCfg.transitionHeight : prof.filletZ1 - prof.filletZ0;
+    const flipped = ls.orientation === 'wide';
+    function flowAtZ(zPrint) {
+      // Resolved in the PROFILE's own coordinates (throat at 0), so the ramp
+      // sits in the same place on the part whichever way up it is printed.
+      const zp = flipped ? H - zPrint : zPrint;
+      const t =
+        rampSpan > 1e-9 ? Math.max(0, Math.min(1, (zp - rampZ0) / rampSpan)) : zp >= rampZ0 ? 1 : 0;
+      return flowThroat + t * (flowShade - flowThroat);
+    }
+    const feedForArea = (a, zPrint) =>
+      flowOn ? (flowAtZ(zPrint) * 60) / Math.max(a, 1e-6) : cfg.printFeed;
 
     // Walk the spiral turn by turn, reading the local wall angle at the start
     // of each turn — the angle changes slowly next to a whole revolution, and
@@ -948,15 +971,27 @@
         ', support ' + Math.round(support * 100) + '% at the steepest point'
     );
     {
-      // Bead areas at the two extremes of whatever compensation is doing, so
-      // the reported feed/flow range covers the whole print.
+      // Actual feeds over the revolutions that will be printed, rather than a
+      // theoretical range — compensation and the flow ramp both vary along
+      // the wall, so only the real per-turn numbers describe the print.
+      let feedLo = Infinity;
+      let feedHi = 0;
+      turns.forEach((t) => {
+        const f = feedForArea(areaFor(t), t.z + t.dz / 2);
+        if (f < feedLo) feedLo = f;
+        if (f > feedHi) feedHi = f;
+      });
       const aLo = beadArea(wMin, compMode === 'layerHeight' ? lh : dzMax);
       const aHi = beadArea(wMax, compMode === 'layerHeight' ? lh : dzMax);
       lines.push(
         flowOn
-          ? '; volumetric flow mode: target ' + flowCfg.rate + ' mm3/s -> feed ' +
-            feedForArea(aHi).toFixed(0) + '..' + feedForArea(aLo).toFixed(0) +
-            ' mm/min (bead area ' + aLo.toFixed(2) + '..' + aHi.toFixed(2) + ' mm2, slowest..fastest)'
+          ? '; volumetric flow mode: throat ' + flowThroat + ' -> shade ' + flowShade +
+            ' mm3/s' +
+            (flowShade !== flowThroat
+              ? ', ramped over z ' + rampZ0.toFixed(2) + '..' + (rampZ0 + rampSpan).toFixed(2) +
+                (rampSpan > 1e-9 ? '' : ' (no fillet — steps; set a transition height)')
+              : '') +
+            ' -> feed ' + feedLo.toFixed(0) + '..' + feedHi.toFixed(0) + ' mm/min'
           : '; constant feed ' + cfg.printFeed + ' mm/min -> volumetric flow ' +
             ((cfg.printFeed * aLo) / 60).toFixed(2) + '..' + ((cfg.printFeed * aHi) / 60).toFixed(2) +
             ' mm3/s (bead area ' + aLo.toFixed(2) + '..' + aHi.toFixed(2) + ' mm2)'
@@ -1075,7 +1110,7 @@
     for (let i = 0; i < turns.length; i++) {
       const t = turns[i];
       const area = areaFor(t);
-      const feed = feedForArea(area);
+      const feed = feedForArea(area, t.z + t.dz / 2);
       const first = i === 0;
       const steps = stepsFor(first ? rFirst : Math.max(sampler.at(t.z).r, sampler.at(t.z + t.dz).r));
       for (let s = 1; s <= steps; s++) {
@@ -1101,7 +1136,7 @@
     const zTop = last.z + last.dz;
     const rTop = sampler.at(zTop).r;
     const capArea = areaFor(last);
-    const capFeed = feedForArea(capArea);
+    const capFeed = feedForArea(capArea, zTop);
     const capSteps = stepsFor(rTop);
     lines.push('; --- closing revolution: flat, extrusion ramped to zero ---');
     for (let s = 1; s <= capSteps; s++) {

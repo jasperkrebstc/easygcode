@@ -262,7 +262,16 @@ keep **fully independent settings** per project:
   revolution's own bead area. It matters more here than anywhere else in the app: width
   compensation deliberately grows the bead on the overhangs, and at a constant feed that
   is a straight flow increase exactly where the material is least supported — deriving
-  the feed backs the head off in proportion instead. Both the opening and closing
+  the feed backs the head off in proportion instead. The **throat and shade get separate
+  flow targets** (shade 0 = same as the throat), because the shade's revolutions are
+  longer and so each layer has more cooling time before the nozzle returns to it. Stepping
+  between the two would band the surface, so the flow **ramps across the fillet** — the
+  one stretch where the throat geometrically becomes the shade — giving every revolution
+  in between its own interpolated value. The ramp is resolved in the profile's own
+  coordinates, so it stays on the same part of the shade whichever way up it prints. The
+  bell never gets a fillet (it leaves the throat tangentially), so a **flow ramp height**
+  input gives the ramp somewhere to happen there; leave it at 0 to use the fillet, and the
+  G-code header calls out the hard step if there is neither. Both the opening and closing
   revolutions hold a **constant radius**: the closing one so it lands squarely on the turn
   below rather than still flaring into mid-air, and the opening one so it is a true circle
   — the brim outside it is perfectly circular, and a radius drifting across that first
@@ -599,7 +608,8 @@ The **Lampshade** tab: printer & material (identical fields to above), socket
 parameter (transition height, max angle, or sphere ⌀), throat length, fillet radius,
 bottom opening ⌀, print orientation, line width, print feed, travel feed, chord
 tolerance, bed center X/Y, overhang compensation mode/strength/max multiplier, an optional
-constant-volumetric-flow target, and an outer-only brim — **no layer height**, which is
+constant-volumetric-flow targets for throat and shade plus their ramp height, and an
+outer-only brim — **no layer height**, which is
 the socket's thread pitch.
 
 The **3D preview** orbits with a drag (Z-up), pinch/wheel zooms, two fingers pan, and a
