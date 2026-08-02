@@ -199,7 +199,7 @@
       'M83',
       'G1 E-0.8 F3000 ; retract',
       'G90 ; absolute coordinates',
-      'G0 Z' + f3(zLift) + ' F8000 ; lift clear (5x tallest print height) for finishing',
+      'G0 Z' + f3(zLift) + ' F8000 ; lift clear of the print for finishing',
       'M106 S0 ; fan off',
       'M140 S0 ; bed off',
       'M104 S0 ; hotend off',
@@ -252,7 +252,7 @@
       '; --- end G-code (pellet / Klipper) ---',
       'M83',
       'G90 ; absolute coordinates',
-      'G0 Z' + f3(zLift) + ' F3000 ; lift clear (5x tallest print height) for finishing',
+      'G0 Z' + f3(zLift) + ' F3000 ; lift clear of the print for finishing',
       'TURN_OFF_HEATERS ; zones + bed off',
       'M106 S0 ; fan off',
       'M84 ; disable steppers',
@@ -707,7 +707,11 @@
     }
 
     if (includeStartEnd) {
-      const endLift = Math.max(5 * maxZEver, mode === 'filament' ? 5 : 10);
+      // Clearance ABOVE the tallest printed point, so there is room to finish
+      // the part by hand without the move ever driving the nozzle into it.
+      // (It used to be an absolute Z of 5x the print height, which is fine on
+      // a flat disc but sails past the machine's Z limit on anything tall.)
+      const endLift = maxZEver + Math.max(0, printer.endLift != null ? printer.endLift : 50);
       (mode === 'filament' ? marlinEnd(endLift) : klipperEnd(endLift)).forEach((l) => lines.push(l));
     }
 
@@ -1146,7 +1150,11 @@
     }
 
     if (includeStartEnd) {
-      const endLift = Math.max(5 * maxZEver, mode === 'filament' ? 5 : 10);
+      // Clearance ABOVE the tallest printed point, so there is room to finish
+      // the part by hand without the move ever driving the nozzle into it.
+      // (It used to be an absolute Z of 5x the print height, which is fine on
+      // a flat disc but sails past the machine's Z limit on anything tall.)
+      const endLift = maxZEver + Math.max(0, printer.endLift != null ? printer.endLift : 50);
       (mode === 'filament' ? marlinEnd(endLift) : klipperEnd(endLift)).forEach((l) => lines.push(l));
     }
 
@@ -2908,7 +2916,11 @@
       // filament/oozing, etc.) rather than the old fixed 5-10mm bump, which
       // wasn't enough headroom above a print of any real height. Floored at
       // the old fixed value so a trivial/near-zero-height job still lifts.
-      const endLift = Math.max(5 * maxZEver, mode === 'filament' ? 5 : 10);
+      // Clearance ABOVE the tallest printed point, so there is room to finish
+      // the part by hand without the move ever driving the nozzle into it.
+      // (It used to be an absolute Z of 5x the print height, which is fine on
+      // a flat disc but sails past the machine's Z limit on anything tall.)
+      const endLift = maxZEver + Math.max(0, printer.endLift != null ? printer.endLift : 50);
       (mode === 'filament' ? marlinEnd(endLift) : klipperEnd(endLift)).forEach((l) => lines.push(l));
     }
 

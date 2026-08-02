@@ -581,6 +581,9 @@ brim with a warning rather than failing.
 ## Inputs
 
 - **Printer & material:** printer mode (pellet/filament), extrusion multiplier,
+  end lift above print (mm, default 50 — the clearance the nozzle rises to after the last
+  move so the part can be finished by hand; measured ABOVE the tallest printed point, so
+  it can never drive down into the print),
   start/end toggle; filament → diameter, nozzle temp, bed temp, fan %; pellet → 3 zone
   temps, bed temp, pressure advance, purge quantity, fan %; material density (g/cm³)
   and material price (per kg), each 0 = skip, for a raw material cost estimate
