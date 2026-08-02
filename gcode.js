@@ -602,6 +602,10 @@
     const filDia = fil.diameter > 0 ? fil.diameter : 1.75;
     const eFactor = mult / (mode === 'filament' ? Math.PI * (filDia / 2) * (filDia / 2) : 1);
     const includeStartEnd = !!printer.includeStartEnd;
+    // Same as the lampshade: the start G-code parks the fan off, so it has to
+    // be switched back on here or it never runs.
+    const fanPct = mode === 'filament' ? fil.fan || 0 : pel.fan || 0;
+    const fanPWM = Math.round(Math.max(0, Math.min(100, fanPct)) * 2.55);
 
     lines.push('; EasyGCode — spoon (spiral + stick) generator');
     lines.push('; ' + new Date().toISOString());
@@ -696,6 +700,9 @@
           isStickSeg ? stickFeed : spiralFeed,
           isStickSeg ? stickArea : null
         );
+      }
+      if (L === 0 && includeStartEnd && fanPWM > 0) {
+        lines.push('M106 S' + fanPWM + ' ; part cooling fan on after first layer');
       }
     }
 
@@ -907,6 +914,13 @@
     const filDia = fil.diameter > 0 ? fil.diameter : 1.75;
     const eFactor = mult / (mode === 'filament' ? Math.PI * (filDia / 2) * (filDia / 2) : 1);
     const includeStartEnd = !!printer.includeStartEnd;
+    // The start G-code parks the fan off for the ramp-up revolution, so the
+    // generator owns turning it back on afterwards — without this the fan
+    // never runs at all. Gated on includeStartEnd for the same reason the
+    // other projects gate it: with no start block there is no M106 S0 to
+    // undo, and the fan is the caller's business.
+    const fanPct = mode === 'filament' ? fil.fan || 0 : pel.fan || 0;
+    const fanPWM = Math.round(Math.max(0, Math.min(100, fanPct)) * 2.55);
     const tol = cfg.tolerance > 0 ? cfg.tolerance : 0.05;
 
     lines.push('; EasyGCode — lampshade (threaded throat + conical shade) generator');
@@ -1068,6 +1082,9 @@
         // constant radius while it does (see rFirst above).
         const ramp = first ? (u + (s - 1) / steps) / 2 : 1;
         emitSeg(ptAt(first ? rFirst : sampler.at(zp).r, SEAM + 2 * Math.PI * u, zp), feed, ramp, area);
+      }
+      if (first && includeStartEnd && fanPWM > 0) {
+        lines.push('M106 S' + fanPWM + ' ; part cooling fan on after ramp loop');
       }
     }
 
