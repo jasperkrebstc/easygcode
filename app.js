@@ -45,6 +45,7 @@
       mode: $(pre + 'printerMode').value === 'filament' ? 'filament' : 'pellet',
       multiplier: num(pre + 'extrusionMultiplier'),
       includeStartEnd: $(pre + 'startEndEnabled').checked,
+      endLift: num(pre + 'endLift'),
       filament: {
         diameter: num(pre + 'filDiameter'),
         nozzle: num(pre + 'filNozzleTemp'),
@@ -299,6 +300,8 @@
 
   function validatePrinter(cfg) {
     if (!isPos(cfg.printer.multiplier)) return 'Extrusion multiplier must be greater than 0.';
+    if (!Number.isFinite(cfg.printer.endLift) || cfg.printer.endLift < 0)
+      return 'End lift must be 0 or more.';
     if (cfg.printer.mode === 'filament') {
       if (!isPos(cfg.printer.filament.diameter)) return 'Enter a valid filament diameter.';
       const f = cfg.printer.filament;
@@ -2115,7 +2118,7 @@
     tolerance: 'bs_tolerance', centerX: 'bs_centerX', centerY: 'bs_centerY',
     printerMode: 'bs_printerMode', extrusionMultiplier: 'bs_extrusionMultiplier',
     materialDensity: 'bs_materialDensity', materialPrice: 'bs_materialPrice',
-    startEndEnabled: 'bs_startEndEnabled',
+    startEndEnabled: 'bs_startEndEnabled', endLift: 'bs_endLift',
     filDiameter: 'bs_filDiameter', filNozzleTemp: 'bs_filNozzleTemp',
     filBedTemp: 'bs_filBedTemp', filFan: 'bs_filFan',
     pelUpTemp: 'bs_pelUpTemp', pelMidTemp: 'bs_pelMidTemp', pelDownTemp: 'bs_pelDownTemp',
@@ -2144,7 +2147,7 @@
     printFeed: 've_printFeed', travelFeed: 've_travelFeed',
     tolerance: 've_tolerance', seamSide: 've_seamSide', centerX: 've_centerX', centerY: 've_centerY',
     printerMode: 've_printerMode', extrusionMultiplier: 've_extrusionMultiplier',
-    startEndEnabled: 've_startEndEnabled',
+    startEndEnabled: 've_startEndEnabled', endLift: 've_endLift',
     filDiameter: 've_filDiameter', filNozzleTemp: 've_filNozzleTemp',
     filBedTemp: 've_filBedTemp', filFan: 've_filFan',
     pelUpTemp: 've_pelUpTemp', pelMidTemp: 've_pelMidTemp', pelDownTemp: 've_pelDownTemp',
@@ -2180,7 +2183,7 @@
     printFeed: 'sp_printFeed', travelFeed: 'sp_travelFeed',
     centerX: 'sp_centerX', centerY: 'sp_centerY',
     printerMode: 'sp_printerMode', extrusionMultiplier: 'sp_extrusionMultiplier',
-    startEndEnabled: 'sp_startEndEnabled',
+    startEndEnabled: 'sp_startEndEnabled', endLift: 'sp_endLift',
     filDiameter: 'sp_filDiameter', filNozzleTemp: 'sp_filNozzleTemp',
     filBedTemp: 'sp_filBedTemp', filFan: 'sp_filFan',
     pelUpTemp: 'sp_pelUpTemp', pelMidTemp: 'sp_pelMidTemp', pelDownTemp: 'sp_pelDownTemp',
@@ -2203,7 +2206,7 @@
     lineWidth: 'ls_lineWidth', printFeed: 'ls_printFeed', travelFeed: 'ls_travelFeed',
     tolerance: 'ls_tolerance', centerX: 'ls_centerX', centerY: 'ls_centerY',
     printerMode: 'ls_printerMode', extrusionMultiplier: 'ls_extrusionMultiplier',
-    startEndEnabled: 'ls_startEndEnabled',
+    startEndEnabled: 'ls_startEndEnabled', endLift: 'ls_endLift',
     filDiameter: 'ls_filDiameter', filNozzleTemp: 'ls_filNozzleTemp',
     filBedTemp: 'ls_filBedTemp', filFan: 'ls_filFan',
     pelUpTemp: 'ls_pelUpTemp', pelMidTemp: 'ls_pelMidTemp', pelDownTemp: 'ls_pelDownTemp',
