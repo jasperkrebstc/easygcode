@@ -1270,6 +1270,19 @@
     let vBottomLayers = 0;
     let vWallN = 1;
     let vFlatTop = true;
+    // Top curve shape: by default the wall keeps the bottom's own
+    // cross-section at every height, uniformly resized by the radius
+    // profile (today's behavior, untouched below). Choosing "rounded star"
+    // instead cross-fades the wall's cross-section from the bottom shape
+    // toward a smooth Catmull-Rom star outline as height increases —
+    // linearly over the whole wall height — alongside (not instead of) the
+    // radius profile's own scaling. vBotRes/vTopRes are both outlines
+    // resampled to the SAME point count, starting at the same seam-relative
+    // vertex, so index i on each names "the same fractional position around
+    // the perimeter" and can be blended point-for-point.
+    let vTopBlend = false;
+    let vBotRes = null;
+    let vTopRes = null;
     if (isVessel) {
       const ve = cfg.vessel || {};
       vProfile = makeProfile(buildVesselProfileCps(ve));
@@ -1281,6 +1294,43 @@
       vFlatTop = ve.topStyle !== 'spiral';
       vBottomLayers = Math.max(0, Math.round(ve.bottomLayers || 0));
       vWallN = Math.max(1, Math.round((ve.height || lh) / lh));
+
+      if (ve.topShape === 'roundedStar' && ve.topStarOuter > 0 && ve.topStarInner > 0 && ve.topStarPoints >= 2) {
+        const NB = 480;
+        vBotRes = Geo.resampleClosed(base, NB);
+        const topOutline = Geo.rotateToSeam(
+          Geo.roundedStar(ve.topStarOuter, ve.topStarInner, ve.topStarPoints),
+          cfg.seamSide || 'back'
+        );
+        vTopRes = Geo.resampleClosed(topOutline, NB);
+        vTopBlend = true;
+      }
+    }
+
+    // Cross-section point at arc-length fraction `u`, cross-faded by height
+    // fraction `hFrac` (0 = bottom shape, 1 = fully the top curve). Without a
+    // top curve shape configured this is exactly `sampler.at(u).pos` — the
+    // default vessel output is untouched. The caller still applies the
+    // radius profile's own scale on top of whatever this returns.
+    function vShapeAt(u, hFrac) {
+      if (!vTopBlend) return sampler.at(u).pos;
+      const n = vBotRes.length;
+      const uu = u - Math.floor(u);
+      const f = uu * n;
+      let i0 = Math.floor(f);
+      if (i0 >= n) i0 = n - 1;
+      const i1 = (i0 + 1) % n;
+      const t = f - i0;
+      const b0 = vBotRes[i0];
+      const b1 = vBotRes[i1];
+      const s0p = vTopRes[i0];
+      const s1p = vTopRes[i1];
+      const bx = b0.x + (b1.x - b0.x) * t;
+      const by = b0.y + (b1.y - b0.y) * t;
+      const sx = s0p.x + (s1p.x - s0p.x) * t;
+      const sy = s0p.y + (s1p.y - s0p.y) * t;
+      const k = Math.max(0, Math.min(1, hFrac));
+      return { x: bx + (sx - bx) * k, y: by + (sy - by) * k };
     }
 
     const area = beadArea(cfg.lineWidth, lh);
@@ -2433,6 +2483,12 @@
               ')') +
           ' + spiral wall to z=' + wallH.toFixed(2) + ' ---'
       );
+      if (vTopBlend) {
+        lines.push(
+          '; top curve: cross-fading into a rounded star (outer=' + ve.topStarOuter +
+            ' inner=' + ve.topStarInner + ' points=' + ve.topStarPoints + ') linearly over the full wall height'
+        );
+      }
 
       // z where the wall loop below starts counting its own revolutions
       // from, and how many of them it runs — both default to "everything is
@@ -2522,8 +2578,8 @@
             const zc = z0 + (z1 - z0) * u;
             const frac = fSampler.at(zc).frac;
             const s = flatScale + (scaleEnd - flatScale) * frac;
-            const sp = sampler.at(u);
-            return { x: sp.pos.x * s + cx, y: sp.pos.y * s + cy, z: lh + zc };
+            const sp = vShapeAt(u, (lh + zc) / wallH);
+            return { x: sp.x * s + cx, y: sp.y * s + cy, z: lh + zc };
           }
           if (!flatPoly) travelClear(vFilletPt(0, 0, 0));
           let zc = 0;
@@ -2610,10 +2666,10 @@
       // vZOffset shifts where L=0 sits in real Z (0 for every style except
       // the filleted one, whose transition doesn't land on a whole layer).
       function vW(L, u) {
-        const sp = sampler.at(u);
         const z = Math.min(vZOffset + lh * (L + u), wallH);
+        const sp = vShapeAt(u, z / wallH);
         const s = vProfile(z / wallH);
-        return { x: sp.pos.x * s + cx, y: sp.pos.y * s + cy, z: z };
+        return { x: sp.x * s + cx, y: sp.y * s + cy, z: z };
       }
       if (!vContinuous && !vFilleted) {
         const startW = vW(0, 0);
@@ -2656,14 +2712,14 @@
         for (let i = 0; i < uSet.length; i++) {
           const u = uSet[i];
           if (u <= 1e-9) continue;
-          const sp = sampler.at(u);
+          const sp = vShapeAt(u, 1);
           const ramp = Math.max(0, Math.min(1, 1 - (pu + u) / 2));
-          emitSeg({ x: sp.pos.x * sTop + cx, y: sp.pos.y * sTop + cy, z: wallH }, cfg.printFeed, ramp);
+          emitSeg({ x: sp.x * sTop + cx, y: sp.y * sTop + cy, z: wallH }, cfg.printFeed, ramp);
           pu = u;
         }
-        const spTop = sampler.at(0);
+        const spTop = vShapeAt(0, 1);
         emitSeg(
-          { x: spTop.pos.x * sTop + cx, y: spTop.pos.y * sTop + cy, z: wallH },
+          { x: spTop.x * sTop + cx, y: spTop.y * sTop + cy, z: wallH },
           cfg.printFeed,
           Math.max(0, Math.min(1, 1 - (pu + 1) / 2))
         );

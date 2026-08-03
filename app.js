@@ -170,6 +170,10 @@
             { h: num('ve_profMidH3'), s: num('ve_profMid3') },
           ].slice(0, Math.max(0, Math.min(5, Math.round(num('ve_profileCount'))) - 2)),
           top: num('ve_profTop'),
+          topShape: $('ve_topShape').value === 'roundedStar' ? 'roundedStar' : 'same',
+          topStarOuter: num('ve_topStar_outer'),
+          topStarInner: num('ve_topStar_inner'),
+          topStarPoints: Math.max(2, Math.round(num('ve_topStar_points'))),
         },
         brim: readBrim('ve_'),
       };
@@ -429,6 +433,12 @@
       }
       if (pr.seamStyle === 'filleted' && (!Number.isFinite(pr.bottomFillet) || pr.bottomFillet < 0)) {
         return 'Bottom fillet height must be 0 or more.';
+      }
+      if (pr.topShape === 'roundedStar') {
+        if (!isPos(pr.topStarOuter) || !isPos(pr.topStarInner)) {
+          return 'Top curve star outer/inner radius must be greater than 0.';
+        }
+        if (!(pr.topStarPoints >= 2)) return 'Top curve star points must be 2 or more.';
       }
       for (const k in cfg.shapeParams) {
         const v = cfg.shapeParams[k];
@@ -793,6 +803,12 @@
     const filleted = style === 'filleted';
     $('ve_bottomLayersField').hidden = filleted;
     $('ve_filletFields').hidden = !filleted;
+  }
+
+  // The rounded-star top curve has its own outer/inner radius + point-count
+  // fields, only relevant once it's actually chosen.
+  function showVesselTopShape(shape) {
+    $('ve_topStarFields').hidden = shape !== 'roundedStar';
   }
 
   // Resolve the lampshade's socket thread (diameter + pitch) — from the
@@ -1311,7 +1327,10 @@
           (ve.seamStyle === 'spiral' ? 'true-spiral (continuous into wall)' : ve.seamStyle === 'alternating' ? 'zipper' : 'staircase') +
           ' bottom'
         : 'no bottom (open tube)') +
-      ' · ' + (ve.topStyle === 'spiral' ? 'open spiral top' : 'flat ramp-down top');
+      ' · ' + (ve.topStyle === 'spiral' ? 'open spiral top' : 'flat ramp-down top') +
+      (ve.topShape === 'roundedStar'
+        ? ' · top curve blends into a ' + (ve.topStarPoints || 5) + '-point rounded star'
+        : '');
 
     const canvas = $('ve_preview');
     const ctx = canvas.getContext('2d');
@@ -1712,6 +1731,7 @@
       showShapeParams(cfg.shape, 've-shape-params');
       showVesselMidPoints(cfg.vessel.profileCount);
       showVesselBottomStyle(cfg.vessel.seamStyle);
+      showVesselTopShape(cfg.vessel.topShape);
     } else if (cfg.project === 'bendstool') {
       syncFoamHint(cfg);
       syncFlowFeedHint(cfg);
@@ -2146,6 +2166,7 @@
     showLampShapeParams($('ls_shape').value);
     showVesselMidPoints(num('ve_profileCount'));
     showVesselBottomStyle($('ve_seamStyle').value);
+    showVesselTopShape($('ve_topShape').value);
     showProject(activeProject());
   }
 

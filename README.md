@@ -181,8 +181,18 @@ keep **fully independent settings** per project:
   and ramps the extrusion back down to zero, closing the top cleanly; **open spiral**
   adds nothing — the wall simply completes its last revolution at full flow and
   stops, leaving an even full-width bead all the way to the end (with the spiral's
-  one-layer helical step at the seam). Separate **brim** settings, like the other
-  projects.
+  one-layer helical step at the seam). A **top curve** dropdown separately controls
+  the wall's *cross-section*, as opposed to its scale: **same as bottom** (default)
+  keeps the bottom shape's own outline at every height, just resized by the radius
+  profile above; **rounded star** instead cross-fades the outline from the bottom
+  shape into a smooth star — the same outer-radius/inner-radius/points vertices as
+  the plain **star** shape, but joined with a closed Catmull-Rom spline instead of
+  straight edges, so the points round off rather than coming to sharp corners. The
+  cross-fade is linear over the whole wall height (pure bottom shape at `z = 0`,
+  pure star at the top) and runs at every height alongside — not instead of — the
+  radius profile's own scaling; both outlines are resampled to the same dense point
+  count starting at the seam so they blend point-for-point with no twist. Separate
+  **brim** settings, like the other projects.
 - **Spoon** — a small fun one: a flat lollipop shape, an Archimedean **spiral**
   (pitch = one line width per turn, so adjacent arms sit edge to edge, filling a solid
   disc) that ends in a straight **stick** continuing past the last turn in the radial

@@ -120,6 +120,42 @@
     return pts;
   }
 
+  // Same outer/inner/points vertices as star() (identical positions), but
+  // connected with a closed Catmull-Rom spline instead of straight lines, so
+  // the points round off into a smooth curve rather than sharp corners —
+  // used as the vessel's alternate "rounded star" top-curve shape. Each
+  // vertex-to-vertex span is subdivided into `stepsPerSeg` samples; the
+  // spline wraps around the closed vertex loop (p0/p3 index modulo n) so the
+  // curve closes with no seam of its own.
+  function roundedStar(outerR, innerR, points, stepsPerSeg) {
+    const p = Math.max(2, Math.round(points));
+    const n = p * 2;
+    const verts = [];
+    for (let i = 0; i < n; i++) {
+      const r = i % 2 === 0 ? outerR : innerR;
+      const a = (Math.PI * i) / p + Math.PI / 2;
+      verts.push({ x: r * Math.cos(a), y: r * Math.sin(a) });
+    }
+    const steps = Math.max(4, Math.round(stepsPerSeg || 24));
+    const pts = [];
+    for (let i = 0; i < n; i++) {
+      const p0 = verts[(i - 1 + n) % n];
+      const p1 = verts[i];
+      const p2 = verts[(i + 1) % n];
+      const p3 = verts[(i + 2) % n];
+      for (let s = 0; s < steps; s++) {
+        const t = s / steps;
+        const t2 = t * t;
+        const t3 = t2 * t;
+        pts.push({
+          x: 0.5 * (2 * p1.x + (-p0.x + p2.x) * t + (2 * p0.x - 5 * p1.x + 4 * p2.x - p3.x) * t2 + (-p0.x + 3 * p1.x - 3 * p2.x + p3.x) * t3),
+          y: 0.5 * (2 * p1.y + (-p0.y + p2.y) * t + (2 * p0.y - 5 * p1.y + 4 * p2.y - p3.y) * t2 + (-p0.y + 3 * p1.y - 3 * p2.y + p3.y) * t3),
+        });
+      }
+    }
+    return ensureCCW(pts);
+  }
+
   // Superellipse / squircle: |x/a|^n + |y/a|^n = 1.
   function squircle(size, n, steps) {
     const a = size;
@@ -1445,6 +1481,7 @@
     stoolLoop,
     ringFill,
     vesselFilletSampler,
+    roundedStar,
     lampProfile,
     makeLampSampler,
     flipLampProfile,
