@@ -151,9 +151,11 @@ keep **fully independent settings** per project:
   at `z = 0` (so the bottom sits inside it) and ramps extrusion up over the first
   revolution, while with the true-spiral bottom it continues from the handoff with
   no travel and no ramp. A **radius
-  profile** — bottom / middle / top scale control points, lofted with a Catmull-Rom
-  curve and shown as a live side-silhouette preview — tapers the wall with height
-  for cones, bellied vases, and flared trays (all `1` = a straight prism). The wall
+  profile** — bottom / top scale control points plus a configurable **2–5 profile
+  points** total (0–3 extra middle points, each its own height 0–1 and scale), lofted
+  with a Catmull-Rom curve and shown as a live side-silhouette preview — tapers the
+  wall with height for cones, bellied vases, and flared trays (all `1` = a straight
+  prism; 2 points = a plain bottom-to-top loft, no middle control at all). The wall
   height snaps to a whole number of layers. A **top finish** dropdown picks how the
   wall ends: **flat cap** (default) adds one extra revolution that holds `z` constant
   and ramps the extrusion back down to zero, closing the top cleanly; **open spiral**

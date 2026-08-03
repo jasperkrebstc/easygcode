@@ -54,6 +54,25 @@
     };
   }
 
+  // Vessel radius-profile control points from cfg.vessel — shared by the
+  // generator and the 2D profile preview so both always agree on the exact
+  // same curve. Bottom (h=0) and top (h=1) are always present; up to 3
+  // middle points (ve.midPoints, each {h, s}) sit between them, filtered to
+  // ones that actually fall strictly inside (0,1) and sorted by height, so a
+  // middle point dragged to the very bottom/top or left blank just drops out
+  // rather than producing a duplicate or out-of-order control point.
+  function buildVesselProfileCps(ve) {
+    const cps = [{ h: 0, s: ve.bottom > 0 ? ve.bottom : 1 }];
+    (ve.midPoints || []).forEach((m) => {
+      if (m && Number.isFinite(m.h) && m.h > 0.001 && m.h < 0.999 && m.s > 0) {
+        cps.push({ h: m.h, s: m.s });
+      }
+    });
+    cps.push({ h: 1, s: ve.top > 0 ? ve.top : 1 });
+    cps.sort((a, b) => a.h - b.h);
+    return cps;
+  }
+
   const f3 = (v) => v.toFixed(3);
   const f5 = (v) => v.toFixed(5);
   const dist3 = (a, b) => Math.hypot(b.x - a.x, b.y - a.y, b.z - a.z);
@@ -1253,13 +1272,7 @@
     let vFlatTop = true;
     if (isVessel) {
       const ve = cfg.vessel || {};
-      const cps = [{ h: 0, s: ve.bottom > 0 ? ve.bottom : 1 }];
-      if (Number.isFinite(ve.midH) && ve.midH > 0.001 && ve.midH < 0.999) {
-        cps.push({ h: ve.midH, s: ve.mid > 0 ? ve.mid : 1 });
-      }
-      cps.push({ h: 1, s: ve.top > 0 ? ve.top : 1 });
-      cps.sort((a, b) => a.h - b.h);
-      vProfile = makeProfile(cps);
+      vProfile = makeProfile(buildVesselProfileCps(ve));
       const s0 = vProfile(0);
       vBase = base.map((p) => ({ x: p.x * s0, y: p.y * s0 }));
       vBottomStyle = ve.seamStyle === 'alternating' || ve.seamStyle === 'spiral' ? ve.seamStyle : 'staircase';
@@ -2959,6 +2972,7 @@
     discLoops,
     LEG_ANGLES,
     makeProfile,
+    buildVesselProfileCps,
     BS_ROTATION_DEG,
     SPOON_ROTATION_DEG,
     LAMP_SOCKETS,

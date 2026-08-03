@@ -159,8 +159,12 @@
           seamStyle: ['alternating', 'spiral'].indexOf($('ve_seamStyle').value) >= 0 ? $('ve_seamStyle').value : 'staircase',
           topStyle: $('ve_topStyle').value === 'spiral' ? 'spiral' : 'flat',
           bottom: num('ve_profBottom'),
-          midH: num('ve_profMidH'),
-          mid: num('ve_profMid'),
+          profileCount: Math.max(2, Math.min(5, Math.round(num('ve_profileCount')))),
+          midPoints: [
+            { h: num('ve_profMidH1'), s: num('ve_profMid1') },
+            { h: num('ve_profMidH2'), s: num('ve_profMid2') },
+            { h: num('ve_profMidH3'), s: num('ve_profMid3') },
+          ].slice(0, Math.max(0, Math.min(5, Math.round(num('ve_profileCount'))) - 2)),
           top: num('ve_profTop'),
         },
         brim: readBrim('ve_'),
@@ -412,10 +416,13 @@
       if (!Number.isInteger(cfg.vessel.bottomLayers) || cfg.vessel.bottomLayers < 0)
         return 'Bottom layers must be 0 or more.';
       const pr = cfg.vessel;
-      if (!isPos(pr.bottom) || !isPos(pr.mid) || !isPos(pr.top))
-        return 'Profile scales must be greater than 0.';
-      if (!Number.isFinite(pr.midH) || pr.midH < 0 || pr.midH > 1)
-        return 'Middle height must be between 0 and 1.';
+      if (!isPos(pr.bottom) || !isPos(pr.top)) return 'Profile scales must be greater than 0.';
+      if (!(pr.profileCount >= 2 && pr.profileCount <= 5))
+        return 'Profile points must be between 2 and 5.';
+      for (const m of pr.midPoints) {
+        if (!Number.isFinite(m.h) || m.h < 0 || m.h > 1) return 'Middle height must be between 0 and 1.';
+        if (!isPos(m.s)) return 'Middle scale must be greater than 0.';
+      }
       for (const k in cfg.shapeParams) {
         const v = cfg.shapeParams[k];
         if (!Number.isFinite(v)) return 'Enter a valid value for ' + k + '.';
@@ -760,6 +767,15 @@
   function showLampShapeParams(shape) {
     document.querySelectorAll('.lamp-shape-params').forEach((el) => {
       el.hidden = (el.getAttribute('data-shape') || '').split(/\s+/).indexOf(shape) < 0;
+    });
+  }
+
+  // Show exactly (profileCount - 2) of the vessel's 3 pre-built middle-point
+  // field pairs — 2 points means none at all (a plain bottom-to-top loft).
+  function showVesselMidPoints(count) {
+    const n = Math.max(0, Math.min(3, Math.round(count || 3) - 2));
+    document.querySelectorAll('.ve-mid-point').forEach((el) => {
+      el.hidden = Number(el.getAttribute('data-mid')) > n;
     });
   }
 
@@ -1390,12 +1406,7 @@
     const ve = cfg.vessel;
     if (!isPos(ve.height)) return;
 
-    const cps = [{ h: 0, s: isPos(ve.bottom) ? ve.bottom : 1 }];
-    if (Number.isFinite(ve.midH) && ve.midH > 0.001 && ve.midH < 0.999) {
-      cps.push({ h: ve.midH, s: isPos(ve.mid) ? ve.mid : 1 });
-    }
-    cps.push({ h: 1, s: isPos(ve.top) ? ve.top : 1 });
-    cps.sort((a, b) => a.h - b.h);
+    const cps = window.GcodeGen.buildVesselProfileCps(ve);
     const prof = window.GcodeGen.makeProfile(cps);
 
     let baseR = 30;
@@ -1674,6 +1685,7 @@
       showHangerParams(cfg.hanger.mode === 'double' ? 'double' : 'single');
     } else if (cfg.project === 'vessel') {
       showShapeParams(cfg.shape, 've-shape-params');
+      showVesselMidPoints(cfg.vessel.profileCount);
     } else if (cfg.project === 'bendstool') {
       syncFoamHint(cfg);
       syncFlowFeedHint(cfg);

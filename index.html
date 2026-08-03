@@ -510,10 +510,21 @@
         </div>
         <h3 class="subhead">Radius profile (× base, lofted bottom → top)</h3>
         <div class="grid">
+          <div class="field"><label>Profile points (2–5)</label><input type="number" id="ve_profileCount" value="3" min="2" max="5" step="1" /></div>
           <div class="field"><label>Bottom scale (×)</label><input type="number" id="ve_profBottom" value="1.0" min="0.05" step="0.05" /></div>
-          <div class="field"><label>Middle height (0–1)</label><input type="number" id="ve_profMidH" value="0.5" min="0" max="1" step="0.05" /></div>
-          <div class="field"><label>Middle scale (×)</label><input type="number" id="ve_profMid" value="1.0" min="0.05" step="0.05" /></div>
           <div class="field"><label>Top scale (×)</label><input type="number" id="ve_profTop" value="1.0" min="0.05" step="0.05" /></div>
+        </div>
+        <div class="ve-mid-point grid" data-mid="1">
+          <div class="field"><label>Middle 1 height (0–1)</label><input type="number" id="ve_profMidH1" value="0.5" min="0" max="1" step="0.05" /></div>
+          <div class="field"><label>Middle 1 scale (×)</label><input type="number" id="ve_profMid1" value="1.0" min="0.05" step="0.05" /></div>
+        </div>
+        <div class="ve-mid-point grid" data-mid="2" hidden>
+          <div class="field"><label>Middle 2 height (0–1)</label><input type="number" id="ve_profMidH2" value="0.65" min="0" max="1" step="0.05" /></div>
+          <div class="field"><label>Middle 2 scale (×)</label><input type="number" id="ve_profMid2" value="1.0" min="0.05" step="0.05" /></div>
+        </div>
+        <div class="ve-mid-point grid" data-mid="3" hidden>
+          <div class="field"><label>Middle 3 height (0–1)</label><input type="number" id="ve_profMidH3" value="0.8" min="0" max="1" step="0.05" /></div>
+          <div class="field"><label>Middle 3 scale (×)</label><input type="number" id="ve_profMid3" value="1.0" min="0.05" step="0.05" /></div>
         </div>
         <p class="hint" id="ve_hint"></p>
         <canvas id="ve_profile" width="600" height="360"></canvas>
