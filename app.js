@@ -156,8 +156,12 @@
         vessel: {
           height: num('ve_height'),
           bottomLayers: Math.max(0, Math.round(num('ve_bottomLayers'))),
-          seamStyle: ['alternating', 'spiral'].indexOf($('ve_seamStyle').value) >= 0 ? $('ve_seamStyle').value : 'staircase',
+          seamStyle:
+            ['alternating', 'spiral', 'filleted'].indexOf($('ve_seamStyle').value) >= 0
+              ? $('ve_seamStyle').value
+              : 'staircase',
           topStyle: $('ve_topStyle').value === 'spiral' ? 'spiral' : 'flat',
+          bottomFillet: Math.max(0, num('ve_bottomFillet')),
           bottom: num('ve_profBottom'),
           profileCount: Math.max(2, Math.min(5, Math.round(num('ve_profileCount')))),
           midPoints: [
@@ -422,6 +426,9 @@
       for (const m of pr.midPoints) {
         if (!Number.isFinite(m.h) || m.h < 0 || m.h > 1) return 'Middle height must be between 0 and 1.';
         if (!isPos(m.s)) return 'Middle scale must be greater than 0.';
+      }
+      if (pr.seamStyle === 'filleted' && (!Number.isFinite(pr.bottomFillet) || pr.bottomFillet < 0)) {
+        return 'Bottom fillet height must be 0 or more.';
       }
       for (const k in cfg.shapeParams) {
         const v = cfg.shapeParams[k];
@@ -777,6 +784,15 @@
     document.querySelectorAll('.ve-mid-point').forEach((el) => {
       el.hidden = Number(el.getAttribute('data-mid')) > n;
     });
+  }
+
+  // The filleted bottom style always uses exactly one flat layer before it
+  // starts rounding into the wall — "bottom layers" plays no part in it — so
+  // that field is swapped for the fillet's own height input instead.
+  function showVesselBottomStyle(style) {
+    const filleted = style === 'filleted';
+    $('ve_bottomLayersField').hidden = filleted;
+    $('ve_filletFields').hidden = !filleted;
   }
 
   // Resolve the lampshade's socket thread (diameter + pitch) — from the
@@ -1284,10 +1300,13 @@
     const ve = cfg.vessel;
     const lh = cfg.layerHeight;
     const nWall = isPos(lh) && isPos(ve.height) ? Math.max(1, Math.round(ve.height / lh)) : 0;
-    const hasBottom = ve.bottomLayers > 0;
+    const isFilleted = ve.seamStyle === 'filleted';
+    const hasBottom = ve.bottomLayers > 0 || isFilleted;
     $('ve_hint').textContent =
       'wall ' + (nWall * lh).toFixed(1) + ' mm (' + nWall + ' rev' + (nWall === 1 ? '' : 's') + ') · ' +
-      (hasBottom
+      (isFilleted
+        ? '1 flat layer + ' + (ve.bottomFillet || 0) + 'mm rounded transition into the wall (continuous)'
+        : hasBottom
         ? 'bottom ' + ve.bottomLayers + ' layer' + (ve.bottomLayers === 1 ? '' : 's') + ' · ' +
           (ve.seamStyle === 'spiral' ? 'true-spiral (continuous into wall)' : ve.seamStyle === 'alternating' ? 'zipper' : 'staircase') +
           ' bottom'
@@ -1316,11 +1335,17 @@
       const lw = cfg.lineWidth;
       const tol = isPos(cfg.tolerance) ? cfg.tolerance : 0.05;
       let fill = { loops: [], outline: null };
-      if (ve.bottomLayers > 0) {
+      const isFilleted = ve.seamStyle === 'filleted';
+      // The filleted style always fills the bottom (no separate layer count
+      // gating it), and top-down its true-spiral fill looks identical to the
+      // 'spiral' style's own — ringFill doesn't know 'filleted' by name, so
+      // map to the style that actually draws the same top-down path.
+      if (ve.bottomLayers > 0 || isFilleted) {
+        const fillStyle = isFilleted ? 'spiral' : ve.seamStyle;
         try {
           fill = window.Geo.ringFill(
-            window.Geo.offsetClosed(wall, -lw), lw, tol, ve.seamStyle, cfg.seamSide,
-            ve.seamStyle === 'spiral' ? wall : null
+            window.Geo.offsetClosed(wall, -lw), lw, tol, fillStyle, cfg.seamSide,
+            fillStyle === 'spiral' ? wall : null
           );
         } catch (e) {
           fill = { loops: [], outline: null };
@@ -1686,6 +1711,7 @@
     } else if (cfg.project === 'vessel') {
       showShapeParams(cfg.shape, 've-shape-params');
       showVesselMidPoints(cfg.vessel.profileCount);
+      showVesselBottomStyle(cfg.vessel.seamStyle);
     } else if (cfg.project === 'bendstool') {
       syncFoamHint(cfg);
       syncFlowFeedHint(cfg);
@@ -2118,6 +2144,8 @@
     $('ls_flowFeedFields').hidden = !$('ls_flowFeedEnabled').checked;
     showLampSocketParams($('ls_socket').value);
     showLampShapeParams($('ls_shape').value);
+    showVesselMidPoints(num('ve_profileCount'));
+    showVesselBottomStyle($('ve_seamStyle').value);
     showProject(activeProject());
   }
 

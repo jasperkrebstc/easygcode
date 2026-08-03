@@ -1275,7 +1275,8 @@
       vProfile = makeProfile(buildVesselProfileCps(ve));
       const s0 = vProfile(0);
       vBase = base.map((p) => ({ x: p.x * s0, y: p.y * s0 }));
-      vBottomStyle = ve.seamStyle === 'alternating' || ve.seamStyle === 'spiral' ? ve.seamStyle : 'staircase';
+      vBottomStyle =
+        ['alternating', 'spiral', 'filleted'].indexOf(ve.seamStyle) >= 0 ? ve.seamStyle : 'staircase';
       vAlt = vBottomStyle === 'alternating';
       vFlatTop = ve.topStyle !== 'spiral';
       vBottomLayers = Math.max(0, Math.round(ve.bottomLayers || 0));
@@ -2421,97 +2422,223 @@
       // loop (default), or none — the spiral just ends at full flow.
       const tolV = cfg.tolerance > 0 ? cfg.tolerance : 0.05;
       const wallH = vWallN * lh;
+      const ve = cfg.vessel || {};
+      const vFilleted = vBottomStyle === 'filleted';
       lines.push(
-        '; --- vessel: ' + vBottomLayers + '-layer bottom (' +
-          (vBottomStyle === 'spiral' ? 'true spiral, continuous into wall' : vAlt ? 'zipper' : 'staircase') +
-          ') + spiral wall to z=' + wallH.toFixed(2) + ' ---'
+        '; --- vessel: ' +
+          (vFilleted
+            ? 'filleted bottom-to-wall transition'
+            : vBottomLayers + '-layer bottom (' +
+              (vBottomStyle === 'spiral' ? 'true spiral, continuous into wall' : vAlt ? 'zipper' : 'staircase') +
+              ')') +
+          ' + spiral wall to z=' + wallH.toFixed(2) + ' ---'
       );
 
-      const innerBase = Geo.offsetClosed(vBase, -cfg.lineWidth, dirSign);
-      const vSpiralB = vBottomStyle === 'spiral';
-      const fill = Geo.ringFill(
-        innerBase, cfg.lineWidth, tolV, vBottomStyle, cfg.seamSide || 'back', vSpiralB ? vBase : null
-      );
-      if (!fill.loops.length) {
-        warnings.push('Bottom is too small to fill at this line width — the vessel has no closed bottom.');
-      }
-      // Spiral bottom: one unbroken line through ALL bottom layers and into
-      // the wall — zero travels. The layers alternate direction (out, in,
-      // out, …), each starting where the previous ended; the first layer's
-      // direction is chosen by parity so the LAST always runs outward onto
-      // the wall curve, whose stacked transition revolutions ARE the wall's
-      // lowest layers. The helix then picks up from there (no travel, no bed
-      // ramp). The z step between layers rides on each layer's first segment,
-      // like any spiral layer change.
-      const vContinuous = vSpiralB && vBottomLayers > 0 && fill.loops.length > 0;
+      // z where the wall loop below starts counting its own revolutions
+      // from, and how many of them it runs — both default to "everything is
+      // the wall, from z=0" (today's behavior) and are only overridden by
+      // the filleted style, whose transition doesn't land on a whole
+      // multiple of the layer height.
+      let vZOffset = 0;
+      let vWallReps = vWallN;
+      let vContinuous = false;
       let wallStartL = 0;
-      if (vContinuous) {
-        wallStartL = Math.min(vBottomLayers, vWallN - 1);
-        if (vBottomLayers >= vWallN) {
-          warnings.push('Wall height gives fewer revolutions than bottom layers — increase wall height for a clean spiral-bottom handoff.');
+
+      if (vFilleted) {
+        // One continuous spiral, imagined as a solid object: a flat disc
+        // (always exactly ONE layer height, vBottomLayers plays no part
+        // here) rounding into the cylindrical wall through a fillet, rather
+        // than a flat bottom stacked N times then a sharp corner into the
+        // wall. See Geo.vesselFilletSampler for the closed-form angle/scale
+        // relationship; "fillet height" (mm) is the z-span the rounding
+        // takes, generalized to any footprint via the SAME uniform scale
+        // factor the wall itself is always built from (exact for a circle).
+        const s0 = vProfile(0);
+        let ctx0 = 0;
+        let cty0 = 0;
+        base.forEach((p) => {
+          ctx0 += p.x;
+          cty0 += p.y;
+        });
+        ctx0 /= base.length;
+        cty0 /= base.length;
+        let Rchar0 = 0;
+        base.forEach((p) => {
+          Rchar0 = Math.max(Rchar0, Geo.dist(p, { x: ctx0, y: cty0 }));
+        });
+        const Rchar = Rchar0 * s0;
+        let F = Math.max(0, ve.bottomFillet || 0);
+        const Fmax = Math.max(0, (wallH - lh) * 0.95);
+        if (F > Fmax) {
+          F = Fmax;
+          warnings.push('Fillet height is too large for the wall height — clamped to ' + F.toFixed(1) + 'mm.');
         }
-      }
-      if (vContinuous) {
-        const poly = fill.loops[0];
-        const startFwd = vBottomLayers % 2 === 1;
-        const first = startFwd ? poly[0] : poly[poly.length - 1];
-        travelClear({ x: first.x + cx, y: first.y + cy, z: lh });
-        for (let k = 0; k < vBottomLayers; k++) {
-          const z = (k + 1) * lh;
-          const fwd = startFwd ? k % 2 === 0 : k % 2 === 1;
-          if (k === 1 && includeStartEnd && fanPWM > 0) {
-            lines.push('M106 S' + fanPWM + ' ; part cooling fan on');
-          }
-          for (let q = 1; q < poly.length; q++) {
-            // Points carry their own extrusion factor (taper where the spiral
-            // peels off the center ring) — unchanged under reversal, since
-            // the local line spacing is the same in both directions.
-            const p = fwd ? poly[q] : poly[poly.length - 1 - q];
-            emitSeg({ x: p.x + cx, y: p.y + cy, z: z }, cfg.printFeed, p.e != null ? p.e : 1);
+        const Fscale = Rchar > 1e-6 ? F / Rchar : 0;
+        const flatScale = Math.max(0, s0 - Fscale);
+
+        // Flat spiral: the exact same true-spiral fill ringFill already
+        // builds for the 'spiral' bottom style, just scaled down to stop
+        // where the fillet begins instead of at the wall's own full size —
+        // one continuous unbroken path from the center out to flatScale,
+        // printed at a single, constant z (one layer height).
+        const flatBase = base.map((p) => ({ x: p.x * flatScale, y: p.y * flatScale }));
+        let flatPoly = null;
+        if (flatScale > 1e-6) {
+          const innerFlat = Geo.offsetClosed(flatBase, -cfg.lineWidth, dirSign);
+          const fillFlat = Geo.ringFill(innerFlat, cfg.lineWidth, tolV, 'spiral', cfg.seamSide || 'back', flatBase);
+          flatPoly = fillFlat.loops[0] || null;
+        }
+        if (!flatPoly) {
+          warnings.push(
+            'Fillet height leaves no flat bottom to fill — starting the rounded transition directly from the center.'
+          );
+        } else {
+          travelClear({ x: flatPoly[0].x + cx, y: flatPoly[0].y + cy, z: lh });
+          for (let q = 1; q < flatPoly.length; q++) {
+            const p = flatPoly[q];
+            emitSeg({ x: p.x + cx, y: p.y + cy, z: lh }, cfg.printFeed, p.e != null ? p.e : 1);
           }
         }
+        if (includeStartEnd && fanPWM > 0) {
+          lines.push('M106 S' + fanPWM + ' ; part cooling fan on');
+        }
+
+        // Fillet climb: squeeze-compensated z steps from the flat side
+        // (angle 90 deg, floored the same way the lampshade floors its own
+        // cos(angle) so it never divides by zero) up to fully vertical —
+        // the FULL layer height is kept for extrusion throughout (passing
+        // no area override below), so the shrinking physical rise per turn
+        // is exactly the overfill that squeezes the bead into the overhang,
+        // never a thinner wall. Scale blends from flatScale to whatever the
+        // profile itself calls for at the height where the fillet ends, so
+        // the wall loop that follows is always exactly seamless — not just
+        // approximately — even if a profile point sits unusually close to
+        // the bottom.
+        if (F > 1e-6) {
+          const fSampler = Geo.vesselFilletSampler(F);
+          const zWallStart = lh + F;
+          const scaleEnd = vProfile(Math.min(1, zWallStart / wallH));
+          function vFilletPt(z0, z1, u) {
+            const zc = z0 + (z1 - z0) * u;
+            const frac = fSampler.at(zc).frac;
+            const s = flatScale + (scaleEnd - flatScale) * frac;
+            const sp = sampler.at(u);
+            return { x: sp.pos.x * s + cx, y: sp.pos.y * s + cy, z: lh + zc };
+          }
+          if (!flatPoly) travelClear(vFilletPt(0, 0, 0));
+          let zc = 0;
+          let guard = 0;
+          while (zc < F - 1e-6 && guard++ < 100000) {
+            const guessDz = Math.max(0.05, Math.cos(fSampler.at(zc).angle)) * lh;
+            const aMid = fSampler.at(Math.min(F, zc + guessDz / 2)).angle;
+            let dz = Math.max(0.05, Math.cos(aMid)) * lh;
+            if (zc + dz > F) dz = F - zc;
+            const zNext = zc + dz;
+            for (let i = 0; i < uSet.length; i++) {
+              const u = uSet[i];
+              if (u <= 1e-9) continue;
+              emitSeg(vFilletPt(zc, zNext, u), cfg.printFeed, 1);
+            }
+            emitSeg(vFilletPt(zc, zNext, 1), cfg.printFeed, 1);
+            zc = zNext;
+          }
+        }
+
+        vZOffset = lh + F;
+        vWallReps = Math.max(1, Math.round((wallH - vZOffset) / lh));
       } else {
-        for (let k = 0; k < vBottomLayers && fill.loops.length; k++) {
-          const z = (k + 1) * lh;
-          if (k === 1 && includeStartEnd && fanPWM > 0) {
-            lines.push('M106 S' + fanPWM + ' ; part cooling fan on');
+        const innerBase = Geo.offsetClosed(vBase, -cfg.lineWidth, dirSign);
+        const vSpiralB = vBottomStyle === 'spiral';
+        const fill = Geo.ringFill(
+          innerBase, cfg.lineWidth, tolV, vBottomStyle, cfg.seamSide || 'back', vSpiralB ? vBase : null
+        );
+        if (!fill.loops.length) {
+          warnings.push('Bottom is too small to fill at this line width — the vessel has no closed bottom.');
+        }
+        // Spiral bottom: one unbroken line through ALL bottom layers and into
+        // the wall — zero travels. The layers alternate direction (out, in,
+        // out, …), each starting where the previous ended; the first layer's
+        // direction is chosen by parity so the LAST always runs outward onto
+        // the wall curve, whose stacked transition revolutions ARE the wall's
+        // lowest layers. The helix then picks up from there (no travel, no bed
+        // ramp). The z step between layers rides on each layer's first segment,
+        // like any spiral layer change.
+        vContinuous = vSpiralB && vBottomLayers > 0 && fill.loops.length > 0;
+        if (vContinuous) {
+          wallStartL = Math.min(vBottomLayers, vWallN - 1);
+          if (vBottomLayers >= vWallN) {
+            warnings.push('Wall height gives fewer revolutions than bottom layers — increase wall height for a clean spiral-bottom handoff.');
           }
-          (k === 0 ? travelClear : travelAbs)({ x: fill.loops[0][0].x + cx, y: fill.loops[0][0].y + cy, z: z });
-          for (let i = 0; i < fill.loops.length; i++) {
-            const lp = fill.loops[i];
-            for (let q = i === 0 ? 1 : 0; q < lp.length; q++) {
-              emitSeg({ x: lp[q].x + cx, y: lp[q].y + cy, z: z }, cfg.printFeed, 1);
+        }
+        if (vContinuous) {
+          const poly = fill.loops[0];
+          const startFwd = vBottomLayers % 2 === 1;
+          const first = startFwd ? poly[0] : poly[poly.length - 1];
+          travelClear({ x: first.x + cx, y: first.y + cy, z: lh });
+          for (let k = 0; k < vBottomLayers; k++) {
+            const z = (k + 1) * lh;
+            const fwd = startFwd ? k % 2 === 0 : k % 2 === 1;
+            if (k === 1 && includeStartEnd && fanPWM > 0) {
+              lines.push('M106 S' + fanPWM + ' ; part cooling fan on');
+            }
+            for (let q = 1; q < poly.length; q++) {
+              // Points carry their own extrusion factor (taper where the spiral
+              // peels off the center ring) — unchanged under reversal, since
+              // the local line spacing is the same in both directions.
+              const p = fwd ? poly[q] : poly[poly.length - 1 - q];
+              emitSeg({ x: p.x + cx, y: p.y + cy, z: z }, cfg.printFeed, p.e != null ? p.e : 1);
+            }
+          }
+        } else {
+          for (let k = 0; k < vBottomLayers && fill.loops.length; k++) {
+            const z = (k + 1) * lh;
+            if (k === 1 && includeStartEnd && fanPWM > 0) {
+              lines.push('M106 S' + fanPWM + ' ; part cooling fan on');
+            }
+            (k === 0 ? travelClear : travelAbs)({ x: fill.loops[0][0].x + cx, y: fill.loops[0][0].y + cy, z: z });
+            for (let i = 0; i < fill.loops.length; i++) {
+              const lp = fill.loops[i];
+              for (let q = i === 0 ? 1 : 0; q < lp.length; q++) {
+                emitSeg({ x: lp[q].x + cx, y: lp[q].y + cy, z: z }, cfg.printFeed, 1);
+              }
             }
           }
         }
       }
 
       // Wall point at revolution L, fraction u — base scaled by the profile.
+      // vZOffset shifts where L=0 sits in real Z (0 for every style except
+      // the filleted one, whose transition doesn't land on a whole layer).
       function vW(L, u) {
         const sp = sampler.at(u);
-        const z = Math.min(lh * (L + u), wallH);
+        const z = Math.min(vZOffset + lh * (L + u), wallH);
         const s = vProfile(z / wallH);
         return { x: sp.pos.x * s + cx, y: sp.pos.y * s + cy, z: z };
       }
-      if (!vContinuous) {
+      if (!vContinuous && !vFilleted) {
         const startW = vW(0, 0);
         travelClear({ x: startW.x, y: startW.y, z: 0 });
       }
       let pu = 0;
-      for (let L = wallStartL; L < vWallN; L++) {
-        if (L === 1 && includeStartEnd && fanPWM > 0 && vBottomLayers < 2) {
+      // The filleted transition already deposits material below the wall
+      // loop's very first point (the flat spiral + fillet climb), so its own
+      // L=0 is a continuation, not the start of the print — no ramp, and no
+      // separate fan-on (already switched on right after the flat layer).
+      const vWallIsStart = !vContinuous && !vFilleted;
+      for (let L = wallStartL; L < vWallReps; L++) {
+        if (L === 1 && includeStartEnd && fanPWM > 0 && vBottomLayers < 2 && !vFilleted) {
           lines.push('M106 S' + fanPWM + ' ; part cooling fan on after ramp loop');
         }
         for (let i = 0; i < uSet.length; i++) {
           const u = uSet[i];
           if (u <= 1e-9) continue;
           const w = vW(L, u);
-          const ramp = L === 0 ? Math.max(0, Math.min(1, (pu + u) / 2)) : 1;
+          const ramp = L === 0 && vWallIsStart ? Math.max(0, Math.min(1, (pu + u) / 2)) : 1;
           emitSeg(w, cfg.printFeed, ramp);
           pu = u;
         }
         const wEnd = vW(L, 1);
-        const rampEnd = L === 0 ? Math.max(0, Math.min(1, (pu + 1) / 2)) : 1;
+        const rampEnd = L === 0 && vWallIsStart ? Math.max(0, Math.min(1, (pu + 1) / 2)) : 1;
         emitSeg(wEnd, cfg.printFeed, rampEnd);
         pu = 0;
       }

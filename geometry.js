@@ -1094,6 +1094,34 @@
     return { loops: loops, outline: outline };
   }
 
+  // Vessel bottom-to-wall fillet, imagined as a solid object: a flat disc
+  // rounding into a cylinder (or, for a non-circular footprint, whatever the
+  // base outline is scaled to at each point — the wall is only ever a
+  // uniformly-scaled copy of the base outline everywhere else in this app,
+  // so "fillet radius" here means the same relationship applied to that
+  // scale rather than a literal per-vertex geometric radius; for a circle
+  // the two are identical). Purely angular: z and the local wall angle only
+  // ever depend on how far through the quarter-circle turn a point is,
+  // entirely independent of the shape's actual scale there — SCALE is
+  // interpolated separately by the caller, in lockstep with `frac`, which
+  // reduces to an exact circular fillet whenever the target scale change
+  // over the fillet's height is the one a literal circle would have.
+  //
+  // x = how far radially INTO the F-mm-tall fillet band a point is (0 at the
+  // flat side, F at the vertical side). Closed form: z(x) = F - sqrt(F^2-x^2),
+  // angle from vertical = acos(x/F) (90 deg at x=0 -- flat -- 0 deg at x=F).
+  // Parametrised by z (not x) since that's what callers walk by.
+  function vesselFilletSampler(F) {
+    return {
+      height: F,
+      at: function (z) {
+        const zc = Math.max(0, Math.min(F, z));
+        const phi = Math.acos(Math.max(-1, Math.min(1, 1 - zc / F)));
+        return { frac: Math.sin(phi), angle: Math.PI / 2 - phi };
+      },
+    };
+  }
+
   // Spoon project: a flat Archimedean spiral (pitch = one line width per
   // full turn, so adjacent arms sit edge to edge like a solid filled disc)
   // starting at startRadius (0 = a point at the center), out to
@@ -1416,6 +1444,7 @@
     buildDoubleHangerLoop,
     stoolLoop,
     ringFill,
+    vesselFilletSampler,
     lampProfile,
     makeLampSampler,
     flipLampProfile,

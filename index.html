@@ -491,13 +491,14 @@
         <h2>Vessel &amp; profile</h2>
         <div class="grid">
           <div class="field"><label>Wall height (mm)</label><input type="number" id="ve_height" value="60" min="1" step="1" /></div>
-          <div class="field"><label>Bottom layers</label><input type="number" id="ve_bottomLayers" value="3" min="0" step="1" /></div>
+          <div class="field" id="ve_bottomLayersField"><label>Bottom layers</label><input type="number" id="ve_bottomLayers" value="3" min="0" step="1" /></div>
           <div class="field">
             <label>Bottom style</label>
             <select id="ve_seamStyle">
               <option value="staircase">Staircase seam (shifting)</option>
               <option value="alternating">Zipper seam (fixed, alternating)</option>
               <option value="spiral">True spiral (seamless)</option>
+              <option value="filleted">Filleted (continuous, rounded into the wall)</option>
             </select>
           </div>
           <div class="field">
@@ -507,6 +508,9 @@
               <option value="spiral">Open spiral (full flow to the end)</option>
             </select>
           </div>
+        </div>
+        <div class="grid" id="ve_filletFields" hidden>
+          <div class="field"><label>Bottom fillet height (mm)</label><input type="number" id="ve_bottomFillet" value="10" min="0" step="1" /></div>
         </div>
         <h3 class="subhead">Radius profile (× base, lofted bottom → top)</h3>
         <div class="grid">
