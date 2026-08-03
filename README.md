@@ -145,12 +145,32 @@ keep **fully independent settings** per project:
   outward onto the wall (its transition revolutions are the wall's lowest layers)
   and straight into the helix. The whole vessel is therefore a single unbroken
   extrusion with **zero travel moves**, whatever the layer count (odd counts start
-  at the center, even at the rim). All styles print over a configurable
-  number of **bottom layers**. The **wall** is then a continuous
+  at the center, even at the rim). These three styles print over a configurable
+  number of **bottom layers**. A fourth style, **filleted**, does away with the
+  idea of separate bottom and wall pieces entirely: one flat layer fills the
+  footprint, then a **fillet** — a quarter-circle rounding worked out in scale
+  space so it generalizes to any base shape and is geometrically exact for a
+  circle — carries that same spiral straight on up into the wall with no seam
+  or handoff of any kind, as one continuous line. Its height is a plain
+  **fillet height (mm)** input in place of a bottom-layer count (an oversized
+  value is clamped to leave at least one full wall layer, with a warning). The
+  very start of the fillet is a genuine 90° overhang (the wall is momentarily
+  vertical right off the flat floor), so it reuses the lampshade's own
+  overhang-compensation trick — rather than widening the bead sideways, each
+  turn's physical Z step shrinks in proportion to `cos(angle)` (floored at 0.05
+  so a true 90° turn doesn't send the step to zero), while extrusion is still
+  computed at the full, un-shrunk layer height; the resulting deliberate
+  overfill is what spreads the bead sideways to bridge the steep turns near
+  the bottom. The fillet's target scale where it meets the wall is read
+  straight off the overall radius profile at that exact height, so the wall
+  that follows is always an exact continuation even when a profile control
+  point sits close to the bottom. The **wall** is then a continuous
   vase-mode spiral just outside the bottom; with a ring-style bottom it starts again
   at `z = 0` (so the bottom sits inside it) and ramps extrusion up over the first
-  revolution, while with the true-spiral bottom it continues from the handoff with
-  no travel and no ramp. A **radius
+  revolution, while with the true-spiral or filleted bottom it continues from the
+  handoff with no travel and no ramp — for the filleted style this handoff sits
+  partway through a layer height rather than on a layer boundary, so the wall's
+  revolution count adjusts to still land exactly on the configured wall height. A **radius
   profile** — bottom / top scale control points plus a configurable **2–5 profile
   points** total (0–3 extra middle points, each its own height 0–1 and scale), lofted
   with a Catmull-Rom curve and shown as a live side-silhouette preview — tapers the
