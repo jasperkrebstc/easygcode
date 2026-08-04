@@ -29,39 +29,76 @@
   }
 
   // Smooth radius profile through control points {h, s} (sorted, h in [0,1]).
-  // Catmull-Rom for a natural curve through the points; scale clamped to a
-  // small positive minimum so the wall can never collapse or invert.
+  // A single Bezier curve of degree (n-1) through ALL the control points —
+  // a Bezier always touches its first and last control point exactly, while
+  // every point in between only "pulls" the curve toward it without forcing
+  // the curve to pass through it, a NURBS-ish loft rather than an
+  // interpolating spline through every point (so more points make the
+  // curve gentler and rounder, not more angular). Scale clamped to a small
+  // positive minimum so the wall can never collapse or invert.
   function makeProfile(cps) {
+    if (cps.length === 1) {
+      const s0 = Math.max(0.05, cps[0].s);
+      return function () {
+        return s0;
+      };
+    }
+    // A profile with every control point at the same scale is flat by
+    // definition regardless of curve shape — short-circuit to that exact
+    // constant (not just numerically close to it) so an unchanged, already-
+    // shipped flat vessel wall keeps byte-identical G-code: summing Bezier
+    // basis functions is only flat to within floating-point rounding, not
+    // bit-for-bit, once real curve math is involved.
+    let flat = true;
+    for (let k = 1; k < cps.length; k++) {
+      if (Math.abs(cps[k].s - cps[0].s) > 1e-12) {
+        flat = false;
+        break;
+      }
+    }
+    if (flat) {
+      const sFlat = Math.max(0.05, cps[0].s);
+      return function () {
+        return sFlat;
+      };
+    }
+    const n = cps.length;
+    const deg = n - 1;
+    const binom = [1];
+    for (let k = 1; k <= deg; k++) binom.push((binom[k - 1] * (deg - k + 1)) / k);
+    function bezierAt(t) {
+      let h = 0;
+      let s = 0;
+      for (let k = 0; k < n; k++) {
+        const b = binom[k] * Math.pow(t, k) * Math.pow(1 - t, deg - k);
+        h += b * cps[k].h;
+        s += b * cps[k].s;
+      }
+      return { h: h, s: s };
+    }
+    // A Bezier's own h(t) isn't simply t once there are 3+ points, so a
+    // query height has to be inverted back to the curve's own parameter —
+    // a dense lookup table plus a binary search does that cheaply (built
+    // once here, not per query) without needing h(t) to be perfectly
+    // monotonic for an odd point placement.
+    const NT = 256;
+    const table = [];
+    for (let k = 0; k <= NT; k++) table.push(bezierAt(k / NT));
     return function (hf) {
       const x = Math.max(0, Math.min(1, hf));
-      if (cps.length === 1) return Math.max(0.05, cps[0].s);
-      let i = 0;
-      while (i < cps.length - 2 && x > cps[i + 1].h) i++;
-      const p1 = cps[i];
-      const p2 = cps[i + 1];
-      // Phantom points at the open ends of the chain (no real p0 before the
-      // first point, or p3 after the last): linearly reflect the far
-      // neighbor through the near one — p0/p3 land exactly where the
-      // boundary segment's own direction would be if it simply continued
-      // for one more step — rather than duplicating the endpoint itself.
-      // Duplicating halves the tangent right at that endpoint (a visible
-      // "braking" just before the tip); reflecting instead makes the curve
-      // meet the endpoint at the FULL slope of the boundary segment, so a
-      // top point set larger than the one below it keeps flaring outward
-      // all the way to the rim instead of easing back to vertical just
-      // short of it. Only the reflected point's scale is ever used below
-      // (the formula never reads p0.h/p3.h), so a plain {s} is enough.
-      const p0 = i > 0 ? cps[i - 1] : { s: 2 * p1.s - p2.s };
-      const p3 = i + 2 < cps.length ? cps[i + 2] : { s: 2 * p2.s - p1.s };
-      const t = (x - p1.h) / ((p2.h - p1.h) || 1e-9);
-      const t2 = t * t;
-      const t3 = t2 * t;
-      const s =
-        0.5 *
-        (2 * p1.s +
-          (-p0.s + p2.s) * t +
-          (2 * p0.s - 5 * p1.s + 4 * p2.s - p3.s) * t2 +
-          (-p0.s + 3 * p1.s - 3 * p2.s + p3.s) * t3);
+      let lo = 0;
+      let hi = NT;
+      while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        if (table[mid].h < x) lo = mid + 1;
+        else hi = mid;
+      }
+      const i1 = Math.max(1, lo);
+      const a = table[i1 - 1];
+      const b = table[i1];
+      const denom = b.h - a.h || 1e-9;
+      const t = Math.max(0, Math.min(1, (x - a.h) / denom));
+      const s = a.s + (b.s - a.s) * t;
       return Math.max(0.05, s);
     };
   }
@@ -2690,14 +2727,36 @@
             return { x: sp.x * s + cx, y: sp.y * s + cy, z: lh + zc + vZLift(u, hf) };
           }
           if (!flatPoly) travelClear(vFilletPt(0, 0, 0));
+
+          // Turn-by-turn dz from the same guess/refine cos(angle) squeeze,
+          // grown without clamping to F until it reaches/overshoots it, so
+          // the natural step SHAPE is known before any turn is emitted.
+          // F rarely divides evenly into that sequence — clamping the final
+          // turn's dz to "whatever's left over" (the previous approach) can
+          // leave an arbitrarily tiny last turn, sometimes barely rising at
+          // all, depending entirely on where F happens to fall. Rescaling
+          // the whole sequence by one constant factor so it sums to EXACTLY
+          // F instead keeps every turn a fair, proportional share — same
+          // turn count, same relative compensation shape, no runt turn.
+          const naturalDz = [];
+          {
+            let zc0 = 0;
+            let guard0 = 0;
+            while (zc0 < F - 1e-6 && guard0++ < 100000) {
+              const guessDz = Math.max(0.05, Math.cos(fSampler.at(zc0).angle)) * lh;
+              const aMid = fSampler.at(Math.min(F, zc0 + guessDz / 2)).angle;
+              const dz = Math.max(0.05, Math.cos(aMid)) * lh;
+              naturalDz.push(dz);
+              zc0 += dz;
+            }
+          }
+          let naturalSum = 0;
+          for (let k = 0; k < naturalDz.length; k++) naturalSum += naturalDz[k];
+          const filletScale = naturalSum > 1e-9 ? F / naturalSum : 1;
+
           let zc = 0;
-          let guard = 0;
-          while (zc < F - 1e-6 && guard++ < 100000) {
-            const guessDz = Math.max(0.05, Math.cos(fSampler.at(zc).angle)) * lh;
-            const aMid = fSampler.at(Math.min(F, zc + guessDz / 2)).angle;
-            let dz = Math.max(0.05, Math.cos(aMid)) * lh;
-            if (zc + dz > F) dz = F - zc;
-            const zNext = zc + dz;
+          for (let k = 0; k < naturalDz.length; k++) {
+            const zNext = k === naturalDz.length - 1 ? F : zc + naturalDz[k] * filletScale;
             for (let i = 0; i < uSet.length; i++) {
               const u = uSet[i];
               if (u <= 1e-9) continue;
