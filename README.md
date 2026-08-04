@@ -180,7 +180,13 @@ keep **fully independent settings** per project:
   points** total (0–3 extra middle points, each its own height 0–1 and scale), lofted
   with a Catmull-Rom curve and shown as a live side-silhouette preview — tapers the
   wall with height for cones, bellied vases, and flared trays (all `1` = a straight
-  prism; 2 points = a plain bottom-to-top loft, no middle control at all). The wall
+  prism; 2 points = a plain bottom-to-top loft, no middle control at all). At the
+  bottom and top ends, where there's no real neighbor on the outside to smooth the
+  curve through, a phantom point is linearly reflected off the last real segment's
+  own direction rather than duplicating the endpoint — so a top point set larger
+  than the point below it keeps flaring outward at the *same* rate right up to the
+  rim (an open, outward-tipped lip), instead of easing back to a shallower angle
+  just short of it the way duplicating the endpoint would. The wall
   height snaps to a whole number of layers. A **top finish** dropdown picks how the
   wall ends: **flat cap** (default) adds one extra revolution that holds `z` constant
   and ramps the extrusion back down to zero, closing the top cleanly; **open spiral**
