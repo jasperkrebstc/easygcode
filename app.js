@@ -156,12 +156,24 @@
         vessel: {
           height: num('ve_height'),
           bottomLayers: Math.max(0, Math.round(num('ve_bottomLayers'))),
-          seamStyle: ['alternating', 'spiral'].indexOf($('ve_seamStyle').value) >= 0 ? $('ve_seamStyle').value : 'staircase',
+          seamStyle:
+            ['alternating', 'spiral', 'filleted'].indexOf($('ve_seamStyle').value) >= 0
+              ? $('ve_seamStyle').value
+              : 'staircase',
           topStyle: $('ve_topStyle').value === 'spiral' ? 'spiral' : 'flat',
+          bottomFillet: Math.max(0, num('ve_bottomFillet')),
           bottom: num('ve_profBottom'),
-          midH: num('ve_profMidH'),
-          mid: num('ve_profMid'),
+          profileCount: Math.max(2, Math.min(5, Math.round(num('ve_profileCount')))),
+          midPoints: [
+            { h: num('ve_profMidH1'), s: num('ve_profMid1') },
+            { h: num('ve_profMidH2'), s: num('ve_profMid2') },
+            { h: num('ve_profMidH3'), s: num('ve_profMid3') },
+          ].slice(0, Math.max(0, Math.min(5, Math.round(num('ve_profileCount'))) - 2)),
           top: num('ve_profTop'),
+          topShape: $('ve_topShape').value === 'roundedStar' ? 'roundedStar' : 'same',
+          topStarOuter: num('ve_topStar_outer'),
+          topStarInner: num('ve_topStar_inner'),
+          topStarPoints: Math.max(2, Math.round(num('ve_topStar_points'))),
         },
         brim: readBrim('ve_'),
       };
@@ -412,10 +424,22 @@
       if (!Number.isInteger(cfg.vessel.bottomLayers) || cfg.vessel.bottomLayers < 0)
         return 'Bottom layers must be 0 or more.';
       const pr = cfg.vessel;
-      if (!isPos(pr.bottom) || !isPos(pr.mid) || !isPos(pr.top))
-        return 'Profile scales must be greater than 0.';
-      if (!Number.isFinite(pr.midH) || pr.midH < 0 || pr.midH > 1)
-        return 'Middle height must be between 0 and 1.';
+      if (!isPos(pr.bottom) || !isPos(pr.top)) return 'Profile scales must be greater than 0.';
+      if (!(pr.profileCount >= 2 && pr.profileCount <= 5))
+        return 'Profile points must be between 2 and 5.';
+      for (const m of pr.midPoints) {
+        if (!Number.isFinite(m.h) || m.h < 0 || m.h > 1) return 'Middle height must be between 0 and 1.';
+        if (!isPos(m.s)) return 'Middle scale must be greater than 0.';
+      }
+      if (pr.seamStyle === 'filleted' && (!Number.isFinite(pr.bottomFillet) || pr.bottomFillet < 0)) {
+        return 'Bottom fillet height must be 0 or more.';
+      }
+      if (pr.topShape === 'roundedStar') {
+        if (!isPos(pr.topStarOuter) || !isPos(pr.topStarInner)) {
+          return 'Top curve star outer/inner radius must be greater than 0.';
+        }
+        if (!(pr.topStarPoints >= 2)) return 'Top curve star points must be 2 or more.';
+      }
       for (const k in cfg.shapeParams) {
         const v = cfg.shapeParams[k];
         if (!Number.isFinite(v)) return 'Enter a valid value for ' + k + '.';
@@ -761,6 +785,30 @@
     document.querySelectorAll('.lamp-shape-params').forEach((el) => {
       el.hidden = (el.getAttribute('data-shape') || '').split(/\s+/).indexOf(shape) < 0;
     });
+  }
+
+  // Show exactly (profileCount - 2) of the vessel's 3 pre-built middle-point
+  // field pairs — 2 points means none at all (a plain bottom-to-top loft).
+  function showVesselMidPoints(count) {
+    const n = Math.max(0, Math.min(3, Math.round(count || 3) - 2));
+    document.querySelectorAll('.ve-mid-point').forEach((el) => {
+      el.hidden = Number(el.getAttribute('data-mid')) > n;
+    });
+  }
+
+  // The filleted bottom style always uses exactly one flat layer before it
+  // starts rounding into the wall — "bottom layers" plays no part in it — so
+  // that field is swapped for the fillet's own height input instead.
+  function showVesselBottomStyle(style) {
+    const filleted = style === 'filleted';
+    $('ve_bottomLayersField').hidden = filleted;
+    $('ve_filletFields').hidden = !filleted;
+  }
+
+  // The rounded-star top curve has its own outer/inner radius + point-count
+  // fields, only relevant once it's actually chosen.
+  function showVesselTopShape(shape) {
+    $('ve_topStarFields').hidden = shape !== 'roundedStar';
   }
 
   // Resolve the lampshade's socket thread (diameter + pitch) — from the
@@ -1268,15 +1316,21 @@
     const ve = cfg.vessel;
     const lh = cfg.layerHeight;
     const nWall = isPos(lh) && isPos(ve.height) ? Math.max(1, Math.round(ve.height / lh)) : 0;
-    const hasBottom = ve.bottomLayers > 0;
+    const isFilleted = ve.seamStyle === 'filleted';
+    const hasBottom = ve.bottomLayers > 0 || isFilleted;
     $('ve_hint').textContent =
       'wall ' + (nWall * lh).toFixed(1) + ' mm (' + nWall + ' rev' + (nWall === 1 ? '' : 's') + ') · ' +
-      (hasBottom
+      (isFilleted
+        ? '1 flat layer + ' + (ve.bottomFillet || 0) + 'mm rounded transition into the wall (continuous)'
+        : hasBottom
         ? 'bottom ' + ve.bottomLayers + ' layer' + (ve.bottomLayers === 1 ? '' : 's') + ' · ' +
           (ve.seamStyle === 'spiral' ? 'true-spiral (continuous into wall)' : ve.seamStyle === 'alternating' ? 'zipper' : 'staircase') +
           ' bottom'
         : 'no bottom (open tube)') +
-      ' · ' + (ve.topStyle === 'spiral' ? 'open spiral top' : 'flat ramp-down top');
+      ' · ' + (ve.topStyle === 'spiral' ? 'open spiral top' : 'flat ramp-down top') +
+      (ve.topShape === 'roundedStar'
+        ? ' · top curve blends into a ' + (ve.topStarPoints || 5) + '-point rounded star'
+        : '');
 
     const canvas = $('ve_preview');
     const ctx = canvas.getContext('2d');
@@ -1300,11 +1354,17 @@
       const lw = cfg.lineWidth;
       const tol = isPos(cfg.tolerance) ? cfg.tolerance : 0.05;
       let fill = { loops: [], outline: null };
-      if (ve.bottomLayers > 0) {
+      const isFilleted = ve.seamStyle === 'filleted';
+      // The filleted style always fills the bottom (no separate layer count
+      // gating it), and top-down its true-spiral fill looks identical to the
+      // 'spiral' style's own — ringFill doesn't know 'filleted' by name, so
+      // map to the style that actually draws the same top-down path.
+      if (ve.bottomLayers > 0 || isFilleted) {
+        const fillStyle = isFilleted ? 'spiral' : ve.seamStyle;
         try {
           fill = window.Geo.ringFill(
-            window.Geo.offsetClosed(wall, -lw), lw, tol, ve.seamStyle, cfg.seamSide,
-            ve.seamStyle === 'spiral' ? wall : null
+            window.Geo.offsetClosed(wall, -lw), lw, tol, fillStyle, cfg.seamSide,
+            fillStyle === 'spiral' ? wall : null
           );
         } catch (e) {
           fill = { loops: [], outline: null };
@@ -1390,12 +1450,7 @@
     const ve = cfg.vessel;
     if (!isPos(ve.height)) return;
 
-    const cps = [{ h: 0, s: isPos(ve.bottom) ? ve.bottom : 1 }];
-    if (Number.isFinite(ve.midH) && ve.midH > 0.001 && ve.midH < 0.999) {
-      cps.push({ h: ve.midH, s: isPos(ve.mid) ? ve.mid : 1 });
-    }
-    cps.push({ h: 1, s: isPos(ve.top) ? ve.top : 1 });
-    cps.sort((a, b) => a.h - b.h);
+    const cps = window.GcodeGen.buildVesselProfileCps(ve);
     const prof = window.GcodeGen.makeProfile(cps);
 
     let baseR = 30;
@@ -1674,6 +1729,9 @@
       showHangerParams(cfg.hanger.mode === 'double' ? 'double' : 'single');
     } else if (cfg.project === 'vessel') {
       showShapeParams(cfg.shape, 've-shape-params');
+      showVesselMidPoints(cfg.vessel.profileCount);
+      showVesselBottomStyle(cfg.vessel.seamStyle);
+      showVesselTopShape(cfg.vessel.topShape);
     } else if (cfg.project === 'bendstool') {
       syncFoamHint(cfg);
       syncFlowFeedHint(cfg);
@@ -2106,6 +2164,9 @@
     $('ls_flowFeedFields').hidden = !$('ls_flowFeedEnabled').checked;
     showLampSocketParams($('ls_socket').value);
     showLampShapeParams($('ls_shape').value);
+    showVesselMidPoints(num('ve_profileCount'));
+    showVesselBottomStyle($('ve_seamStyle').value);
+    showVesselTopShape($('ve_topShape').value);
     showProject(activeProject());
   }
 

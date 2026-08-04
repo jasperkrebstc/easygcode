@@ -145,22 +145,54 @@ keep **fully independent settings** per project:
   outward onto the wall (its transition revolutions are the wall's lowest layers)
   and straight into the helix. The whole vessel is therefore a single unbroken
   extrusion with **zero travel moves**, whatever the layer count (odd counts start
-  at the center, even at the rim). All styles print over a configurable
-  number of **bottom layers**. The **wall** is then a continuous
+  at the center, even at the rim). These three styles print over a configurable
+  number of **bottom layers**. A fourth style, **filleted**, does away with the
+  idea of separate bottom and wall pieces entirely: one flat layer fills the
+  footprint, then a **fillet** — a quarter-circle rounding worked out in scale
+  space so it generalizes to any base shape and is geometrically exact for a
+  circle — carries that same spiral straight on up into the wall with no seam
+  or handoff of any kind, as one continuous line. Its height is a plain
+  **fillet height (mm)** input in place of a bottom-layer count (an oversized
+  value is clamped to leave at least one full wall layer, with a warning). The
+  very start of the fillet is a genuine 90° overhang (the wall is momentarily
+  vertical right off the flat floor), so it reuses the lampshade's own
+  overhang-compensation trick — rather than widening the bead sideways, each
+  turn's physical Z step shrinks in proportion to `cos(angle)` (floored at 0.05
+  so a true 90° turn doesn't send the step to zero), while extrusion is still
+  computed at the full, un-shrunk layer height; the resulting deliberate
+  overfill is what spreads the bead sideways to bridge the steep turns near
+  the bottom. The fillet's target scale where it meets the wall is read
+  straight off the overall radius profile at that exact height, so the wall
+  that follows is always an exact continuation even when a profile control
+  point sits close to the bottom. The **wall** is then a continuous
   vase-mode spiral just outside the bottom; with a ring-style bottom it starts again
   at `z = 0` (so the bottom sits inside it) and ramps extrusion up over the first
-  revolution, while with the true-spiral bottom it continues from the handoff with
-  no travel and no ramp. A **radius
-  profile** — bottom / middle / top scale control points, lofted with a Catmull-Rom
-  curve and shown as a live side-silhouette preview — tapers the wall with height
-  for cones, bellied vases, and flared trays (all `1` = a straight prism). The wall
+  revolution, while with the true-spiral or filleted bottom it continues from the
+  handoff with no travel and no ramp — for the filleted style this handoff sits
+  partway through a layer height rather than on a layer boundary, so the wall's
+  revolution count adjusts to still land exactly on the configured wall height. A **radius
+  profile** — bottom / top scale control points plus a configurable **2–5 profile
+  points** total (0–3 extra middle points, each its own height 0–1 and scale), lofted
+  with a Catmull-Rom curve and shown as a live side-silhouette preview — tapers the
+  wall with height for cones, bellied vases, and flared trays (all `1` = a straight
+  prism; 2 points = a plain bottom-to-top loft, no middle control at all). The wall
   height snaps to a whole number of layers. A **top finish** dropdown picks how the
   wall ends: **flat cap** (default) adds one extra revolution that holds `z` constant
   and ramps the extrusion back down to zero, closing the top cleanly; **open spiral**
   adds nothing — the wall simply completes its last revolution at full flow and
   stops, leaving an even full-width bead all the way to the end (with the spiral's
-  one-layer helical step at the seam). Separate **brim** settings, like the other
-  projects.
+  one-layer helical step at the seam). A **top curve** dropdown separately controls
+  the wall's *cross-section*, as opposed to its scale: **same as bottom** (default)
+  keeps the bottom shape's own outline at every height, just resized by the radius
+  profile above; **rounded star** instead cross-fades the outline from the bottom
+  shape into a smooth star — the same outer-radius/inner-radius/points vertices as
+  the plain **star** shape, but joined with a closed Catmull-Rom spline instead of
+  straight edges, so the points round off rather than coming to sharp corners. The
+  cross-fade is linear over the whole wall height (pure bottom shape at `z = 0`,
+  pure star at the top) and runs at every height alongside — not instead of — the
+  radius profile's own scaling; both outlines are resampled to the same dense point
+  count starting at the seam so they blend point-for-point with no twist. Separate
+  **brim** settings, like the other projects.
 - **Spoon** — a small fun one: a flat lollipop shape, an Archimedean **spiral**
   (pitch = one line width per turn, so adjacent arms sit edge to edge, filling a solid
   disc) that ends in a straight **stick** continuing past the last turn in the radial
