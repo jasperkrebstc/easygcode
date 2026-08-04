@@ -1270,6 +1270,7 @@
     let vBottomLayers = 0;
     let vWallN = 1;
     let vFlatTop = true;
+    let wallH = 0;
     // Top curve shape: by default the wall keeps the bottom's own
     // cross-section at every height, uniformly resized by the radius
     // profile (today's behavior, untouched below). Choosing "rounded star"
@@ -1283,6 +1284,7 @@
     let vTopBlend = false;
     let vBotRes = null;
     let vTopRes = null;
+    let vZDiffMax = 0;
     if (isVessel) {
       const ve = cfg.vessel || {};
       vProfile = makeProfile(buildVesselProfileCps(ve));
@@ -1294,16 +1296,39 @@
       vFlatTop = ve.topStyle !== 'spiral';
       vBottomLayers = Math.max(0, Math.round(ve.bottomLayers || 0));
       vWallN = Math.max(1, Math.round((ve.height || lh) / lh));
+      wallH = vWallN * lh;
 
       if (ve.topShape === 'roundedStar' && ve.topStarOuter > 0 && ve.topStarInner > 0 && ve.topStarPoints >= 2) {
         const NB = 480;
         vBotRes = Geo.resampleClosed(base, NB);
         const topOutline = Geo.rotateToSeam(
-          Geo.roundedStar(ve.topStarOuter, ve.topStarInner, ve.topStarPoints),
+          Geo.roundedStar(ve.topStarOuter, ve.topStarInner, ve.topStarPoints, cfg.tolerance),
           cfg.seamSide || 'back'
         );
         vTopRes = Geo.resampleClosed(topOutline, NB);
         vTopBlend = true;
+        vZDiffMax = (Math.max(0, Math.min(100, ve.topStarZDiffPct || 0)) / 100) * 25;
+      }
+    }
+
+    // True whenever the wall has literally nothing to compensate for — no
+    // top curve blend, and the radius profile itself is flat everywhere
+    // (sampled, since a Catmull-Rom curve can be non-flat even with equal
+    // endpoints if a middle point differs). Kept as a fast, EXACT path
+    // through the plain, uncompensated per-revolution formula the wall loop
+    // always used before this session's compensation work — floating-point
+    // reassociation in the compensated path's per-revolution interpolation
+    // isn't guaranteed bit-identical to it even when every step works out to
+    // exactly `lh`, so every already-shipped flat-profile vessel keeps
+    // byte-identical output rather than an unnecessary last-digit wobble.
+    let vFlatWall = isVessel && !vTopBlend;
+    if (vFlatWall) {
+      const p0 = vProfile(0);
+      for (let i = 0; i <= 8; i++) {
+        if (Math.abs(vProfile(i / 8) - p0) > 1e-9) {
+          vFlatWall = false;
+          break;
+        }
       }
     }
 
@@ -1331,6 +1356,72 @@
       const sy = s0p.y + (s1p.y - s0p.y) * t;
       const k = Math.max(0, Math.min(1, hFrac));
       return { x: bx + (sx - bx) * k, y: by + (sy - by) * k };
+    }
+
+    // How "star-inner" this point is, in [0,1] (1 = exactly an inner cusp, 0
+    // = exactly an outer tip) — read straight off the rounded star's own
+    // local radius, so it needs no separate per-vertex tagging through the
+    // resample step.
+    function vStarInnerWeight(u) {
+      if (!vTopBlend) return 0;
+      const ve = cfg.vessel || {};
+      const outerR = ve.topStarOuter;
+      const innerR = ve.topStarInner;
+      if (!(outerR > innerR)) return 0;
+      const n = vTopRes.length;
+      const uu = u - Math.floor(u);
+      const f = uu * n;
+      let i0 = Math.floor(f);
+      if (i0 >= n) i0 = n - 1;
+      const i1 = (i0 + 1) % n;
+      const t = f - i0;
+      const p0 = vTopRes[i0];
+      const p1 = vTopRes[i1];
+      const r = Math.hypot(p0.x + (p1.x - p0.x) * t, p0.y + (p1.y - p0.y) * t);
+      return Math.max(0, Math.min(1, (outerR - r) / (outerR - innerR)));
+    }
+
+    // Extra Z lift for the rounded star's inner points only — outer points
+    // stay at their nominal height, matching "lift the inner points" rather
+    // than a symmetric ripple. Ramps in linearly with height (same hFrac
+    // normalization as the shape blend itself), so the full configured
+    // difference is only ever reached at the very top layer. Deliberately
+    // NOT extrusion-compensated — the layer is simply allowed to stretch
+    // taller at the points that are lifted, per instruction.
+    function vZLift(u, hFrac) {
+      if (vZDiffMax <= 0) return 0;
+      const k = Math.max(0, Math.min(1, hFrac));
+      return vZDiffMax * k * vStarInnerWeight(u);
+    }
+
+    // Wall centerline at the seam (u=0) at absolute height z, ignoring the
+    // deliberate, uncompensated vZLift above — that lift only ever touches a
+    // handful of points per revolution and is pure surface finish, not
+    // something the whole revolution's Z pacing should react to.
+    function vSeamXY(zAbs) {
+      const hf = wallH > 1e-9 ? Math.max(0, Math.min(1, zAbs / wallH)) : 0;
+      const sp = vShapeAt(0, hf);
+      const s = vProfile(hf);
+      return { x: sp.x * s, y: sp.y * s };
+    }
+
+    // Overhang angle (from vertical) of the wall centerline at the seam, at
+    // height z — one number per layer, not per vertex: the radius profile's
+    // own taper affects the whole revolution far more than the top curve's
+    // per-vertex shape variation away from the seam (that's comparatively
+    // minor surface finish), so sampling once at the seam is enough to pace
+    // the whole revolution's Z step sensibly. Same cos(angle) squeeze
+    // convention as the fillet, floored the same way so a genuine 90 degree
+    // turn can't divide by zero.
+    function vSeamAngle(zAbs) {
+      const eps = Math.max(1e-3, lh * 0.02);
+      const zLo = Math.max(0, zAbs - eps);
+      const zHi = Math.min(wallH, zAbs + eps);
+      const a = vSeamXY(zLo);
+      const b = vSeamXY(zHi);
+      const lateral = Math.hypot(b.x - a.x, b.y - a.y);
+      const dz = Math.max(1e-6, zHi - zLo);
+      return Math.atan2(lateral, dz);
     }
 
     const area = beadArea(cfg.lineWidth, lh);
@@ -2471,7 +2562,6 @@
       // along the radius profile. Top finish: an extra flat extrusion-ramp-down
       // loop (default), or none — the spiral just ends at full flow.
       const tolV = cfg.tolerance > 0 ? cfg.tolerance : 0.05;
-      const wallH = vWallN * lh;
       const ve = cfg.vessel || {};
       const vFilleted = vBottomStyle === 'filleted';
       lines.push(
@@ -2486,17 +2576,18 @@
       if (vTopBlend) {
         lines.push(
           '; top curve: cross-fading into a rounded star (outer=' + ve.topStarOuter +
-            ' inner=' + ve.topStarInner + ' points=' + ve.topStarPoints + ') linearly over the full wall height'
+            ' inner=' + ve.topStarInner + ' points=' + ve.topStarPoints + ') linearly over the full wall height' +
+            (vZDiffMax > 0
+              ? '; inner points lift up to ' + vZDiffMax.toFixed(1) + 'mm above nominal at the very top (uncompensated)'
+              : '')
         );
       }
 
       // z where the wall loop below starts counting its own revolutions
-      // from, and how many of them it runs — both default to "everything is
-      // the wall, from z=0" (today's behavior) and are only overridden by
-      // the filleted style, whose transition doesn't land on a whole
-      // multiple of the layer height.
+      // from — defaults to "everything is the wall, from z=0" (today's
+      // behavior) and is only overridden by the filleted style, whose
+      // transition doesn't land on a whole multiple of the layer height.
       let vZOffset = 0;
-      let vWallReps = vWallN;
       let vContinuous = false;
       let wallStartL = 0;
 
@@ -2578,8 +2669,9 @@
             const zc = z0 + (z1 - z0) * u;
             const frac = fSampler.at(zc).frac;
             const s = flatScale + (scaleEnd - flatScale) * frac;
-            const sp = vShapeAt(u, (lh + zc) / wallH);
-            return { x: sp.x * s + cx, y: sp.y * s + cy, z: lh + zc };
+            const hf = (lh + zc) / wallH;
+            const sp = vShapeAt(u, hf);
+            return { x: sp.x * s + cx, y: sp.y * s + cy, z: lh + zc + vZLift(u, hf) };
           }
           if (!flatPoly) travelClear(vFilletPt(0, 0, 0));
           let zc = 0;
@@ -2601,7 +2693,6 @@
         }
 
         vZOffset = lh + F;
-        vWallReps = Math.max(1, Math.round((wallH - vZOffset) / lh));
       } else {
         const innerBase = Geo.offsetClosed(vBase, -cfg.lineWidth, dirSign);
         const vSpiralB = vBottomStyle === 'spiral';
@@ -2662,17 +2753,21 @@
         }
       }
 
-      // Wall point at revolution L, fraction u — base scaled by the profile.
-      // vZOffset shifts where L=0 sits in real Z (0 for every style except
-      // the filleted one, whose transition doesn't land on a whole layer).
-      function vW(L, u) {
-        const z = Math.min(vZOffset + lh * (L + u), wallH);
-        const sp = vShapeAt(u, z / wallH);
-        const s = vProfile(z / wallH);
-        return { x: sp.x * s + cx, y: sp.y * s + cy, z: z };
+      // Wall point across the revolution spanning [z0,z1], at fraction u —
+      // shape/profile scaled at its own nominal height within that span,
+      // plus this vertex's own Z lift on top (the rounded star's inner
+      // points only — see vZLift; zero whenever there's no top curve Z
+      // difference configured, so the wall never actually rises above wallH
+      // in the default case).
+      function vWpt(z0, z1, u) {
+        const zNom = Math.min(z0 + (z1 - z0) * u, wallH);
+        const hf = wallH > 1e-9 ? zNom / wallH : 0;
+        const sp = vShapeAt(u, hf);
+        const s = vProfile(hf);
+        return { x: sp.x * s + cx, y: sp.y * s + cy, z: zNom + vZLift(u, hf) };
       }
       if (!vContinuous && !vFilleted) {
-        const startW = vW(0, 0);
+        const startW = vWpt(0, 0, 0);
         travelClear({ x: startW.x, y: startW.y, z: 0 });
       }
       let pu = 0;
@@ -2681,22 +2776,72 @@
       // L=0 is a continuation, not the start of the print — no ramp, and no
       // separate fan-on (already switched on right after the flat layer).
       const vWallIsStart = !vContinuous && !vFilleted;
-      for (let L = wallStartL; L < vWallReps; L++) {
-        if (L === 1 && includeStartEnd && fanPWM > 0 && vBottomLayers < 2 && !vFilleted) {
-          lines.push('M106 S' + fanPWM + ' ; part cooling fan on after ramp loop');
+      if (vFlatWall) {
+        // Nothing to compensate for (see vFlatWall above) — the exact
+        // original per-revolution formula, unchanged (kept structurally
+        // identical, not just numerically equivalent, so floating-point
+        // reassociation can't shift the last digit of an already-shipped
+        // flat-profile vessel's G-code).
+        function vWFlat(L, u) {
+          const z = Math.min(vZOffset + lh * (L + u), wallH);
+          const hf = wallH > 1e-9 ? z / wallH : 0;
+          const sp = vShapeAt(u, hf);
+          const s = vProfile(hf);
+          return { x: sp.x * s + cx, y: sp.y * s + cy, z: z };
         }
-        for (let i = 0; i < uSet.length; i++) {
-          const u = uSet[i];
-          if (u <= 1e-9) continue;
-          const w = vW(L, u);
-          const ramp = L === 0 && vWallIsStart ? Math.max(0, Math.min(1, (pu + u) / 2)) : 1;
-          emitSeg(w, cfg.printFeed, ramp);
-          pu = u;
+        const vWallReps = vFilleted ? Math.max(1, Math.round((wallH - vZOffset) / lh)) : vWallN;
+        for (let L = wallStartL; L < vWallReps; L++) {
+          if (L === 1 && includeStartEnd && fanPWM > 0 && vBottomLayers < 2 && !vFilleted) {
+            lines.push('M106 S' + fanPWM + ' ; part cooling fan on after ramp loop');
+          }
+          for (let i = 0; i < uSet.length; i++) {
+            const u = uSet[i];
+            if (u <= 1e-9) continue;
+            const w = vWFlat(L, u);
+            const ramp = L === 0 && vWallIsStart ? Math.max(0, Math.min(1, (pu + u) / 2)) : 1;
+            emitSeg(w, cfg.printFeed, ramp);
+            pu = u;
+          }
+          const wEnd = vWFlat(L, 1);
+          const rampEnd = L === 0 && vWallIsStart ? Math.max(0, Math.min(1, (pu + 1) / 2)) : 1;
+          emitSeg(wEnd, cfg.printFeed, rampEnd);
+          pu = 0;
         }
-        const wEnd = vW(L, 1);
-        const rampEnd = L === 0 && vWallIsStart ? Math.max(0, Math.min(1, (pu + 1) / 2)) : 1;
-        emitSeg(wEnd, cfg.printFeed, rampEnd);
-        pu = 0;
+      } else {
+        // Revolutions step by a variable dz rather than a flat `lh`, paced
+        // by the SAME lampshade-style cos(angle) squeeze the fillet uses —
+        // one angle per revolution, sampled at the seam (u=0), not per
+        // vertex: the radius profile's own taper affects the whole loop far
+        // more than the top curve's per-vertex variation away from the seam,
+        // which is comparatively minor surface finish (see vSeamAngle).
+        let zCursor = vZOffset + wallStartL * lh;
+        let L = wallStartL;
+        let guard = 0;
+        while (zCursor < wallH - 1e-6 && guard++ < 100000) {
+          const guessDz = Math.max(0.05, Math.cos(vSeamAngle(zCursor))) * lh;
+          const aMid = vSeamAngle(Math.min(wallH, zCursor + guessDz / 2));
+          let dz = Math.max(0.05, Math.cos(aMid)) * lh;
+          if (zCursor + dz > wallH) dz = wallH - zCursor;
+          const z0 = zCursor;
+          const z1 = zCursor + dz;
+          if (L === 1 && includeStartEnd && fanPWM > 0 && vBottomLayers < 2 && !vFilleted) {
+            lines.push('M106 S' + fanPWM + ' ; part cooling fan on after ramp loop');
+          }
+          for (let i = 0; i < uSet.length; i++) {
+            const u = uSet[i];
+            if (u <= 1e-9) continue;
+            const w = vWpt(z0, z1, u);
+            const ramp = L === 0 && vWallIsStart ? Math.max(0, Math.min(1, (pu + u) / 2)) : 1;
+            emitSeg(w, cfg.printFeed, ramp);
+            pu = u;
+          }
+          const wEnd = vWpt(z0, z1, 1);
+          const rampEnd = L === 0 && vWallIsStart ? Math.max(0, Math.min(1, (pu + 1) / 2)) : 1;
+          emitSeg(wEnd, cfg.printFeed, rampEnd);
+          pu = 0;
+          zCursor = z1;
+          L++;
+        }
       }
 
       // Top finish. Flat cap: one extra revolution at z=wallH with the
@@ -2706,7 +2851,7 @@
       // at full height and full flow, leaving a one-layer helical step at the
       // seam (an even bead all the way, good for open rims).
       if (vFlatTop) {
-        lines.push('; flat top: no z gain, extrusion ramps to zero for a clean finish');
+        lines.push('; flat top: no z gain beyond the rim itself, extrusion ramps to zero for a clean finish');
         const sTop = vProfile(1);
         pu = 0;
         for (let i = 0; i < uSet.length; i++) {
@@ -2714,12 +2859,12 @@
           if (u <= 1e-9) continue;
           const sp = vShapeAt(u, 1);
           const ramp = Math.max(0, Math.min(1, 1 - (pu + u) / 2));
-          emitSeg({ x: sp.x * sTop + cx, y: sp.y * sTop + cy, z: wallH }, cfg.printFeed, ramp);
+          emitSeg({ x: sp.x * sTop + cx, y: sp.y * sTop + cy, z: wallH + vZLift(u, 1) }, cfg.printFeed, ramp);
           pu = u;
         }
         const spTop = vShapeAt(0, 1);
         emitSeg(
-          { x: spTop.x * sTop + cx, y: spTop.y * sTop + cy, z: wallH },
+          { x: spTop.x * sTop + cx, y: spTop.y * sTop + cy, z: wallH + vZLift(0, 1) },
           cfg.printFeed,
           Math.max(0, Math.min(1, 1 - (pu + 1) / 2))
         );

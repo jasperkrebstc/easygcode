@@ -187,12 +187,29 @@ keep **fully independent settings** per project:
   profile above; **rounded star** instead cross-fades the outline from the bottom
   shape into a smooth star — the same outer-radius/inner-radius/points vertices as
   the plain **star** shape, but joined with a closed Catmull-Rom spline instead of
-  straight edges, so the points round off rather than coming to sharp corners. The
-  cross-fade is linear over the whole wall height (pure bottom shape at `z = 0`,
-  pure star at the top) and runs at every height alongside — not instead of — the
-  radius profile's own scaling; both outlines are resampled to the same dense point
-  count starting at the seam so they blend point-for-point with no twist. Separate
-  **brim** settings, like the other projects.
+  straight edges, so the points round off rather than coming to sharp corners. Point
+  density along that spline is chord-tolerance adaptive, not fixed — densely sampled
+  first, then simplified like every other shape here (`adaptiveShape`'s own
+  dense-then-simplify recipe), so a tight inner cusp keeps more points than a gentle
+  outer sweep regardless of how many star points there are. The cross-fade is linear
+  over the whole wall height (pure bottom shape at `z = 0`, pure star at the top) and
+  runs at every height alongside — not instead of — the radius profile's own scaling;
+  both outlines are resampled to the same dense point count starting at the seam so
+  they blend point-for-point with no twist. An **inner-point Z lift** (0–100%, mapped
+  to 0–25mm) additionally raises the star's inner points only — outer points stay at
+  their nominal height — ramping in linearly with wall height so the full amount only
+  shows up at the very top layer; deliberately left extrusion-uncompensated (the
+  layer is simply allowed to stretch taller at the lifted points) since it only
+  touches a handful of vertices per revolution and is meant as surface finish, not a
+  structural overhang. The wall's own Z pacing is separately overhang-aware: instead
+  of a flat layer height every revolution, each revolution's physical Z step is
+  paced by the same lampshade-style `cos(angle)` squeeze the filleted bottom style
+  uses, sampled once per revolution at the seam rather than per vertex (the radius
+  profile's own taper moves the whole loop far more than the top curve's per-vertex
+  drift, which is comparatively minor surface finish) — a plain untapered wall with
+  no top curve blend measures a zero angle at every sample, so it steps by exactly
+  one layer height every time, same as before this existed. Separate **brim**
+  settings, like the other projects.
 - **Spoon** — a small fun one: a flat lollipop shape, an Archimedean **spiral**
   (pitch = one line width per turn, so adjacent arms sit edge to edge, filling a solid
   disc) that ends in a straight **stick** continuing past the last turn in the radial
