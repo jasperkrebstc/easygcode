@@ -174,6 +174,7 @@
           topStarOuter: num('ve_topStar_outer'),
           topStarInner: num('ve_topStar_inner'),
           topStarPoints: Math.max(2, Math.round(num('ve_topStar_points'))),
+          topStarZDiffPct: Math.max(0, Math.min(100, num('ve_topStar_zDiffPct'))),
         },
         brim: readBrim('ve_'),
       };
@@ -439,6 +440,9 @@
           return 'Top curve star outer/inner radius must be greater than 0.';
         }
         if (!(pr.topStarPoints >= 2)) return 'Top curve star points must be 2 or more.';
+        if (!Number.isFinite(pr.topStarZDiffPct) || pr.topStarZDiffPct < 0 || pr.topStarZDiffPct > 100) {
+          return 'Inner-point Z lift must be between 0 and 100%.';
+        }
       }
       for (const k in cfg.shapeParams) {
         const v = cfg.shapeParams[k];
@@ -1329,7 +1333,10 @@
         : 'no bottom (open tube)') +
       ' · ' + (ve.topStyle === 'spiral' ? 'open spiral top' : 'flat ramp-down top') +
       (ve.topShape === 'roundedStar'
-        ? ' · top curve blends into a ' + (ve.topStarPoints || 5) + '-point rounded star'
+        ? ' · top curve blends into a ' + (ve.topStarPoints || 5) + '-point rounded star' +
+          (ve.topStarZDiffPct > 0
+            ? ' (inner points lift up to ' + ((ve.topStarZDiffPct / 100) * 25).toFixed(1) + 'mm, uncompensated)'
+            : '')
         : '');
 
     const canvas = $('ve_preview');
