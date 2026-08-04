@@ -166,7 +166,14 @@ keep **fully independent settings** per project:
   so a true 90° turn doesn't send the step to zero), while extrusion is still
   computed at the full, un-shrunk layer height; the resulting deliberate
   overfill is what spreads the bead sideways to bridge the steep turns near
-  the bottom. The fillet's target scale where it meets the wall is read
+  the bottom. That per-turn step sequence is worked out in full (growing
+  freely, unclamped) before anything is emitted, then rescaled by one
+  constant factor so it sums to exactly the fillet height — clamping the
+  final turn's step to "whatever's left over" instead, the more obvious
+  approach, can leave an arbitrarily tiny last turn (sometimes barely
+  rising at all) purely depending on where the fillet height happens to
+  land relative to the sequence's natural growth, worse the fewer turns a
+  small fillet needs. The fillet's target scale where it meets the wall is read
   straight off the overall radius profile at that exact height, so the wall
   that follows is always an exact continuation even when a profile control
   point sits close to the bottom. The **wall** is then a continuous
@@ -177,16 +184,19 @@ keep **fully independent settings** per project:
   partway through a layer height rather than on a layer boundary, so the wall's
   revolution count adjusts to still land exactly on the configured wall height. A **radius
   profile** — bottom / top scale control points plus a configurable **2–5 profile
-  points** total (0–3 extra middle points, each its own height 0–1 and scale), lofted
-  with a Catmull-Rom curve and shown as a live side-silhouette preview — tapers the
-  wall with height for cones, bellied vases, and flared trays (all `1` = a straight
-  prism; 2 points = a plain bottom-to-top loft, no middle control at all). At the
-  bottom and top ends, where there's no real neighbor on the outside to smooth the
-  curve through, a phantom point is linearly reflected off the last real segment's
-  own direction rather than duplicating the endpoint — so a top point set larger
-  than the point below it keeps flaring outward at the *same* rate right up to the
-  rim (an open, outward-tipped lip), instead of easing back to a shallower angle
-  just short of it the way duplicating the endpoint would. The wall
+  points** total (0–3 extra middle points, each its own height 0–1 and scale), shown
+  as a live side-silhouette preview — tapers the wall with height for cones, bellied
+  vases, and flared trays (all `1` = a straight prism; 2 points = a plain straight
+  bottom-to-top taper). Lofted as a single Bezier curve through all the points rather
+  than an interpolating spline: a Bezier always touches its first and last control
+  point exactly, but every point in between only *pulls* the curve toward it without
+  forcing the curve through it — a NURBS-ish loft, not a curve that has to visit
+  every point, so it stays smooth and rounded (not increasingly angular) as more
+  points are added, and a top point set larger than the point below it keeps
+  flaring outward at the same rate all the way to the rim (an open, outward-tipped
+  lip) rather than easing back toward vertical just short of it — a Bezier's tangent
+  at its own endpoint is exactly the boundary segment's own slope, not a fraction
+  of it. The wall
   height snaps to a whole number of layers. A **top finish** dropdown picks how the
   wall ends: **flat cap** (default) adds one extra revolution that holds `z` constant
   and ramps the extrusion back down to zero, closing the top cleanly; **open spiral**
