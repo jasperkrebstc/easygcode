@@ -2627,12 +2627,16 @@
         // builds for the 'spiral' bottom style, just scaled down to stop
         // where the fillet begins instead of at the wall's own full size —
         // one continuous unbroken path from the center out to flatScale,
-        // printed at a single, constant z (one layer height).
+        // printed at a single, constant z (one layer height). noTaper=true:
+        // this spiral is never a print start on its own (it's the first
+        // stretch of one long line straight into the fillet and the wall),
+        // so it skips ringFill's usual near-center extrusion taper and
+        // prints at full flow from the very first point.
         const flatBase = base.map((p) => ({ x: p.x * flatScale, y: p.y * flatScale }));
         let flatPoly = null;
         if (flatScale > 1e-6) {
           const innerFlat = Geo.offsetClosed(flatBase, -cfg.lineWidth, dirSign);
-          const fillFlat = Geo.ringFill(innerFlat, cfg.lineWidth, tolV, 'spiral', cfg.seamSide || 'back', flatBase);
+          const fillFlat = Geo.ringFill(innerFlat, cfg.lineWidth, tolV, 'spiral', cfg.seamSide || 'back', flatBase, true);
           flatPoly = fillFlat.loops[0] || null;
         }
         if (!flatPoly) {

@@ -971,7 +971,13 @@
   //   wallCurve (spiral style only): the wall centerline one line width
   //   outside `outer` — the spiral continues one extra revolution onto it, so
   //   the fill hands off to the wall as the same unbroken line.
-  function ringFill(outer, lw, tol, style, seamSide, wallCurve) {
+  // noTaper: skip the eCov() spacing-based extrusion taper near the spiral's
+  // center opening (used by the vessel's filleted bottom style, whose flat
+  // spiral is only ever the very start of one long continuous line straight
+  // into the wall — full flow from the first point, not a print start that
+  // needs priming). Every other caller leaves this undefined/false and gets
+  // today's tapered behavior unchanged.
+  function ringFill(outer, lw, tol, style, seamSide, wallCurve, noTaper) {
     const alt = style === true || style === 'alternating';
     const spiral = style === 'spiral';
     const n = outer.length;
@@ -1044,7 +1050,7 @@
       // instead of overfilling where the spacing dips under one line width.
       const M = S.length;
       const poly = [];
-      const eCov = (gap) => (Math.min(gap, lw) + lw) / (2 * lw);
+      const eCov = (gap) => (noTaper ? 1 : (Math.min(gap, lw) + lw) / (2 * lw));
       for (let j = 0; j <= N; j++) {
         const t = j / N;
         const q = S[0][j % N];
