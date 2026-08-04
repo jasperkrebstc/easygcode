@@ -148,7 +148,12 @@ keep **fully independent settings** per project:
   at the center, even at the rim). These three styles print over a configurable
   number of **bottom layers**. A fourth style, **filleted**, does away with the
   idea of separate bottom and wall pieces entirely: one flat layer fills the
-  footprint, then a **fillet** — a quarter-circle rounding worked out in scale
+  footprint at full flow from its very first point — the other bottom styles
+  taper extrusion down near the exact center, where the spiral's own pitch is
+  tighter than a full line width, but the filleted style's flat spiral is only
+  ever the first stretch of one long line running straight into the fillet and
+  the wall, never a print start of its own, so it skips that taper — then a
+  **fillet** — a quarter-circle rounding worked out in scale
   space so it generalizes to any base shape and is geometrically exact for a
   circle — carries that same spiral straight on up into the wall with no seam
   or handoff of any kind, as one continuous line. Its height is a plain
@@ -175,7 +180,13 @@ keep **fully independent settings** per project:
   points** total (0–3 extra middle points, each its own height 0–1 and scale), lofted
   with a Catmull-Rom curve and shown as a live side-silhouette preview — tapers the
   wall with height for cones, bellied vases, and flared trays (all `1` = a straight
-  prism; 2 points = a plain bottom-to-top loft, no middle control at all). The wall
+  prism; 2 points = a plain bottom-to-top loft, no middle control at all). At the
+  bottom and top ends, where there's no real neighbor on the outside to smooth the
+  curve through, a phantom point is linearly reflected off the last real segment's
+  own direction rather than duplicating the endpoint — so a top point set larger
+  than the point below it keeps flaring outward at the *same* rate right up to the
+  rim (an open, outward-tipped lip), instead of easing back to a shallower angle
+  just short of it the way duplicating the endpoint would. The wall
   height snaps to a whole number of layers. A **top finish** dropdown picks how the
   wall ends: **flat cap** (default) adds one extra revolution that holds `z` constant
   and ramps the extrusion back down to zero, closing the top cleanly; **open spiral**

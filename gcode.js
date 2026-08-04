@@ -39,8 +39,20 @@
       while (i < cps.length - 2 && x > cps[i + 1].h) i++;
       const p1 = cps[i];
       const p2 = cps[i + 1];
-      const p0 = cps[i - 1] || p1;
-      const p3 = cps[i + 2] || p2;
+      // Phantom points at the open ends of the chain (no real p0 before the
+      // first point, or p3 after the last): linearly reflect the far
+      // neighbor through the near one — p0/p3 land exactly where the
+      // boundary segment's own direction would be if it simply continued
+      // for one more step — rather than duplicating the endpoint itself.
+      // Duplicating halves the tangent right at that endpoint (a visible
+      // "braking" just before the tip); reflecting instead makes the curve
+      // meet the endpoint at the FULL slope of the boundary segment, so a
+      // top point set larger than the one below it keeps flaring outward
+      // all the way to the rim instead of easing back to vertical just
+      // short of it. Only the reflected point's scale is ever used below
+      // (the formula never reads p0.h/p3.h), so a plain {s} is enough.
+      const p0 = i > 0 ? cps[i - 1] : { s: 2 * p1.s - p2.s };
+      const p3 = i + 2 < cps.length ? cps[i + 2] : { s: 2 * p2.s - p1.s };
       const t = (x - p1.h) / ((p2.h - p1.h) || 1e-9);
       const t2 = t * t;
       const t3 = t2 * t;
@@ -2627,12 +2639,16 @@
         // builds for the 'spiral' bottom style, just scaled down to stop
         // where the fillet begins instead of at the wall's own full size —
         // one continuous unbroken path from the center out to flatScale,
-        // printed at a single, constant z (one layer height).
+        // printed at a single, constant z (one layer height). noTaper=true:
+        // this spiral is never a print start on its own (it's the first
+        // stretch of one long line straight into the fillet and the wall),
+        // so it skips ringFill's usual near-center extrusion taper and
+        // prints at full flow from the very first point.
         const flatBase = base.map((p) => ({ x: p.x * flatScale, y: p.y * flatScale }));
         let flatPoly = null;
         if (flatScale > 1e-6) {
           const innerFlat = Geo.offsetClosed(flatBase, -cfg.lineWidth, dirSign);
-          const fillFlat = Geo.ringFill(innerFlat, cfg.lineWidth, tolV, 'spiral', cfg.seamSide || 'back', flatBase);
+          const fillFlat = Geo.ringFill(innerFlat, cfg.lineWidth, tolV, 'spiral', cfg.seamSide || 'back', flatBase, true);
           flatPoly = fillFlat.loops[0] || null;
         }
         if (!flatPoly) {
