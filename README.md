@@ -426,8 +426,13 @@ The footprint is sampled into evenly spaced points and traced as one continuous 
 Z rises by `layerHeight` per full loop with no seam and no retractions. The **first
 turn ramps up**: it starts at `Z = 0` with 0% extrusion and linearly climbs to
 `layerHeight` at 100% extrusion over one loop, so the wall builds off the bed cleanly.
-The **last turn ramps down**: a final revolution holds Z constant (no height gain) while
-the extrusion tapers to zero, so the top rim finishes level and clean, not on a spiral ramp.
+A **top finish** dropdown (same choice, and same idea, as the vessel's own) picks how
+the last turn ends: **flat cap** (default) adds one final revolution that holds Z
+constant (no height gain) while the extrusion tapers to zero, so the top rim finishes
+level and clean, not on a spiral ramp; **open spiral** adds nothing — the spiral already
+reaches the full height at full flow on its own, leaving a one-layer helical step at the
+seam (an even bead all the way, good for open rims like a cup or sleeve rather than a
+closed vase).
 
 ### Adaptive resolution
 
@@ -466,7 +471,15 @@ present and future) and **type-specific**:
   layers top/bottom**, and a **bottom feedrate** (0 = use the normal print feed) that
   applies only to the patternless bottom revolutions, independent of the main print feed
   — e.g. a much slower start for extra first-layers-out adhesion time without slowing
-  the rest of the print.
+  the rest of the print. Coverage always means the same fraction of the *base shape's*
+  own perimeter, even on the hanger's own loop and its transition loops back to plain
+  wall — those are measurably longer than a plain revolution (the detour bridges out to
+  a pocket and back), so a coverage check phrased in terms of THAT loop's own length
+  would silently cover more of the actual shape there than the same percentage covers on
+  an untouched revolution. Every hanger/transition loop's points carry the position they
+  represent on the base shape (tagged once, when the loop itself is built) alongside
+  their position along that particular loop's own path — the pattern always reads the
+  former.
 - **Weave (type-specific: bumps/revolution, bump feedrate):** continuous displacement
   `amplitude · cos(π · (L + u) · bumps)`. Emitted points are the union of base-curve
   vertices (shape fidelity) and bump positions, so the weave is smooth and accurate.

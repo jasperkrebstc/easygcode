@@ -272,6 +272,7 @@
       centerX: num('centerX'),
       centerY: num('centerY'),
       fanMode: $('fanMode').value === 'bumps' ? 'bumps' : 'always',
+      topStyle: $('topStyle').value === 'spiral' ? 'spiral' : 'flat',
       brim: readBrim(''),
       hanger: {
         enabled: $('hangEnabled').checked,

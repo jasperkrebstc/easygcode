@@ -138,6 +138,13 @@
           <div class="field"><label>Layer height (mm)</label><input type="number" id="layerHeight" value="0.6" min="0.05" step="0.05" /></div>
           <div class="field"><label>Line width (mm)</label><input type="number" id="lineWidth" value="2.0" min="0.1" step="0.1" /></div>
           <div class="field"><label>Total height (mm)</label><input type="number" id="totalHeight" value="60" min="0.5" step="1" /></div>
+          <div class="field">
+            <label>Top finish</label>
+            <select id="topStyle">
+              <option value="flat">Flat cap (extrusion ramps to zero)</option>
+              <option value="spiral">Open spiral (full flow to the end)</option>
+            </select>
+          </div>
           <div class="field"><label>Print feed (mm/min)</label><input type="number" id="printFeed" value="1800" min="1" step="50" /></div>
           <div class="field"><label>Travel feed (mm/min)</label><input type="number" id="travelFeed" value="6000" min="1" step="100" /></div>
           <div class="field"><label>Chord tolerance (mm)</label><input type="number" id="tolerance" value="0.05" min="0.001" step="0.01" /></div>
