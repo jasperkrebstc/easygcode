@@ -292,6 +292,8 @@
         type: $('patternType').value,
         amplitude: num('patAmplitude'),
         zAngle: num('patZAngle'),
+        zAngleLowMM: Math.max(0, num('patZAngleLowMM')),
+        zAngleLow: num('patZAngleLow'),
         coverage: num('patCoverage'),
         bumpFeed: num('patBumpFeed'),
         bottomFeed: num('patBottomFeed'),
@@ -571,6 +573,9 @@
     if (cfg.pattern.enabled) {
       if (!Number.isFinite(cfg.pattern.amplitude)) return 'Enter a valid pattern amplitude.';
       if (!Number.isFinite(cfg.pattern.zAngle)) return 'Enter a valid Z-angle.';
+      if (!Number.isFinite(cfg.pattern.zAngleLowMM) || cfg.pattern.zAngleLowMM < 0)
+        return 'Lower zone height must be 0 (off) or more.';
+      if (!Number.isFinite(cfg.pattern.zAngleLow)) return 'Enter a valid lower zone Z-angle.';
       if (!Number.isFinite(cfg.pattern.coverage)) return 'Enter a valid pattern coverage %.';
       if (!(cfg.pattern.plBottom >= 0) || !(cfg.pattern.plTop >= 0))
         return 'Enter valid patternless layer counts.';

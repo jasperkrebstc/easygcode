@@ -1606,6 +1606,28 @@
     const zAng = ((pat.zAngle || 0) * Math.PI) / 180;
     const cosA = Math.cos(zAng);
     const sinA = Math.sin(zAng);
+    // Optional override for the bottom of the print: the bed reflects the
+    // part cooling fan back up, so the first several patterned layers cool
+    // (and so droop) far more effectively than layers higher up — a spike
+    // that should sag downward under gravity instead points straight out
+    // like the main Z-angle says everything above it should. zAngleLowMM=0
+    // (default) disables this — angleAt always returns the main angle, same
+    // as before this existed.
+    const zAngleLowMM = Math.max(0, pat.zAngleLowMM || 0);
+    const zAngLow = ((pat.zAngleLow || 0) * Math.PI) / 180;
+    const cosALow = Math.cos(zAngLow);
+    const sinALow = Math.sin(zAngLow);
+    function angleAt(z) {
+      return zAngleLowMM > 0 && z <= zAngleLowMM ? { cosA: cosALow, sinA: sinALow } : { cosA: cosA, sinA: sinA };
+    }
+    // A steep downward angle this close to the bed can ask a bump/spike tip
+    // for a Z below 0 on the very first patterned layers — floored at the
+    // bed, with a one-time warning, rather than a bogus negative Z.
+    let zFloorHit = false;
+    function floorZ(z) {
+      if (z < 0) zFloorHit = true;
+      return Math.max(0, z);
+    }
     const bumpFeed = pat.bumpFeed > 0 ? pat.bumpFeed : cfg.printFeed;
     // Spikes get their own dedicated out/in feeds instead of sharing bumpFeed
     // with weave — independent, so e.g. slow out + fast back in, or slow
@@ -1846,6 +1868,7 @@
     }
     if (patternOn) {
       let ln = '; pattern=' + type + ' amplitude=' + pat.amplitude + ' zAngle=' + (pat.zAngle || 0) +
+        (zAngleLowMM > 0 ? ' zAngleLow=' + (pat.zAngleLow || 0) + ' below z=' + zAngleLowMM + 'mm' : '') +
         ' coverage=' + pat.coverage + '% plBottom=' + plBottom + ' plTop=' + plTop;
       ln +=
         type === 'weave'
@@ -2385,9 +2408,11 @@
       const nx = dirSign * sp.tan.y;
       const ny = dirSign * -sp.tan.x;
       const m = weaveMag(L, u);
-      const lat = m * cosA;
       const baseZ = Math.min(lh * (L + u), cfg.totalHeight);
-      return { p: { x: sp.pos.x + nx * lat + cx, y: sp.pos.y + ny * lat + cy, z: baseZ + m * sinA }, bump: m !== 0 };
+      const a = angleAt(baseZ);
+      const lat = m * a.cosA;
+      const z = floorZ(baseZ + m * a.sinA);
+      return { p: { x: sp.pos.x + nx * lat + cx, y: sp.pos.y + ny * lat + cy, z: z }, bump: m !== 0 };
     }
 
     function weaveLoop(L, uEnd) {
@@ -2451,12 +2476,13 @@
         if (e.tip) {
           const sp = sampler.at(e.u);
           const amp = e.amp != null ? e.amp : pat.amplitude;
-          const lat = amp * cosA;
           const baseZ = Math.min(lh * (L + e.u), cfg.totalHeight);
+          const a = angleAt(baseZ);
+          const lat = amp * a.cosA;
           cur = {
             x: sp.pos.x + dirSign * e.tan.y * lat + cx,
             y: sp.pos.y - dirSign * e.tan.x * lat + cy,
-            z: baseZ + amp * sinA,
+            z: floorZ(baseZ + amp * a.sinA),
           };
         } else {
           cur = wallPoint(L, e.u);
@@ -2593,7 +2619,6 @@
 
       prevBump = false;
       let prevWeaveSpecial = false;
-      let prevNew = false;
       let prevHot = false;
       let prevTipFan = false;
       for (let i = 0; i <= events.length; i++) {
@@ -2605,10 +2630,21 @@
           m = pat.amplitude * Math.cos(Math.PI * (L + e.f) * pat.bumps);
         }
         const amp = e.tip ? (e.amp != null ? e.amp : pat.amplitude) : m;
-        const lat = amp * cosA;
-        const z = Math.min(lh * (L + e.f), cfg.totalHeight) + amp * sinA;
+        const baseZ = Math.min(lh * (L + e.f), cfg.totalHeight);
+        const aAng = angleAt(baseZ);
+        const lat = amp * aAng.cosA;
+        const z = floorZ(baseZ + amp * aAng.sinA);
         const weaveSpecial = m !== 0;
-        const bridgeNow = bridge && (q.isNew || prevNew);
+        // Bridge feed applies to exactly the new geometry (the bezier
+        // approaches and the pocket arc between them) — not the segment
+        // just before or after it. A one-segment buffer there used to carry
+        // the slow feed one extra step into the plain wall on either side,
+        // which barely matters for the single hanger's long gap/pocket
+        // stretches but eats most or all of a double hanger's own (much
+        // shorter) plain-wall stretch between its two funnels, printing it
+        // slow and cold enough to risk poor layer adhesion for wall that's
+        // fully supported by the layer underneath.
+        const bridgeNow = bridge && q.isNew;
         const overhangNow = hOverhangOn && (q.hot || prevHot);
         let feed = baseFeedAt(L);
         if (bridgeNow) feed = hBridgeFeed;
@@ -2635,7 +2671,6 @@
         );
         if (e.dwellAfter && spikeDwellMs > 0) lines.push('G4 P' + spikeDwellMs + ' ; spike tip dwell');
         prevWeaveSpecial = weaveSpecial;
-        prevNew = q.isNew;
         prevHot = q.hot;
         prevTipFan = !!e.tip;
         if (endCut) break;
@@ -3402,6 +3437,11 @@
       }
     }
 
+    if (zFloorHit) {
+      warnings.push(
+        'The lower-zone Z-angle is steep enough to ask some bumps/spikes near the bed for a height below it — those were clamped to Z=0. Consider a shallower lower-zone angle or a smaller amplitude.'
+      );
+    }
     const stats = {
       volume: totalVolume,
       pathLength: pathLength,
