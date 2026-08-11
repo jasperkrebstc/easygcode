@@ -2360,6 +2360,35 @@
       uSet = Array.from(new Set(uSet.map((u) => +u.toFixed(9)))).sort((a, b) => a - b);
       if (uSet.length === 0 || uSet[0] > 1e-9) uSet.unshift(0);
     }
+    // Denser version of uSet for the very first loop's 0 -> 100% extrusion
+    // ramp (and the top's matching ramp-down) only. uSet's own density comes
+    // from the adaptive/RDP-simplified base curve, which is exactly right
+    // for shape fidelity on every other layer (flow is constant there) but
+    // collapses any straight or gently curved run — a rounded rectangle's
+    // or polygon's own sides, or even a plain circle once the chord
+    // tolerance lets RDP thin it out — down to just its endpoints. Fine for
+    // tracing the shape, but it means the ramp's own ONE G1 move across
+    // that whole stretch jumps the extrusion in one big, visible step
+    // instead of climbing smoothly. Subdivides any gap wider than one line
+    // width (arc length) with evenly spaced extra points; never removes
+    // anything uSet already has, so already-dense curved sections are
+    // untouched.
+    let uSetRamp = uSet;
+    if (!isBS && perim > 1e-6) {
+      const maxDu = Math.max(cfg.lineWidth, 0.5) / perim;
+      const dense = [];
+      for (let i = 0; i < uSet.length; i++) {
+        const a = uSet[i];
+        const b = i + 1 < uSet.length ? uSet[i + 1] : 1;
+        dense.push(a);
+        const gap = b - a;
+        if (gap > maxDu) {
+          const n = Math.ceil(gap / maxDu);
+          for (let k = 1; k < n; k++) dense.push(a + (gap * k) / n);
+        }
+      }
+      uSetRamp = dense;
+    }
 
     // ---- Spike placement (blue-noise, seam-centered) ----
     const spikesMode = patternOn && type === 'spikes';
@@ -2422,8 +2451,9 @@
         emit(w.p, w.bump, ramp, L);
         prevU = u;
       };
-      for (let i = 0; i < uSet.length; i++) {
-        const u = uSet[i];
+      const set = L === 0 ? uSetRamp : uSet;
+      for (let i = 0; i < set.length; i++) {
+        const u = set[i];
         if (L > 0 && u <= 1e-9) continue;
         if (u >= uEnd - 1e-9) continue;
         step(u);
@@ -2433,8 +2463,9 @@
 
     function spikesLoop(L, uEnd) {
       let events = [];
-      for (let i = 0; i < uSet.length; i++) {
-        const u = uSet[i];
+      const set = L === 0 ? uSetRamp : uSet;
+      for (let i = 0; i < set.length; i++) {
+        const u = set[i];
         if (L > 0 && u <= 1e-9) continue;
         if (u >= uEnd - 1e-9) continue;
         events.push({ u, tip: false });
@@ -2942,11 +2973,13 @@
           if (L === 1 && includeStartEnd && fanPWM > 0 && vBottomLayers < 2 && !vFilleted) {
             lines.push('M106 S' + fanPWM + ' ; part cooling fan on after ramp loop');
           }
-          for (let i = 0; i < uSet.length; i++) {
-            const u = uSet[i];
+          const isRampRev = L === 0 && vWallIsStart;
+          const set = isRampRev ? uSetRamp : uSet;
+          for (let i = 0; i < set.length; i++) {
+            const u = set[i];
             if (u <= 1e-9) continue;
             const w = vWFlat(L, u);
-            const ramp = L === 0 && vWallIsStart ? Math.max(0, Math.min(1, (pu + u) / 2)) : 1;
+            const ramp = isRampRev ? Math.max(0, Math.min(1, (pu + u) / 2)) : 1;
             emitSeg(w, cfg.printFeed, ramp);
             pu = u;
           }
@@ -2975,11 +3008,13 @@
           if (L === 1 && includeStartEnd && fanPWM > 0 && vBottomLayers < 2 && !vFilleted) {
             lines.push('M106 S' + fanPWM + ' ; part cooling fan on after ramp loop');
           }
-          for (let i = 0; i < uSet.length; i++) {
-            const u = uSet[i];
+          const isRampRev = L === 0 && vWallIsStart;
+          const set = isRampRev ? uSetRamp : uSet;
+          for (let i = 0; i < set.length; i++) {
+            const u = set[i];
             if (u <= 1e-9) continue;
             const w = vWpt(z0, z1, u);
-            const ramp = L === 0 && vWallIsStart ? Math.max(0, Math.min(1, (pu + u) / 2)) : 1;
+            const ramp = isRampRev ? Math.max(0, Math.min(1, (pu + u) / 2)) : 1;
             emitSeg(w, cfg.printFeed, ramp);
             pu = u;
           }
@@ -3002,8 +3037,8 @@
         lines.push('; flat top: no z gain beyond the rim itself, extrusion ramps to zero for a clean finish');
         const sTop = vProfile(1);
         pu = 0;
-        for (let i = 0; i < uSet.length; i++) {
-          const u = uSet[i];
+        for (let i = 0; i < uSetRamp.length; i++) {
+          const u = uSetRamp[i];
           if (u <= 1e-9) continue;
           const sp = vShapeAt(u, 1);
           const ramp = Math.max(0, Math.min(1, 1 - (pu + u) / 2));
@@ -3065,8 +3100,8 @@
         const f0 = Math.min(1, T - (Lmax - 1)) % 1; // fraction where the spiral ended
         lines.push('; flat top: no z gain, extrusion ramps to zero for a clean rim');
         const seqU = [];
-        for (let i = 0; i < uSet.length; i++) if (uSet[i] > f0 + 1e-9) seqU.push(uSet[i]);
-        for (let i = 0; i < uSet.length; i++) if (uSet[i] <= f0 + 1e-9) seqU.push(uSet[i]);
+        for (let i = 0; i < uSetRamp.length; i++) if (uSetRamp[i] > f0 + 1e-9) seqU.push(uSetRamp[i]);
+        for (let i = 0; i < uSetRamp.length; i++) if (uSetRamp[i] <= f0 + 1e-9) seqU.push(uSetRamp[i]);
         seqU.push(f0); // close the revolution back to the start fraction
         let pf = f0;
         let trav = 0;

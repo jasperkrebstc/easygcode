@@ -438,7 +438,16 @@ closed vase).
 
 The base curve is built to a **chord tolerance** (mm): the shape is densely sampled then
 simplified (Douglas–Peucker) so flat sections use few points and tight curves use more.
-This is geometry only — it's never emitted directly when a pattern is active.
+This is geometry only — it's never emitted directly when a pattern is active. The ramp-up
+and ramp-down loops are the one place that density isn't quite enough on its own: a
+rounded rectangle's straight side (or a circle, once a looser chord tolerance lets it
+thin out) can collapse to a single G1 move end to end, which is exactly right for shape
+fidelity at constant flow but means the ramp jumps the extrusion across that whole move
+in one big step instead of climbing smoothly. Those two loops walk a separately
+densified point set instead — any gap wider than one line width gets evenly subdivided —
+so the ramp always has somewhere to move the flow in small steps, however sparse the
+underlying shape's own geometry is; every other layer still walks the plain, undensified
+set.
 
 ### Seam
 
