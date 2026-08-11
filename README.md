@@ -438,7 +438,16 @@ closed vase).
 
 The base curve is built to a **chord tolerance** (mm): the shape is densely sampled then
 simplified (Douglas–Peucker) so flat sections use few points and tight curves use more.
-This is geometry only — it's never emitted directly when a pattern is active.
+This is geometry only — it's never emitted directly when a pattern is active. The ramp-up
+and ramp-down loops are the one place that density isn't quite enough on its own: a
+rounded rectangle's straight side (or a circle, once a looser chord tolerance lets it
+thin out) can collapse to a single G1 move end to end, which is exactly right for shape
+fidelity at constant flow but means the ramp jumps the extrusion across that whole move
+in one big step instead of climbing smoothly. Those two loops walk a separately
+densified point set instead — any gap wider than one line width gets evenly subdivided —
+so the ramp always has somewhere to move the flow in small steps, however sparse the
+underlying shape's own geometry is; every other layer still walks the plain, undensified
+set.
 
 ### Seam
 
@@ -471,7 +480,14 @@ present and future) and **type-specific**:
   layers top/bottom**, and a **bottom feedrate** (0 = use the normal print feed) that
   applies only to the patternless bottom revolutions, independent of the main print feed
   — e.g. a much slower start for extra first-layers-out adhesion time without slowing
-  the rest of the print. Coverage always means the same fraction of the *base shape's*
+  the rest of the print. An optional **lower zone height (mm)** + **lower zone Z-angle**
+  pair (the height defaults to 0, disabling this entirely) overrides the Z-angle below
+  that height only — the bed reflects the part cooling fan back up, so the first several
+  patterned layers cool, and so droop, far more effectively than layers higher up, and a
+  spike meant to sag downward under gravity there would otherwise point straight out at
+  whatever angle the rest of the print uses. A lower-zone angle steep enough to ask for a
+  height below the bed on the very first patterned layers is floored at `z = 0` instead,
+  with a warning. Coverage always means the same fraction of the *base shape's*
   own perimeter, even on the hanger's own loop and its transition loops back to plain
   wall — those are measurably longer than a plain revolution (the detour bridges out to
   a pocket and back), so a coverage check phrased in terms of THAT loop's own length
@@ -570,9 +586,11 @@ only for now.
 Other inputs — **bottom normal loops** (plain revolutions below), **transition loops**
 (the hanger shape tweens back into the base curve over this many revolutions), and
 **bridge feedrate** (the first hanger loop bridges over air, so only its new sections —
-beziers + pocket — print at this slow feed) — apply to both modes. Patterns (weave/spikes)
-stay active through the hanger and transition loops. The 2D preview shows the hanger
-loop(s) dashed.
+the bezier approaches and the pocket arc between them, exactly — print at this slow
+feed; the plain wall on either side, including the short stretch a double hanger's two
+funnels leave between them, prints at the normal feed) — apply to both modes. Patterns
+(weave/spikes) stay active through the hanger and transition loops. The 2D preview shows
+the hanger loop(s) dashed.
 
 The transition loops aren't stacked directly on top of each other — each point slides
 sideways toward the plain profile as the hanger shape washes out — so a steep transition

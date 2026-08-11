@@ -1606,6 +1606,28 @@
     const zAng = ((pat.zAngle || 0) * Math.PI) / 180;
     const cosA = Math.cos(zAng);
     const sinA = Math.sin(zAng);
+    // Optional override for the bottom of the print: the bed reflects the
+    // part cooling fan back up, so the first several patterned layers cool
+    // (and so droop) far more effectively than layers higher up — a spike
+    // that should sag downward under gravity instead points straight out
+    // like the main Z-angle says everything above it should. zAngleLowMM=0
+    // (default) disables this — angleAt always returns the main angle, same
+    // as before this existed.
+    const zAngleLowMM = Math.max(0, pat.zAngleLowMM || 0);
+    const zAngLow = ((pat.zAngleLow || 0) * Math.PI) / 180;
+    const cosALow = Math.cos(zAngLow);
+    const sinALow = Math.sin(zAngLow);
+    function angleAt(z) {
+      return zAngleLowMM > 0 && z <= zAngleLowMM ? { cosA: cosALow, sinA: sinALow } : { cosA: cosA, sinA: sinA };
+    }
+    // A steep downward angle this close to the bed can ask a bump/spike tip
+    // for a Z below 0 on the very first patterned layers — floored at the
+    // bed, with a one-time warning, rather than a bogus negative Z.
+    let zFloorHit = false;
+    function floorZ(z) {
+      if (z < 0) zFloorHit = true;
+      return Math.max(0, z);
+    }
     const bumpFeed = pat.bumpFeed > 0 ? pat.bumpFeed : cfg.printFeed;
     // Spikes get their own dedicated out/in feeds instead of sharing bumpFeed
     // with weave — independent, so e.g. slow out + fast back in, or slow
@@ -1846,6 +1868,7 @@
     }
     if (patternOn) {
       let ln = '; pattern=' + type + ' amplitude=' + pat.amplitude + ' zAngle=' + (pat.zAngle || 0) +
+        (zAngleLowMM > 0 ? ' zAngleLow=' + (pat.zAngleLow || 0) + ' below z=' + zAngleLowMM + 'mm' : '') +
         ' coverage=' + pat.coverage + '% plBottom=' + plBottom + ' plTop=' + plTop;
       ln +=
         type === 'weave'
@@ -2337,6 +2360,35 @@
       uSet = Array.from(new Set(uSet.map((u) => +u.toFixed(9)))).sort((a, b) => a - b);
       if (uSet.length === 0 || uSet[0] > 1e-9) uSet.unshift(0);
     }
+    // Denser version of uSet for the very first loop's 0 -> 100% extrusion
+    // ramp (and the top's matching ramp-down) only. uSet's own density comes
+    // from the adaptive/RDP-simplified base curve, which is exactly right
+    // for shape fidelity on every other layer (flow is constant there) but
+    // collapses any straight or gently curved run — a rounded rectangle's
+    // or polygon's own sides, or even a plain circle once the chord
+    // tolerance lets RDP thin it out — down to just its endpoints. Fine for
+    // tracing the shape, but it means the ramp's own ONE G1 move across
+    // that whole stretch jumps the extrusion in one big, visible step
+    // instead of climbing smoothly. Subdivides any gap wider than one line
+    // width (arc length) with evenly spaced extra points; never removes
+    // anything uSet already has, so already-dense curved sections are
+    // untouched.
+    let uSetRamp = uSet;
+    if (!isBS && perim > 1e-6) {
+      const maxDu = Math.max(cfg.lineWidth, 0.5) / perim;
+      const dense = [];
+      for (let i = 0; i < uSet.length; i++) {
+        const a = uSet[i];
+        const b = i + 1 < uSet.length ? uSet[i + 1] : 1;
+        dense.push(a);
+        const gap = b - a;
+        if (gap > maxDu) {
+          const n = Math.ceil(gap / maxDu);
+          for (let k = 1; k < n; k++) dense.push(a + (gap * k) / n);
+        }
+      }
+      uSetRamp = dense;
+    }
 
     // ---- Spike placement (blue-noise, seam-centered) ----
     const spikesMode = patternOn && type === 'spikes';
@@ -2385,9 +2437,11 @@
       const nx = dirSign * sp.tan.y;
       const ny = dirSign * -sp.tan.x;
       const m = weaveMag(L, u);
-      const lat = m * cosA;
       const baseZ = Math.min(lh * (L + u), cfg.totalHeight);
-      return { p: { x: sp.pos.x + nx * lat + cx, y: sp.pos.y + ny * lat + cy, z: baseZ + m * sinA }, bump: m !== 0 };
+      const a = angleAt(baseZ);
+      const lat = m * a.cosA;
+      const z = floorZ(baseZ + m * a.sinA);
+      return { p: { x: sp.pos.x + nx * lat + cx, y: sp.pos.y + ny * lat + cy, z: z }, bump: m !== 0 };
     }
 
     function weaveLoop(L, uEnd) {
@@ -2397,8 +2451,9 @@
         emit(w.p, w.bump, ramp, L);
         prevU = u;
       };
-      for (let i = 0; i < uSet.length; i++) {
-        const u = uSet[i];
+      const set = L === 0 ? uSetRamp : uSet;
+      for (let i = 0; i < set.length; i++) {
+        const u = set[i];
         if (L > 0 && u <= 1e-9) continue;
         if (u >= uEnd - 1e-9) continue;
         step(u);
@@ -2408,8 +2463,9 @@
 
     function spikesLoop(L, uEnd) {
       let events = [];
-      for (let i = 0; i < uSet.length; i++) {
-        const u = uSet[i];
+      const set = L === 0 ? uSetRamp : uSet;
+      for (let i = 0; i < set.length; i++) {
+        const u = set[i];
         if (L > 0 && u <= 1e-9) continue;
         if (u >= uEnd - 1e-9) continue;
         events.push({ u, tip: false });
@@ -2451,12 +2507,13 @@
         if (e.tip) {
           const sp = sampler.at(e.u);
           const amp = e.amp != null ? e.amp : pat.amplitude;
-          const lat = amp * cosA;
           const baseZ = Math.min(lh * (L + e.u), cfg.totalHeight);
+          const a = angleAt(baseZ);
+          const lat = amp * a.cosA;
           cur = {
             x: sp.pos.x + dirSign * e.tan.y * lat + cx,
             y: sp.pos.y - dirSign * e.tan.x * lat + cy,
-            z: baseZ + amp * sinA,
+            z: floorZ(baseZ + amp * a.sinA),
           };
         } else {
           cur = wallPoint(L, e.u);
@@ -2593,7 +2650,6 @@
 
       prevBump = false;
       let prevWeaveSpecial = false;
-      let prevNew = false;
       let prevHot = false;
       let prevTipFan = false;
       for (let i = 0; i <= events.length; i++) {
@@ -2605,10 +2661,21 @@
           m = pat.amplitude * Math.cos(Math.PI * (L + e.f) * pat.bumps);
         }
         const amp = e.tip ? (e.amp != null ? e.amp : pat.amplitude) : m;
-        const lat = amp * cosA;
-        const z = Math.min(lh * (L + e.f), cfg.totalHeight) + amp * sinA;
+        const baseZ = Math.min(lh * (L + e.f), cfg.totalHeight);
+        const aAng = angleAt(baseZ);
+        const lat = amp * aAng.cosA;
+        const z = floorZ(baseZ + amp * aAng.sinA);
         const weaveSpecial = m !== 0;
-        const bridgeNow = bridge && (q.isNew || prevNew);
+        // Bridge feed applies to exactly the new geometry (the bezier
+        // approaches and the pocket arc between them) — not the segment
+        // just before or after it. A one-segment buffer there used to carry
+        // the slow feed one extra step into the plain wall on either side,
+        // which barely matters for the single hanger's long gap/pocket
+        // stretches but eats most or all of a double hanger's own (much
+        // shorter) plain-wall stretch between its two funnels, printing it
+        // slow and cold enough to risk poor layer adhesion for wall that's
+        // fully supported by the layer underneath.
+        const bridgeNow = bridge && q.isNew;
         const overhangNow = hOverhangOn && (q.hot || prevHot);
         let feed = baseFeedAt(L);
         if (bridgeNow) feed = hBridgeFeed;
@@ -2635,7 +2702,6 @@
         );
         if (e.dwellAfter && spikeDwellMs > 0) lines.push('G4 P' + spikeDwellMs + ' ; spike tip dwell');
         prevWeaveSpecial = weaveSpecial;
-        prevNew = q.isNew;
         prevHot = q.hot;
         prevTipFan = !!e.tip;
         if (endCut) break;
@@ -2907,11 +2973,13 @@
           if (L === 1 && includeStartEnd && fanPWM > 0 && vBottomLayers < 2 && !vFilleted) {
             lines.push('M106 S' + fanPWM + ' ; part cooling fan on after ramp loop');
           }
-          for (let i = 0; i < uSet.length; i++) {
-            const u = uSet[i];
+          const isRampRev = L === 0 && vWallIsStart;
+          const set = isRampRev ? uSetRamp : uSet;
+          for (let i = 0; i < set.length; i++) {
+            const u = set[i];
             if (u <= 1e-9) continue;
             const w = vWFlat(L, u);
-            const ramp = L === 0 && vWallIsStart ? Math.max(0, Math.min(1, (pu + u) / 2)) : 1;
+            const ramp = isRampRev ? Math.max(0, Math.min(1, (pu + u) / 2)) : 1;
             emitSeg(w, cfg.printFeed, ramp);
             pu = u;
           }
@@ -2940,11 +3008,13 @@
           if (L === 1 && includeStartEnd && fanPWM > 0 && vBottomLayers < 2 && !vFilleted) {
             lines.push('M106 S' + fanPWM + ' ; part cooling fan on after ramp loop');
           }
-          for (let i = 0; i < uSet.length; i++) {
-            const u = uSet[i];
+          const isRampRev = L === 0 && vWallIsStart;
+          const set = isRampRev ? uSetRamp : uSet;
+          for (let i = 0; i < set.length; i++) {
+            const u = set[i];
             if (u <= 1e-9) continue;
             const w = vWpt(z0, z1, u);
-            const ramp = L === 0 && vWallIsStart ? Math.max(0, Math.min(1, (pu + u) / 2)) : 1;
+            const ramp = isRampRev ? Math.max(0, Math.min(1, (pu + u) / 2)) : 1;
             emitSeg(w, cfg.printFeed, ramp);
             pu = u;
           }
@@ -2967,8 +3037,8 @@
         lines.push('; flat top: no z gain beyond the rim itself, extrusion ramps to zero for a clean finish');
         const sTop = vProfile(1);
         pu = 0;
-        for (let i = 0; i < uSet.length; i++) {
-          const u = uSet[i];
+        for (let i = 0; i < uSetRamp.length; i++) {
+          const u = uSetRamp[i];
           if (u <= 1e-9) continue;
           const sp = vShapeAt(u, 1);
           const ramp = Math.max(0, Math.min(1, 1 - (pu + u) / 2));
@@ -3030,8 +3100,8 @@
         const f0 = Math.min(1, T - (Lmax - 1)) % 1; // fraction where the spiral ended
         lines.push('; flat top: no z gain, extrusion ramps to zero for a clean rim');
         const seqU = [];
-        for (let i = 0; i < uSet.length; i++) if (uSet[i] > f0 + 1e-9) seqU.push(uSet[i]);
-        for (let i = 0; i < uSet.length; i++) if (uSet[i] <= f0 + 1e-9) seqU.push(uSet[i]);
+        for (let i = 0; i < uSetRamp.length; i++) if (uSetRamp[i] > f0 + 1e-9) seqU.push(uSetRamp[i]);
+        for (let i = 0; i < uSetRamp.length; i++) if (uSetRamp[i] <= f0 + 1e-9) seqU.push(uSetRamp[i]);
         seqU.push(f0); // close the revolution back to the start fraction
         let pf = f0;
         let trav = 0;
@@ -3402,6 +3472,11 @@
       }
     }
 
+    if (zFloorHit) {
+      warnings.push(
+        'The lower-zone Z-angle is steep enough to ask some bumps/spikes near the bed for a height below it — those were clamped to Z=0. Consider a shallower lower-zone angle or a smaller amplitude.'
+      );
+    }
     const stats = {
       volume: totalVolume,
       pathLength: pathLength,
