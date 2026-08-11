@@ -1772,9 +1772,10 @@
           x: baseRes[i].x + (hangRes[i].x - baseRes[i].x) * w,
           y: baseRes[i].y + (hangRes[i].y - baseRes[i].y) * w,
           isNew: false,
+          u: i / TWEEN_N,
         });
       }
-      out.push({ x: out[0].x, y: out[0].y, isNew: false });
+      out.push({ x: out[0].x, y: out[0].y, isNew: false, u: 1 });
       return out;
     }
 
@@ -2480,12 +2481,20 @@
       }
     }
 
-    // Hanger / tween loops: emit a polyline (fractions by arc length of THIS
-    // loop, so Z stays continuous). The pattern stays active, parameterized by
-    // the loop fraction (which matches base-u away from the morph region):
-    // spikes are inserted as events, weave displaces along the local normal.
-    // bridge=true applies the bridge feedrate to the new (bezier + pocket)
-    // sections of the hanger loop.
+    // Hanger / tween loops: emit a polyline. Two different fractions matter
+    // here and they are NOT the same number once a detour is involved: f is
+    // the arc-length fraction of THIS loop's own (possibly longer, thanks to
+    // the bridge/pocket detour) path, which is what paces Z evenly along
+    // whatever actually gets printed; u is the SAME point's position on the
+    // base shape (pts[i].u, tagged all the way back in buildHangerLoop/
+    // buildDoubleHangerLoop/tweenLoopPts). The pattern's coverage band and
+    // where a spike (placed once, in base-shape terms, outside this
+    // function) actually lands both need u, not f — using f for either
+    // would let a hanger loop's longer detour silently widen the covered
+    // stretch of the base shape relative to a plain revolution, since the
+    // same f fraction then covers more base-shape length. bridge=true
+    // applies the bridge feedrate to the new (bezier + pocket) sections of
+    // the hanger loop.
     function polyLoop(L, pts, bridge, uEnd) {
       const n1 = pts.length;
       const cum = [0];
@@ -2496,16 +2505,45 @@
       }
       if (total < 1e-9) return;
 
+      // Base-shape u -> this loop's own arc-length fraction f, by binary
+      // search over pts[].u (monotonically increasing by construction) and
+      // linear interpolation of the matching cum[]/total — the inverse of
+      // "which point on THIS loop sits at base-shape position u".
+      function uToF(uq) {
+        const uu = Math.max(0, Math.min(1, uq));
+        let lo = 0;
+        let hi = n1 - 1;
+        while (lo < hi) {
+          const mid = (lo + hi) >> 1;
+          if (pts[mid].u < uu) lo = mid + 1;
+          else hi = mid;
+        }
+        const i1 = Math.max(1, lo);
+        const uA = pts[i1 - 1].u;
+        const uB = pts[i1].u;
+        const span = uB - uA || 1e-9;
+        const tt = Math.max(0, Math.min(1, (uu - uA) / span));
+        return (cum[i1 - 1] + (cum[i1] - cum[i1 - 1]) * tt) / total;
+      }
+
       let events = [];
-      for (let i = 1; i < n1; i++) events.push({ f: cum[i] / total });
+      for (let i = 1; i < n1; i++) events.push({ f: cum[i] / total, u: pts[i].u });
       if (spikesMode) {
         const hwF = cfg.lineWidth / 2 / total;
-        const spk = (byLoop[L] || []).filter((s) => s.u > hwF * 1.2 && s.u < uEnd - hwF * 1.2);
+        // Each spike's base-shape u is resolved to ITS OWN f on this loop
+        // once, up front — every use below (the exclusion window, the
+        // tangent lookup, the actual out/tip/in events) works from that f,
+        // so a spike assigned near the back of the shape lands at the same
+        // base-shape position whether this revolution is a plain loop or
+        // the hanger's own longer detour.
+        const spk = (byLoop[L] || [])
+          .map((s) => ({ s: s, f: uToF(s.u) }))
+          .filter((e) => e.f > hwF * 1.2 && e.f < uEnd - hwF * 1.2);
         // Drop this loop's own (often very dense — 400 pts on a tween) vertices
         // that fall inside a spike window — each spike replaces that stretch
         // of wall entirely, not just narrows it.
         if (spk.length) {
-          events = events.filter((e) => !spk.some((s) => e.f > s.u - hwF + 1e-9 && e.f < s.u + hwF - 1e-9));
+          events = events.filter((e) => !spk.some((sp) => e.f > sp.f - hwF + 1e-9 && e.f < sp.f + hwF - 1e-9));
         }
         // Not a spike anymore: a "staple" — see spikesLoop for the full
         // explanation of why both arms push out along ONE shared direction
@@ -2515,18 +2553,18 @@
         // the hanger/tween polyline, whose tangent can swing hard over a
         // span as narrow as one line width (inside a taper or cap). Same
         // on-wall/pushed-out tiebreak at each boundary.
-        spk.forEach((s) => {
+        spk.forEach((sp) => {
           let seg0 = 1;
-          const target0 = Math.max(0, Math.min(1, s.u)) * total;
+          const target0 = Math.max(0, Math.min(1, sp.f)) * total;
           while (seg0 < n1 - 1 && cum[seg0] < target0) seg0++;
           const a0 = pts[seg0 - 1], b0 = pts[seg0];
           const dx0 = b0.x - a0.x, dy0 = b0.y - a0.y;
           const len0 = Math.hypot(dx0, dy0) || 1e-9;
           const tan = { tx: dx0 / len0, ty: dy0 / len0 };
-          events.push({ f: s.u - hwF, order: 0 });
-          events.push({ f: s.u - hwF, tip: true, amp: s.amp, tan: tan, order: 1 });
-          events.push({ f: s.u + hwF, tip: true, amp: s.amp, tan: tan, order: 0, dwellAfter: true });
-          events.push({ f: s.u + hwF, order: 1 });
+          events.push({ f: sp.f - hwF, order: 0 });
+          events.push({ f: sp.f - hwF, tip: true, amp: sp.s.amp, tan: tan, order: 1 });
+          events.push({ f: sp.f + hwF, tip: true, amp: sp.s.amp, tan: tan, order: 0, dwellAfter: true });
+          events.push({ f: sp.f + hwF, order: 1 });
         });
         events.sort((a, b) => a.f - b.f || (a.order || 0) - (b.order || 0));
       }
@@ -2560,10 +2598,10 @@
       let prevTipFan = false;
       for (let i = 0; i <= events.length; i++) {
         const endCut = i === events.length || events[i].f >= uEnd - 1e-12;
-        const e = endCut ? { f: uEnd } : events[i];
+        const e = endCut ? { f: uEnd, u: uEnd } : events[i];
         const q = atF(e.f);
         let m = 0;
-        if (!e.tip && patternOn && type === 'weave' && layerPatterned(L) && uInBand(e.f)) {
+        if (!e.tip && patternOn && type === 'weave' && layerPatterned(L) && uInBand(e.u)) {
           m = pat.amplitude * Math.cos(Math.PI * (L + e.f) * pat.bumps);
         }
         const amp = e.tip ? (e.amp != null ? e.amp : pat.amplitude) : m;
@@ -2978,28 +3016,36 @@
         }
       }
 
-      // Flat ramp-down top (matching the vessel): one final revolution at the
-      // top height with no z gain and the extrusion tapering to zero, so the
-      // rim finishes level and clean instead of on a spiral ramp. Plain wall —
-      // no pattern — for a tidy edge.
-      syncFan(false);
-      const topZ = cfg.totalHeight;
-      const f0 = Math.min(1, T - (Lmax - 1)) % 1; // fraction where the spiral ended
-      lines.push('; flat top: no z gain, extrusion ramps to zero for a clean rim');
-      const seqU = [];
-      for (let i = 0; i < uSet.length; i++) if (uSet[i] > f0 + 1e-9) seqU.push(uSet[i]);
-      for (let i = 0; i < uSet.length; i++) if (uSet[i] <= f0 + 1e-9) seqU.push(uSet[i]);
-      seqU.push(f0); // close the revolution back to the start fraction
-      let pf = f0;
-      let trav = 0;
-      for (let k = 0; k < seqU.length; k++) {
-        const u = seqU[k];
-        let d = u - pf;
-        if (d <= 1e-9) d += 1; // forward-wrap the fraction
-        trav = Math.min(1, trav + d);
-        const sp = sampler.at(u);
-        emitSeg({ x: sp.pos.x + cx, y: sp.pos.y + cy, z: topZ }, cfg.printFeed, Math.max(0, 1 - trav));
-        pf = u;
+      // Top finish. Flat cap (default, matching the vessel's own default):
+      // one final revolution at the top height with no z gain and the
+      // extrusion tapering to zero, so the rim finishes level and clean
+      // instead of on a spiral ramp. Plain wall — no pattern — for a tidy
+      // edge. Open spiral: no extra loop — the spiral above already reaches
+      // the full height at full flow on its own, leaving a one-layer
+      // helical step at the seam (an even bead all the way, good for open
+      // rims, same tradeoff as the vessel's own open-spiral option).
+      if (cfg.topStyle !== 'spiral') {
+        syncFan(false);
+        const topZ = cfg.totalHeight;
+        const f0 = Math.min(1, T - (Lmax - 1)) % 1; // fraction where the spiral ended
+        lines.push('; flat top: no z gain, extrusion ramps to zero for a clean rim');
+        const seqU = [];
+        for (let i = 0; i < uSet.length; i++) if (uSet[i] > f0 + 1e-9) seqU.push(uSet[i]);
+        for (let i = 0; i < uSet.length; i++) if (uSet[i] <= f0 + 1e-9) seqU.push(uSet[i]);
+        seqU.push(f0); // close the revolution back to the start fraction
+        let pf = f0;
+        let trav = 0;
+        for (let k = 0; k < seqU.length; k++) {
+          const u = seqU[k];
+          let d = u - pf;
+          if (d <= 1e-9) d += 1; // forward-wrap the fraction
+          trav = Math.min(1, trav + d);
+          const sp = sampler.at(u);
+          emitSeg({ x: sp.pos.x + cx, y: sp.pos.y + cy, z: topZ }, cfg.printFeed, Math.max(0, 1 - trav));
+          pf = u;
+        }
+      } else {
+        lines.push('; open spiral top: wall ends at full flow, no cap loop');
       }
     } else {
       // ---- Bend stool: concentric rings, inner to outer, staircase seam ----
