@@ -1334,6 +1334,13 @@
     let vBotRes = null;
     let vTopRes = null;
     let vZDiffMax = 0;
+    // 'points' mode builds a fully custom top curve (see Geo.customTopCurve)
+    // whose Z lift is each point's own configured value, not derived from
+    // radius the way the star's inner/outer split is — vZLift below reads
+    // straight off vTopRes[i].z when this is set, ignoring vZDiffMax/
+    // vStarInnerWeight entirely (those stay exactly as they were for the
+    // 'roundedStar' mode).
+    let vTopPointsMode = false;
     if (isVessel) {
       const ve = cfg.vessel || {};
       vProfile = makeProfile(buildVesselProfileCps(ve));
@@ -1357,6 +1364,23 @@
         vTopRes = Geo.resampleClosed(topOutline, NB);
         vTopBlend = true;
         vZDiffMax = (Math.max(0, Math.min(100, ve.topStarZDiffPct || 0)) / 100) * 25;
+      } else if (ve.topShape === 'points' && Array.isArray(ve.topPoints) && ve.topPoints.length >= 3) {
+        const NB = 480;
+        vBotRes = Geo.resampleClosed(base, NB);
+        const ptsSorted = ve.topPoints
+          .map((p) => ({
+            u: Math.max(0, Math.min(1, p.u)),
+            radialMM: (Math.max(-100, Math.min(100, p.radialPct)) / 100) * 25,
+            zMM: (Math.max(-100, Math.min(100, p.zPct)) / 100) * 25,
+          }))
+          .sort((a, b) => a.u - b.u);
+        const topOutline = Geo.rotateToSeam(
+          Geo.customTopCurve(base, ptsSorted, dirSign, cfg.tolerance),
+          cfg.seamSide || 'back'
+        );
+        vTopRes = Geo.resampleClosed(topOutline, NB);
+        vTopBlend = true;
+        vTopPointsMode = true;
       }
     }
 
@@ -1430,16 +1454,33 @@
       return Math.max(0, Math.min(1, (outerR - r) / (outerR - innerR)));
     }
 
-    // Extra Z lift for the rounded star's inner points only — outer points
-    // stay at their nominal height, matching "lift the inner points" rather
-    // than a symmetric ripple. Ramps in linearly with height (same hFrac
-    // normalization as the shape blend itself), so the full configured
-    // difference is only ever reached at the very top layer. Deliberately
-    // NOT extrusion-compensated — the layer is simply allowed to stretch
-    // taller at the points that are lifted, per instruction.
+    // Custom top curve's own per-point Z lift, read straight off vTopRes[i].z
+    // (already in mm — see the 'points' branch above) via the same bilinear
+    // lookup vShapeAt/vStarInnerWeight use for x/y.
+    function vTopPointZ(u) {
+      const n = vTopRes.length;
+      const uu = u - Math.floor(u);
+      const f = uu * n;
+      let i0 = Math.floor(f);
+      if (i0 >= n) i0 = n - 1;
+      const i1 = (i0 + 1) % n;
+      const t = f - i0;
+      const z0 = vTopRes[i0].z || 0;
+      const z1 = vTopRes[i1].z || 0;
+      return z0 + (z1 - z0) * t;
+    }
+
+    // Extra Z lift ramped in linearly with height (same hFrac normalization
+    // as the shape blend itself), so the full configured lift is only ever
+    // reached at the very top layer. Deliberately NOT extrusion-compensated
+    // — the layer is simply allowed to stretch taller (or shorter) at the
+    // lifted points, per instruction. 'roundedStar' mode lifts the inner
+    // points only (outer points stay at nominal height, read off local
+    // radius); 'points' mode lifts each point by its own configured amount.
     function vZLift(u, hFrac) {
-      if (vZDiffMax <= 0) return 0;
       const k = Math.max(0, Math.min(1, hFrac));
+      if (vTopPointsMode) return k * vTopPointZ(u);
+      if (vZDiffMax <= 0) return 0;
       return vZDiffMax * k * vStarInnerWeight(u);
     }
 
@@ -2726,7 +2767,12 @@
               ')') +
           ' + spiral wall to z=' + wallH.toFixed(2) + ' ---'
       );
-      if (vTopBlend) {
+      if (vTopBlend && vTopPointsMode) {
+        lines.push(
+          '; top curve: cross-fading into a custom ' + ve.topPoints.length +
+            '-point curve linearly over the full wall height (radial + Z per point, uncompensated)'
+        );
+      } else if (vTopBlend) {
         lines.push(
           '; top curve: cross-fading into a rounded star (outer=' + ve.topStarOuter +
             ' inner=' + ve.topStarInner + ' points=' + ve.topStarPoints + ') linearly over the full wall height' +
