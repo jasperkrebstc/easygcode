@@ -176,7 +176,14 @@ keep **fully independent settings** per project:
   small fillet needs. The fillet's target scale where it meets the wall is read
   straight off the overall radius profile at that exact height, so the wall
   that follows is always an exact continuation even when a profile control
-  point sits close to the bottom. The **wall** is then a continuous
+  point sits close to the bottom. Its arriving *tangent* matches the wall's own
+  actual local angle there too, not always dead vertical — a plain cylindrical
+  wall has zero slope right after the fillet, so it still ends vertical exactly
+  as a plain quarter circle would, but a tapered or flared radius profile keeps
+  sloping right through the handoff, and the fillet now bends to meet that
+  slope (a shorter arc of a larger circle, still spanning exactly the
+  configured fillet height) instead of forcing a vertical arrival regardless
+  and leaving a visible kink where the two meet. The **wall** is then a continuous
   vase-mode spiral just outside the bottom; with a ring-style bottom it starts again
   at `z = 0` (so the bottom sits inside it) and ramps extrusion up over the first
   revolution, while with the true-spiral or filleted bottom it continues from the

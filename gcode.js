@@ -2863,10 +2863,17 @@
         // profile itself calls for at the height where the fillet ends, so
         // the wall loop that follows is always exactly seamless — not just
         // approximately — even if a profile point sits unusually close to
-        // the bottom.
+        // the bottom. The fillet's own arriving tangent matches the wall's
+        // actual local angle there too (vSeamAngle — the same measure the
+        // main wall loop's own squeeze compensation uses), not always dead
+        // vertical: a flat/cylindrical profile has zero slope there, so the
+        // fillet ends vertical exactly as before, but a tapered or flared
+        // profile keeps sloping right through the handoff, and forcing the
+        // fillet vertical anyway would leave a visible kink where the two
+        // meet instead of a smooth continuation.
         if (F > 1e-6) {
-          const fSampler = Geo.vesselFilletSampler(F);
           const zWallStart = lh + F;
+          const fSampler = Geo.vesselFilletSampler(F, vSeamAngle(zWallStart));
           const scaleEnd = vProfile(Math.min(1, zWallStart / wallH));
           function vFilletPt(z0, z1, u) {
             const zc = z0 + (z1 - z0) * u;

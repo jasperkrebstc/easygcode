@@ -1206,23 +1206,35 @@
   // so "fillet radius" here means the same relationship applied to that
   // scale rather than a literal per-vertex geometric radius; for a circle
   // the two are identical). Purely angular: z and the local wall angle only
-  // ever depend on how far through the quarter-circle turn a point is,
-  // entirely independent of the shape's actual scale there — SCALE is
-  // interpolated separately by the caller, in lockstep with `frac`, which
-  // reduces to an exact circular fillet whenever the target scale change
-  // over the fillet's height is the one a literal circle would have.
+  // ever depend on how far through the turn a point is, entirely
+  // independent of the shape's actual scale there — SCALE is interpolated
+  // separately by the caller, in lockstep with `frac`, which reduces to an
+  // exact circular fillet whenever the target scale change over the
+  // fillet's height is the one a literal circle would have.
   //
-  // x = how far radially INTO the F-mm-tall fillet band a point is (0 at the
-  // flat side, F at the vertical side). Closed form: z(x) = F - sqrt(F^2-x^2),
-  // angle from vertical = acos(x/F) (90 deg at x=0 -- flat -- 0 deg at x=F).
-  // Parametrised by z (not x) since that's what callers walk by.
-  function vesselFilletSampler(F) {
+  // endAngle (radians from vertical, default 0): the tangent angle the
+  // fillet arrives at by z=F. Left at 0 (fully vertical) this is exactly a
+  // quarter circle, closed form z(x) = F - sqrt(F^2-x^2), same as before
+  // this parameter existed. Anything else traces a SHORTER arc of a LARGER
+  // circle instead, chosen so it still spans exactly F in height but
+  // arrives at endAngle rather than vertical — so when the wall's own
+  // radius profile keeps sloping right where the fillet hands off (a
+  // flared or tapered profile, not a plain cylinder), the fillet can match
+  // that slope instead of always forcing a dead-vertical arrival and
+  // leaving a visible kink where the two meet. x is how far radially INTO
+  // the fillet band a point is (0 at the flat side); angle from vertical is
+  // 90 deg at x=0 (flat) and endAngle at x=F. Parametrised by z (not x)
+  // since that's what callers walk by.
+  function vesselFilletSampler(F, endAngle) {
+    const phiMax = Math.PI / 2 - Math.max(0, Math.min((85 * Math.PI) / 180, endAngle || 0));
+    const sinPhiMax = Math.max(1e-6, Math.sin(phiMax));
+    const R = F / Math.max(1e-6, 1 - Math.cos(phiMax));
     return {
       height: F,
       at: function (z) {
         const zc = Math.max(0, Math.min(F, z));
-        const phi = Math.acos(Math.max(-1, Math.min(1, 1 - zc / F)));
-        return { frac: Math.sin(phi), angle: Math.PI / 2 - phi };
+        const phi = Math.acos(Math.max(-1, Math.min(1, 1 - zc / R)));
+        return { frac: Math.sin(phi) / sinPhiMax, angle: Math.PI / 2 - phi };
       },
     };
   }
