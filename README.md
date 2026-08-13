@@ -176,7 +176,14 @@ keep **fully independent settings** per project:
   small fillet needs. The fillet's target scale where it meets the wall is read
   straight off the overall radius profile at that exact height, so the wall
   that follows is always an exact continuation even when a profile control
-  point sits close to the bottom. The **wall** is then a continuous
+  point sits close to the bottom. Its arriving *tangent* matches the wall's own
+  actual local angle there too, not always dead vertical — a plain cylindrical
+  wall has zero slope right after the fillet, so it still ends vertical exactly
+  as a plain quarter circle would, but a tapered or flared radius profile keeps
+  sloping right through the handoff, and the fillet now bends to meet that
+  slope (a shorter arc of a larger circle, still spanning exactly the
+  configured fillet height) instead of forcing a vertical arrival regardless
+  and leaving a visible kink where the two meet. The **wall** is then a continuous
   vase-mode spiral just outside the bottom; with a ring-style bottom it starts again
   at `z = 0` (so the bottom sits inside it) and ramps extrusion up over the first
   revolution, while with the true-spiral or filleted bottom it continues from the
@@ -222,7 +229,26 @@ keep **fully independent settings** per project:
   shows up at the very top layer; deliberately left extrusion-uncompensated (the
   layer is simply allowed to stretch taller at the lifted points) since it only
   touches a handful of vertices per revolution and is meant as surface finish, not a
-  structural overhang. The wall's own Z pacing is separately overhang-aware: instead
+  structural overhang. **Custom points** is a third, fully manual top curve: 3–10
+  points, each one placed on the *bottom shape's own outline* — whatever shape that
+  is, not necessarily a circle — at a configurable position around it (0–1, evenly
+  spaced by default, freely editable so the points can bunch up or spread out
+  unevenly), then moved outward along that point's own local outward normal (the
+  tangent crossed with the Z axis — the same convention `offsetClosed` uses
+  everywhere else) and up or down, both by their own independent −100…100% input
+  (100% = 25mm either way, same convention as the star's Z lift, but now signed and
+  per point instead of one shared magnitude). A closed Catmull-Rom spline runs
+  through the points exactly (not a Bezier-style loft that only touches the ends —
+  every point here is meant to land exactly where it's set), densely sampled then
+  chord-tolerance simplified the same way the star's own spline is. The Z lift is
+  read directly off each point's own value (bilinear-interpolated around the loop,
+  same lookup the star's radius-based weight uses) rather than derived from
+  radius, ramps in linearly with height the same way, and is equally
+  extrusion-uncompensated. A **randomize points** button fills every point's
+  outward/Z values with a fresh random number inside a configurable min/max domain
+  per axis; changing the point count re-spaces every point's own position evenly
+  (without touching outward/Z) rather than trying to preserve a hand-tuned layout
+  at the old count. The wall's own Z pacing is separately overhang-aware: instead
   of a flat layer height every revolution, each revolution's physical Z step is
   paced by the same lampshade-style `cos(angle)` squeeze the filleted bottom style
   uses, sampled once per revolution at the seam rather than per vertex (the radius

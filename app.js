@@ -19,6 +19,20 @@
     return v === 'bendstool' || v === 'vessel' || v === 'spoon' || v === 'lamp' ? v : 'cordhanger';
   }
 
+  const VE_TOP_POINTS_MAX = 10;
+
+  // Read the vessel's custom top-curve points (up to VE_TOP_POINTS_MAX
+  // pre-built field groups), sliced to the configured count — mirrors how
+  // the radius profile's own middle points are read.
+  function readVesselTopPoints() {
+    const count = Math.max(3, Math.min(VE_TOP_POINTS_MAX, Math.round(num('ve_topPtCount'))));
+    const pts = [];
+    for (let i = 1; i <= VE_TOP_POINTS_MAX; i++) {
+      pts.push({ u: num('ve_topPtU' + i), radialPct: num('ve_topPtR' + i), zPct: num('ve_topPtZ' + i) });
+    }
+    return pts.slice(0, count);
+  }
+
   // Read a shape select + its params for the given input-id prefix ('' for the
   // coat hanger, 've_' for the vessel) so both share one shape model.
   function readShape(pre) {
@@ -170,11 +184,14 @@
             { h: num('ve_profMidH3'), s: num('ve_profMid3') },
           ].slice(0, Math.max(0, Math.min(5, Math.round(num('ve_profileCount'))) - 2)),
           top: num('ve_profTop'),
-          topShape: $('ve_topShape').value === 'roundedStar' ? 'roundedStar' : 'same',
+          topShape:
+            ['roundedStar', 'points'].indexOf($('ve_topShape').value) >= 0 ? $('ve_topShape').value : 'same',
           topStarOuter: num('ve_topStar_outer'),
           topStarInner: num('ve_topStar_inner'),
           topStarPoints: Math.max(2, Math.round(num('ve_topStar_points'))),
           topStarZDiffPct: Math.max(0, Math.min(100, num('ve_topStar_zDiffPct'))),
+          topPointsCount: Math.max(3, Math.min(10, Math.round(num('ve_topPtCount')))),
+          topPoints: readVesselTopPoints(),
         },
         brim: readBrim('ve_'),
       };
@@ -445,6 +462,17 @@
         if (!(pr.topStarPoints >= 2)) return 'Top curve star points must be 2 or more.';
         if (!Number.isFinite(pr.topStarZDiffPct) || pr.topStarZDiffPct < 0 || pr.topStarZDiffPct > 100) {
           return 'Inner-point Z lift must be between 0 and 100%.';
+        }
+      }
+      if (pr.topShape === 'points') {
+        if (!(pr.topPointsCount >= 3)) return 'Custom top curve needs at least 3 points.';
+        if (pr.topPoints.length < 3) return 'Custom top curve needs at least 3 points.';
+        for (const p of pr.topPoints) {
+          if (!Number.isFinite(p.u) || p.u < 0 || p.u > 1) return 'Top curve point position must be between 0 and 1.';
+          if (!Number.isFinite(p.radialPct) || p.radialPct < -100 || p.radialPct > 100)
+            return 'Top curve point outward % must be between -100 and 100.';
+          if (!Number.isFinite(p.zPct) || p.zPct < -100 || p.zPct > 100)
+            return 'Top curve point Z % must be between -100 and 100.';
         }
       }
       for (const k in cfg.shapeParams) {
@@ -816,9 +844,44 @@
   }
 
   // The rounded-star top curve has its own outer/inner radius + point-count
-  // fields, only relevant once it's actually chosen.
+  // fields, only relevant once it's actually chosen; the custom-points top
+  // curve has its own separate field group.
   function showVesselTopShape(shape) {
     $('ve_topStarFields').hidden = shape !== 'roundedStar';
+    $('ve_topPointsFields').hidden = shape !== 'points';
+  }
+
+  // Show exactly `count` of the vessel's VE_TOP_POINTS_MAX pre-built custom
+  // top-curve point field groups.
+  function showVesselTopPoints(count) {
+    const n = Math.max(3, Math.min(VE_TOP_POINTS_MAX, Math.round(count || 5)));
+    document.querySelectorAll('.ve-top-point').forEach((el) => {
+      el.hidden = Number(el.getAttribute('data-pt')) > n;
+    });
+  }
+
+  // Reset every visible custom top-curve point's own position (u) to an even
+  // spacing around the loop — point i of n at i/n, matching "by default the
+  // points are evenly spaced" — without touching the outward/Z values, which
+  // stay whatever they were (0 for a fresh point).
+  function evenSpaceVesselTopPoints(count) {
+    const n = Math.max(3, Math.min(VE_TOP_POINTS_MAX, Math.round(count || 5)));
+    for (let i = 1; i <= n; i++) $('ve_topPtU' + i).value = ((i - 1) / n).toFixed(3);
+  }
+
+  // Fill every visible custom top-curve point's outward/Z values with a
+  // fresh random number inside the configured min/max domain for each axis.
+  function randomizeVesselTopPoints() {
+    const count = Math.max(3, Math.min(VE_TOP_POINTS_MAX, Math.round(num('ve_topPtCount'))));
+    const rMin = num('ve_topPtRandRMin');
+    const rMax = num('ve_topPtRandRMax');
+    const zMin = num('ve_topPtRandZMin');
+    const zMax = num('ve_topPtRandZMax');
+    const between = (a, b) => a + Math.random() * (b - a);
+    for (let i = 1; i <= count; i++) {
+      $('ve_topPtR' + i).value = Math.round(between(Math.min(rMin, rMax), Math.max(rMin, rMax)));
+      $('ve_topPtZ' + i).value = Math.round(between(Math.min(zMin, zMax), Math.max(zMin, zMax)));
+    }
   }
 
   // Resolve the lampshade's socket thread (diameter + pitch) — from the
@@ -1343,6 +1406,8 @@
           (ve.topStarZDiffPct > 0
             ? ' (inner points lift up to ' + ((ve.topStarZDiffPct / 100) * 25).toFixed(1) + 'mm, uncompensated)'
             : '')
+        : ve.topShape === 'points'
+        ? ' · top curve blends into a custom ' + (ve.topPointsCount || 5) + '-point curve (uncompensated)'
         : '');
 
     const canvas = $('ve_preview');
@@ -1745,6 +1810,7 @@
       showVesselMidPoints(cfg.vessel.profileCount);
       showVesselBottomStyle(cfg.vessel.seamStyle);
       showVesselTopShape(cfg.vessel.topShape);
+      showVesselTopPoints(cfg.vessel.topPointsCount);
     } else if (cfg.project === 'bendstool') {
       syncFoamHint(cfg);
       syncFlowFeedHint(cfg);
@@ -2180,6 +2246,7 @@
     showVesselMidPoints(num('ve_profileCount'));
     showVesselBottomStyle($('ve_seamStyle').value);
     showVesselTopShape($('ve_topShape').value);
+    showVesselTopPoints(num('ve_topPtCount'));
     showProject(activeProject());
   }
 
@@ -2413,6 +2480,15 @@
     updateShapeUI();
   });
   $('hangExportSvgBtn').addEventListener('click', exportHangerSvg);
+
+  $('ve_topPtCount').addEventListener('change', () => {
+    evenSpaceVesselTopPoints(num('ve_topPtCount'));
+    updateShapeUI();
+  });
+  $('ve_topPtRandomizeBtn').addEventListener('click', () => {
+    randomizeVesselTopPoints();
+    updateShapeUI();
+  });
 
   $('bs_brimEnabled').addEventListener('change', () => {
     $('bs_brimFields').hidden = !$('bs_brimEnabled').checked;

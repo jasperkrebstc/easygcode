@@ -162,6 +162,54 @@
     return ensureCCW(rdpClosed(dense, Math.max(1e-4, tol || 0.05)));
   }
 
+  // Vessel's fully custom top curve: N points (sorted by `u`, ascending),
+  // each defined by where along the BASE shape's own perimeter it sits (u,
+  // 0..1), how far outward along the local outward normal it moves
+  // (radialMM, signed — negative pulls inward), and how high it lifts
+  // (zMM, signed — carried through as each point's own `z`, not baked into
+  // x/y, since the caller layers height in separately). The outward normal
+  // at u is the tangent crossed with the Z axis (tan x Z = (tan.y, -tan.x,
+  // 0) for a unit tangent), the same convention offsetClosed already uses
+  // everywhere else in this file.
+  //
+  // Densely sampled through a closed Catmull-Rom spline (wrapping by index
+  // modulo n — a genuinely closed loop needs no reflected phantom points at
+  // open ends the way makeProfile's open curve does), then chord-tolerance
+  // simplified — the same dense-then-simplify recipe as roundedStar and
+  // adaptiveShape, generalized to arbitrary (not evenly spaced) points.
+  function customTopCurve(base, points, dirSign, tol) {
+    const n = points.length;
+    const sampler = makeSampler(base);
+    const sign = dirSign || 1;
+    const ctrl = points.map((p) => {
+      const s = sampler.at(p.u);
+      const nx = sign * s.tan.y;
+      const ny = sign * -s.tan.x;
+      return { x: s.pos.x + nx * p.radialMM, y: s.pos.y + ny * p.radialMM, z: p.zMM || 0 };
+    });
+    const stepsPerSeg = 48;
+    const dense = [];
+    const blend = (a, b, c, d, t, t2, t3) =>
+      0.5 * (2 * b + (-a + c) * t + (2 * a - 5 * b + 4 * c - d) * t2 + (-a + 3 * b - 3 * c + d) * t3);
+    for (let i = 0; i < n; i++) {
+      const p0 = ctrl[(i - 1 + n) % n];
+      const p1 = ctrl[i];
+      const p2 = ctrl[(i + 1) % n];
+      const p3 = ctrl[(i + 2) % n];
+      for (let s = 0; s < stepsPerSeg; s++) {
+        const t = s / stepsPerSeg;
+        const t2 = t * t;
+        const t3 = t2 * t;
+        dense.push({
+          x: blend(p0.x, p1.x, p2.x, p3.x, t, t2, t3),
+          y: blend(p0.y, p1.y, p2.y, p3.y, t, t2, t3),
+          z: blend(p0.z, p1.z, p2.z, p3.z, t, t2, t3),
+        });
+      }
+    }
+    return ensureCCW(rdpClosed(dense, Math.max(1e-4, tol || 0.05)));
+  }
+
   // Superellipse / squircle: |x/a|^n + |y/a|^n = 1.
   function squircle(size, n, steps) {
     const a = size;
@@ -221,7 +269,10 @@
     return total;
   }
 
-  // Resample a closed polyline into exactly N points spaced evenly by arc length.
+  // Resample a closed polyline into exactly N points spaced evenly by arc
+  // length. If every point carries a `z` (the vessel's custom top curve
+  // does), it's interpolated along too; points that never carry z are
+  // entirely unaffected (no `z` key on the output at all).
   function resampleClosed(pts, n) {
     const cum = [0];
     for (let i = 0; i < pts.length; i++) {
@@ -237,7 +288,9 @@
       const b = pts[(seg + 1) % pts.length];
       const segLen = cum[seg + 1] - cum[seg] || 1e-9;
       const t = (target - cum[seg]) / segLen;
-      out.push({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t });
+      const p = { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
+      if (a.z !== undefined && b.z !== undefined) p.z = a.z + (b.z - a.z) * t;
+      out.push(p);
     }
     return out;
   }
@@ -376,6 +429,9 @@
   // crosses it. side: 'back' (+Y), 'front' (-Y), 'right' (+X), 'left' (-X).
   // The exact crossing point is inserted (so the seam lands mid-edge, not at a
   // vertex), making the seam world-fixed regardless of the shape's points.
+  // If every point carries a `z` (the vessel's custom top curve does), the
+  // inserted crossing point's own z is interpolated too instead of silently
+  // dropping it; points that never carry z are entirely unaffected.
   function rotateToSeam(base, side) {
     const horiz = side === 'right' || side === 'left'; // cross the X axis (y = 0)
     const wantPos = side === 'back' || side === 'right';
@@ -391,6 +447,7 @@
       if ((ca <= 0 && cb > 0) || (ca >= 0 && cb < 0)) {
         const t = ca / (ca - cb);
         const pt = { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
+        if (a.z !== undefined && b.z !== undefined) pt.z = a.z + (b.z - a.z) * t;
         const sideVal = horiz ? pt.x : pt.y; // which side of the axis this crossing is on
         const onWanted = wantPos ? sideVal > 0 : sideVal < 0;
         if (onWanted && (wantPos ? sideVal > bestSide : sideVal < bestSide)) {
@@ -1149,23 +1206,35 @@
   // so "fillet radius" here means the same relationship applied to that
   // scale rather than a literal per-vertex geometric radius; for a circle
   // the two are identical). Purely angular: z and the local wall angle only
-  // ever depend on how far through the quarter-circle turn a point is,
-  // entirely independent of the shape's actual scale there — SCALE is
-  // interpolated separately by the caller, in lockstep with `frac`, which
-  // reduces to an exact circular fillet whenever the target scale change
-  // over the fillet's height is the one a literal circle would have.
+  // ever depend on how far through the turn a point is, entirely
+  // independent of the shape's actual scale there — SCALE is interpolated
+  // separately by the caller, in lockstep with `frac`, which reduces to an
+  // exact circular fillet whenever the target scale change over the
+  // fillet's height is the one a literal circle would have.
   //
-  // x = how far radially INTO the F-mm-tall fillet band a point is (0 at the
-  // flat side, F at the vertical side). Closed form: z(x) = F - sqrt(F^2-x^2),
-  // angle from vertical = acos(x/F) (90 deg at x=0 -- flat -- 0 deg at x=F).
-  // Parametrised by z (not x) since that's what callers walk by.
-  function vesselFilletSampler(F) {
+  // endAngle (radians from vertical, default 0): the tangent angle the
+  // fillet arrives at by z=F. Left at 0 (fully vertical) this is exactly a
+  // quarter circle, closed form z(x) = F - sqrt(F^2-x^2), same as before
+  // this parameter existed. Anything else traces a SHORTER arc of a LARGER
+  // circle instead, chosen so it still spans exactly F in height but
+  // arrives at endAngle rather than vertical — so when the wall's own
+  // radius profile keeps sloping right where the fillet hands off (a
+  // flared or tapered profile, not a plain cylinder), the fillet can match
+  // that slope instead of always forcing a dead-vertical arrival and
+  // leaving a visible kink where the two meet. x is how far radially INTO
+  // the fillet band a point is (0 at the flat side); angle from vertical is
+  // 90 deg at x=0 (flat) and endAngle at x=F. Parametrised by z (not x)
+  // since that's what callers walk by.
+  function vesselFilletSampler(F, endAngle) {
+    const phiMax = Math.PI / 2 - Math.max(0, Math.min((85 * Math.PI) / 180, endAngle || 0));
+    const sinPhiMax = Math.max(1e-6, Math.sin(phiMax));
+    const R = F / Math.max(1e-6, 1 - Math.cos(phiMax));
     return {
       height: F,
       at: function (z) {
         const zc = Math.max(0, Math.min(F, z));
-        const phi = Math.acos(Math.max(-1, Math.min(1, 1 - zc / F)));
-        return { frac: Math.sin(phi), angle: Math.PI / 2 - phi };
+        const phi = Math.acos(Math.max(-1, Math.min(1, 1 - zc / R)));
+        return { frac: Math.sin(phi) / sinPhiMax, angle: Math.PI / 2 - phi };
       },
     };
   }
@@ -1494,6 +1563,7 @@
     ringFill,
     vesselFilletSampler,
     roundedStar,
+    customTopCurve,
     lampProfile,
     makeLampSampler,
     flipLampProfile,
