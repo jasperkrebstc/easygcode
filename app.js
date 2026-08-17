@@ -19,16 +19,38 @@
     return v === 'bendstool' || v === 'vessel' || v === 'spoon' || v === 'lamp' ? v : 'cordhanger';
   }
 
-  const VE_TOP_POINTS_MAX = 10;
+  const VE_PT_MAX = 10;
+  // Both the top and bottom custom-curve editors share the exact same field
+  // layout/behavior (point count, up to VE_PT_MAX pre-built field groups
+  // with only the SELECTED one ever shown, prev/next, drag-to-adjust on a
+  // canvas, split randomize) parameterized by `kind` ('top' or 'bot') —
+  // mirrors readShape(pre)'s own prefix-sharing pattern. Top has a Z field
+  // per point and its own zPct; bottom never does ("without the z
+  // difference", per instruction).
+  function vePtPrefix(kind) { return kind === 'top' ? 've_topPt' : 've_botPt'; }
+  function vePtHasZ(kind) { return kind === 'top'; }
+  let veTopPtSelected = 1;
+  let veBotPtSelected = 1;
+  function vePtSelected(kind) { return kind === 'top' ? veTopPtSelected : veBotPtSelected; }
+  function vePtSetSelected(kind, n) {
+    if (kind === 'top') veTopPtSelected = n; else veBotPtSelected = n;
+  }
+  // Last draw's transform + per-point hit-list for each curve canvas —
+  // lets the pointer handlers hit-test and drag without recomputing the
+  // base-shape geometry on every move.
+  let veCurveState = { top: null, bot: null };
 
-  // Read the vessel's custom top-curve points (up to VE_TOP_POINTS_MAX
-  // pre-built field groups), sliced to the configured count — mirrors how
-  // the radius profile's own middle points are read.
-  function readVesselTopPoints() {
-    const count = Math.max(3, Math.min(VE_TOP_POINTS_MAX, Math.round(num('ve_topPtCount'))));
+  // Read one curve's points (up to VE_PT_MAX pre-built field groups),
+  // sliced to the configured count — mirrors how the radius profile's own
+  // middle points are read.
+  function readVesselCurvePoints(kind) {
+    const pre = vePtPrefix(kind);
+    const count = Math.max(3, Math.min(VE_PT_MAX, Math.round(num(pre + 'Count'))));
     const pts = [];
-    for (let i = 1; i <= VE_TOP_POINTS_MAX; i++) {
-      pts.push({ u: num('ve_topPtU' + i), radialPct: num('ve_topPtR' + i), zPct: num('ve_topPtZ' + i) });
+    for (let i = 1; i <= VE_PT_MAX; i++) {
+      const p = { u: num(pre + 'U' + i), radialPct: num(pre + 'R' + i) };
+      if (vePtHasZ(kind)) p.zPct = num(pre + 'Z' + i);
+      pts.push(p);
     }
     return pts.slice(0, count);
   }
@@ -190,8 +212,12 @@
           topStarInner: num('ve_topStar_inner'),
           topStarPoints: Math.max(2, Math.round(num('ve_topStar_points'))),
           topStarZDiffPct: Math.max(0, Math.min(100, num('ve_topStar_zDiffPct'))),
-          topPointsCount: Math.max(3, Math.min(10, Math.round(num('ve_topPtCount')))),
-          topPoints: readVesselTopPoints(),
+          topPointsCount: Math.max(3, Math.min(VE_PT_MAX, Math.round(num('ve_topPtCount')))),
+          topPoints: readVesselCurvePoints('top'),
+          bottomShape:
+            ['sameAsTop', 'points'].indexOf($('ve_bottomShape').value) >= 0 ? $('ve_bottomShape').value : 'base',
+          bottomPointsCount: Math.max(3, Math.min(VE_PT_MAX, Math.round(num('ve_botPtCount')))),
+          bottomPoints: readVesselCurvePoints('bot'),
         },
         brim: readBrim('ve_'),
       };
@@ -473,6 +499,15 @@
             return 'Top curve point outward % must be between -100 and 100.';
           if (!Number.isFinite(p.zPct) || p.zPct < -100 || p.zPct > 100)
             return 'Top curve point Z % must be between -100 and 100.';
+        }
+      }
+      if (pr.bottomShape === 'points') {
+        if (!(pr.bottomPointsCount >= 3)) return 'Custom bottom curve needs at least 3 points.';
+        if (pr.bottomPoints.length < 3) return 'Custom bottom curve needs at least 3 points.';
+        for (const p of pr.bottomPoints) {
+          if (!Number.isFinite(p.u) || p.u < 0 || p.u > 1) return 'Bottom curve point position must be between 0 and 1.';
+          if (!Number.isFinite(p.radialPct) || p.radialPct < -100 || p.radialPct > 100)
+            return 'Bottom curve point outward % must be between -100 and 100.';
         }
       }
       for (const k in cfg.shapeParams) {
@@ -845,42 +880,104 @@
 
   // The rounded-star top curve has its own outer/inner radius + point-count
   // fields, only relevant once it's actually chosen; the custom-points top
-  // curve has its own separate field group.
+  // curve has its own separate editor.
   function showVesselTopShape(shape) {
     $('ve_topStarFields').hidden = shape !== 'roundedStar';
     $('ve_topPointsFields').hidden = shape !== 'points';
   }
 
-  // Show exactly `count` of the vessel's VE_TOP_POINTS_MAX pre-built custom
-  // top-curve point field groups.
-  function showVesselTopPoints(count) {
-    const n = Math.max(3, Math.min(VE_TOP_POINTS_MAX, Math.round(count || 5)));
-    document.querySelectorAll('.ve-top-point').forEach((el) => {
-      el.hidden = Number(el.getAttribute('data-pt')) > n;
-    });
+  // The bottom-curve editor only matters once "custom points" (or "same as
+  // top curve") is actually chosen for the bottom shape.
+  function showVesselBottomShape(shape) {
+    $('ve_botPtFields').hidden = shape !== 'points';
   }
 
-  // Reset every visible custom top-curve point's own position (u) to an even
+  function vePtCount(kind) {
+    return Math.max(3, Math.min(VE_PT_MAX, Math.round(num(vePtPrefix(kind) + 'Count')) || 5));
+  }
+
+  // Show exactly `count` of the VE_PT_MAX pre-built point field groups AS
+  // CANDIDATES (i.e. selectable at all) — which ONE of those is actually
+  // visible is a separate, single-point-at-a-time concern (see
+  // showSelectedVePoint) so the editor never shows "a lot of numbers" at
+  // once, however many points the curve has.
+  function showVeCurvePointCount(kind, count) {
+    const n = Math.max(3, Math.min(VE_PT_MAX, Math.round(count || 5)));
+    document.querySelectorAll('.ve-' + kind + '-point').forEach((el) => {
+      el.hidden = Number(el.getAttribute('data-pt')) > n;
+    });
+    if (vePtSelected(kind) > n) vePtSetSelected(kind, n);
+    showSelectedVePoint(kind);
+  }
+
+  // Show ONLY the currently-selected point's own field group (position,
+  // outward, and — top only — Z), with a "Point X of N" indicator and
+  // prev/next buttons so precise selection never depends on hitting a small
+  // target on the canvas. This — not a wall of up to 30 fields — is the
+  // editor's actual surface: tap or drag a point on the curve preview to
+  // select and adjust it instead.
+  function showSelectedVePoint(kind) {
+    const count = vePtCount(kind);
+    const sel = Math.max(1, Math.min(count, vePtSelected(kind)));
+    vePtSetSelected(kind, sel);
+    document.querySelectorAll('.ve-' + kind + '-point').forEach((el) => {
+      el.hidden = Number(el.getAttribute('data-pt')) !== sel;
+    });
+    const hint = $('ve_' + (kind === 'top' ? 'topPt' : 'botPt') + 'SelHint');
+    if (hint) hint.textContent = 'Point ' + sel + ' of ' + count;
+  }
+
+  function selectVePoint(kind, n) {
+    vePtSetSelected(kind, Math.max(1, Math.min(vePtCount(kind), n)));
+    showSelectedVePoint(kind);
+    updateShapeUI();
+  }
+
+  // Reset every visible custom-curve point's own position (u) to an even
   // spacing around the loop — point i of n at i/n, matching "by default the
   // points are evenly spaced" — without touching the outward/Z values, which
   // stay whatever they were (0 for a fresh point).
-  function evenSpaceVesselTopPoints(count) {
-    const n = Math.max(3, Math.min(VE_TOP_POINTS_MAX, Math.round(count || 5)));
-    for (let i = 1; i <= n; i++) $('ve_topPtU' + i).value = ((i - 1) / n).toFixed(3);
+  function evenSpaceVeCurvePoints(kind, count) {
+    const n = Math.max(3, Math.min(VE_PT_MAX, Math.round(count || 5)));
+    const pre = vePtPrefix(kind);
+    for (let i = 1; i <= n; i++) $(pre + 'U' + i).value = ((i - 1) / n).toFixed(3);
   }
 
-  // Fill every visible custom top-curve point's outward/Z values with a
-  // fresh random number inside the configured min/max domain for each axis.
-  function randomizeVesselTopPoints() {
-    const count = Math.max(3, Math.min(VE_TOP_POINTS_MAX, Math.round(num('ve_topPtCount'))));
-    const rMin = num('ve_topPtRandRMin');
-    const rMax = num('ve_topPtRandRMax');
-    const zMin = num('ve_topPtRandZMin');
-    const zMax = num('ve_topPtRandZMax');
-    const between = (a, b) => a + Math.random() * (b - a);
+  // Randomize just the point COUNT, within its own configured domain — a
+  // fresh count re-spaces every point's position evenly (same as changing
+  // the count by hand) but leaves outward/Z values alone.
+  function randomizeVeCurveCount(kind) {
+    const pre = vePtPrefix(kind);
+    const lo = Math.max(3, Math.min(VE_PT_MAX, Math.round(num(pre + 'RandCountMin'))));
+    const hi = Math.max(3, Math.min(VE_PT_MAX, Math.round(num(pre + 'RandCountMax'))));
+    const a = Math.min(lo, hi);
+    const b = Math.max(lo, hi);
+    const n = a + Math.floor(Math.random() * (b - a + 1));
+    $(pre + 'Count').value = n;
+    evenSpaceVeCurvePoints(kind, n);
+    showVeCurvePointCount(kind, n);
+  }
+
+  // Randomize every visible point's OUTWARD value within its own domain.
+  function randomizeVeCurveR(kind) {
+    const pre = vePtPrefix(kind);
+    const count = vePtCount(kind);
+    const a = Math.min(num(pre + 'RandRMin'), num(pre + 'RandRMax'));
+    const b = Math.max(num(pre + 'RandRMin'), num(pre + 'RandRMax'));
     for (let i = 1; i <= count; i++) {
-      $('ve_topPtR' + i).value = Math.round(between(Math.min(rMin, rMax), Math.max(rMin, rMax)));
-      $('ve_topPtZ' + i).value = Math.round(between(Math.min(zMin, zMax), Math.max(zMin, zMax)));
+      $(pre + 'R' + i).value = Math.round(a + Math.random() * (b - a));
+    }
+  }
+
+  // Randomize every visible point's Z value within its own domain — top
+  // curve only, since the bottom never has a Z field at all.
+  function randomizeVeCurveZ(kind) {
+    const pre = vePtPrefix(kind);
+    const count = vePtCount(kind);
+    const a = Math.min(num(pre + 'RandZMin'), num(pre + 'RandZMax'));
+    const b = Math.max(num(pre + 'RandZMin'), num(pre + 'RandZMax'));
+    for (let i = 1; i <= count; i++) {
+      $(pre + 'Z' + i).value = Math.round(a + Math.random() * (b - a));
     }
   }
 
@@ -1401,6 +1498,11 @@
           ' bottom'
         : 'no bottom (open tube)') +
       ' · ' + (ve.topStyle === 'spiral' ? 'open spiral top' : 'flat ramp-down top') +
+      (ve.bottomShape === 'sameAsTop'
+        ? ' · bottom traces the top curve, flattened'
+        : ve.bottomShape === 'points'
+        ? ' · bottom is a custom ' + (ve.bottomPointsCount || 5) + '-point curve'
+        : '') +
       (ve.topShape === 'roundedStar'
         ? ' · top curve blends into a ' + (ve.topStarPoints || 5) + '-point rounded star' +
           (ve.topStarZDiffPct > 0
@@ -1514,6 +1616,8 @@
     }
 
     drawVesselProfile(cfg);
+    drawVesselCurve('top', cfg);
+    drawVesselCurve('bot', cfg);
   }
 
   // Side silhouette: radius scale (× base max radius) vs height, mirrored, with
@@ -1590,6 +1694,227 @@
         ctx.fill();
       });
     });
+  }
+
+  // 2D top-down preview of one custom curve (top or bottom): the shape it
+  // blends FROM (faint dashed base cross-section), the resulting
+  // Catmull-Rom curve (solid blue), and one marker per control point with a
+  // thin connector back to its own anchor on the base curve (so "outward"
+  // reads as a displacement, not a floating dot). The selected point is
+  // drawn bigger/red; for the top curve, non-selected points shade from
+  // blue toward warm the more they're lifted in Z, so which points pull up
+  // reads at a glance without opening each one's own fields. Tap/drag is
+  // wired separately (wireVesselCurveCanvas/dragAdjust) against the hit-list
+  // stored here in veCurveState[kind].
+  function drawVesselCurve(kind, cfg) {
+    const canvas = $(kind === 'top' ? 've_topCurveCanvas' : 've_botCurveCanvas');
+    const ctx = canvas.getContext('2d');
+    const W = canvas.width;
+    const H = canvas.height;
+    ctx.clearRect(0, 0, W, H);
+    veCurveState[kind] = null;
+    if (cfg.project !== 'vessel') return;
+    const ve = cfg.vessel;
+    const active = kind === 'top' ? ve.topShape === 'points' : ve.bottomShape === 'points';
+    if (!active) return;
+
+    let base = null;
+    try {
+      base = window.Geo.rotateToSeam(
+        window.Geo.adaptiveShape(cfg.shape, cfg.shapeParams, isPos(cfg.tolerance) ? cfg.tolerance : 0.05),
+        cfg.seamSide
+      );
+    } catch (e) {
+      base = null;
+    }
+    if (!base || !base.length || !Number.isFinite(base[0].x)) return;
+
+    const pts = readVesselCurvePoints(kind); // field order, index i -> point (i+1)
+    if (pts.length < 3) return;
+
+    const hasZ = vePtHasZ(kind);
+    const tol = isPos(cfg.tolerance) ? cfg.tolerance : 0.05;
+    const sampler = window.Geo.makeSampler(base);
+    const anchors = pts.map((p) => {
+      const u = Math.max(0, Math.min(1, p.u));
+      const s = sampler.at(u);
+      const nx = s.tan.y;
+      const ny = -s.tan.x;
+      const mag = Math.hypot(nx, ny) || 1;
+      return { base: s.pos, nx: nx / mag, ny: ny / mag };
+    });
+
+    let curve = null;
+    try {
+      const sorted = pts
+        .map((p) => ({
+          u: Math.max(0, Math.min(1, p.u)),
+          radialMM: (Math.max(-100, Math.min(100, p.radialPct)) / 100) * 25,
+          zMM: hasZ ? (Math.max(-100, Math.min(100, p.zPct)) / 100) * 25 : 0,
+        }))
+        .sort((a, b) => a.u - b.u);
+      curve = window.Geo.customTopCurve(base, sorted, 1, tol);
+    } catch (e) {
+      curve = null;
+    }
+
+    const sf = W / 600;
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    const growBounds = (l) =>
+      l.forEach((p) => {
+        if (p.x < minX) minX = p.x;
+        if (p.x > maxX) maxX = p.x;
+        if (p.y < minY) minY = p.y;
+        if (p.y > maxY) maxY = p.y;
+      });
+    growBounds(base);
+    if (curve) growBounds(curve);
+    // Include the full ±100% drag rail so the canvas never has to rescale
+    // mid-drag as a point is pulled toward either extreme.
+    anchors.forEach((a) => {
+      growBounds([
+        { x: a.base.x + a.nx * -25, y: a.base.y + a.ny * -25 },
+        { x: a.base.x + a.nx * 25, y: a.base.y + a.ny * 25 },
+      ]);
+    });
+
+    const pad = 30 * sf;
+    const scale = Math.min((W - 2 * pad) / (maxX - minX || 1), (H - 2 * pad) / (maxY - minY || 1));
+    const ox = (minX + maxX) / 2;
+    const oy = (minY + maxY) / 2;
+    const tx = (p) => W / 2 + (p.x - ox) * scale;
+    const ty = (p) => H / 2 - (p.y - oy) * scale;
+
+    ctx.beginPath();
+    base.forEach((p, i) => (i === 0 ? ctx.moveTo(tx(p), ty(p)) : ctx.lineTo(tx(p), ty(p))));
+    ctx.closePath();
+    ctx.setLineDash([5 * sf, 4 * sf]);
+    ctx.strokeStyle = '#5a6273';
+    ctx.lineWidth = 1.2 * sf;
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    if (curve) {
+      ctx.beginPath();
+      curve.forEach((p, i) => (i === 0 ? ctx.moveTo(tx(p), ty(p)) : ctx.lineTo(tx(p), ty(p))));
+      ctx.closePath();
+      ctx.strokeStyle = '#4f9dff';
+      ctx.lineWidth = 2.2 * sf;
+      ctx.stroke();
+    }
+
+    const sel = vePtSelected(kind);
+    const hit = [];
+    anchors.forEach((a, i) => {
+      const idx = i + 1;
+      const p = pts[i];
+      const mm = (Math.max(-100, Math.min(100, p.radialPct)) / 100) * 25;
+      const wx = a.base.x + a.nx * mm;
+      const wy = a.base.y + a.ny * mm;
+      const cx = tx({ x: wx, y: wy });
+      const cy = ty({ x: wx, y: wy });
+      const bx = tx(a.base);
+      const by = ty(a.base);
+
+      ctx.beginPath();
+      ctx.moveTo(bx, by);
+      ctx.lineTo(cx, cy);
+      ctx.strokeStyle = 'rgba(154,163,178,0.5)';
+      ctx.lineWidth = 1 * sf;
+      ctx.stroke();
+
+      const isSel = idx === sel;
+      let color = isSel ? '#ff5252' : '#4f9dff';
+      if (!isSel && hasZ) {
+        const t = (Math.max(-100, Math.min(100, p.zPct)) + 100) / 200;
+        color =
+          'rgb(' + Math.round(79 + t * (255 - 79)) + ',' + Math.round(157 - t * 17) + ',' + Math.round(255 - t * 175) + ')';
+      }
+      ctx.beginPath();
+      ctx.arc(cx, cy, (isSel ? 8 : 6) * sf, 0, 2 * Math.PI);
+      ctx.fillStyle = color;
+      ctx.fill();
+      ctx.lineWidth = (isSel ? 2.5 : 1.5) * sf;
+      ctx.strokeStyle = '#fff';
+      ctx.stroke();
+
+      hit.push({ idx, cx, cy, baseX: a.base.x, baseY: a.base.y, nx: a.nx, ny: a.ny });
+    });
+
+    veCurveState[kind] = { W, H, scale, ox, oy, hit };
+  }
+
+  // Pointer wiring for a curve canvas: tap a marker to select it (exposes
+  // just that point's own field group + hint text below), drag a marker to
+  // live-adjust its outward value. Selecting/dragging only ever touches
+  // updateShapeUI's cheap live-preview path (via the input/change events
+  // dragAdjust dispatches) — never a full regenerate, same as typing.
+  function wireVesselCurveCanvas(kind) {
+    const canvas = $(kind === 'top' ? 've_topCurveCanvas' : 've_botCurveCanvas');
+    let dragIdx = -1;
+
+    function canvasPt(e) {
+      const r = canvas.getBoundingClientRect();
+      const k = canvas.width / (r.width || 1);
+      return { x: (e.clientX - r.left) * k, y: (e.clientY - r.top) * k };
+    }
+    function hitTest(p) {
+      const st = veCurveState[kind];
+      if (!st) return -1;
+      let best = -1;
+      let bestD = 22 * (st.W / 600);
+      st.hit.forEach((h) => {
+        const d = Math.hypot(p.x - h.cx, p.y - h.cy);
+        if (d < bestD) {
+          bestD = d;
+          best = h.idx;
+        }
+      });
+      return best;
+    }
+
+    canvas.addEventListener('pointerdown', (e) => {
+      const p = canvasPt(e);
+      const idx = hitTest(p);
+      if (idx < 0) return;
+      dragIdx = idx;
+      canvas.setPointerCapture(e.pointerId);
+      selectVePoint(kind, idx);
+      dragAdjust(kind, idx, p);
+      e.preventDefault();
+    });
+    canvas.addEventListener('pointermove', (e) => {
+      if (dragIdx < 0) return;
+      dragAdjust(kind, dragIdx, canvasPt(e));
+      e.preventDefault();
+    });
+    const endDrag = () => {
+      dragIdx = -1;
+    };
+    canvas.addEventListener('pointerup', endDrag);
+    canvas.addEventListener('pointercancel', endDrag);
+  }
+
+  // Projects the pointer's world position onto point idx's own stored
+  // outward normal (the SAME normal customTopCurve itself displaces along)
+  // to get a new radial mm value, converts it to the field's -100..100%
+  // domain, and writes it into the corresponding input — dispatching
+  // input/change so the app's existing generic wiring picks it up exactly
+  // like typing would.
+  function dragAdjust(kind, idx, p) {
+    const st = veCurveState[kind];
+    if (!st) return;
+    const h = st.hit[idx - 1];
+    if (!h) return;
+    const wx = st.ox + (p.x - st.W / 2) / st.scale;
+    const wy = st.oy - (p.y - st.H / 2) / st.scale;
+    const mm = (wx - h.baseX) * h.nx + (wy - h.baseY) * h.ny;
+    const pct = Math.max(-100, Math.min(100, Math.round((mm / 25) * 100)));
+    const el = $(vePtPrefix(kind) + 'R' + idx);
+    if (!el) return;
+    el.value = pct;
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    el.dispatchEvent(new Event('change', { bubbles: true }));
   }
 
   // --- 3D toolpath viewer ---
@@ -1810,7 +2135,9 @@
       showVesselMidPoints(cfg.vessel.profileCount);
       showVesselBottomStyle(cfg.vessel.seamStyle);
       showVesselTopShape(cfg.vessel.topShape);
-      showVesselTopPoints(cfg.vessel.topPointsCount);
+      showVeCurvePointCount('top', cfg.vessel.topPointsCount);
+      showVesselBottomShape(cfg.vessel.bottomShape);
+      showVeCurvePointCount('bot', cfg.vessel.bottomPointsCount);
     } else if (cfg.project === 'bendstool') {
       syncFoamHint(cfg);
       syncFlowFeedHint(cfg);
@@ -2187,7 +2514,10 @@
   // Size canvas backing stores to the displayed size × devicePixelRatio so
   // lines are crisp on retina screens (drawing code scales strokes via W/600).
   function fitCanvases() {
-    ['preview', 'previewBS', 've_preview', 've_profile', 'sp_preview', 'ls_preview', 'preview3d'].forEach((id) => {
+    [
+      'preview', 'previewBS', 've_preview', 've_profile', 've_topCurveCanvas', 've_botCurveCanvas',
+      'sp_preview', 'ls_preview', 'preview3d',
+    ].forEach((id) => {
       const c = $(id);
       const dpr = Math.min(window.devicePixelRatio || 1, 2.5);
       const w = c.clientWidth || 600;
@@ -2246,7 +2576,9 @@
     showVesselMidPoints(num('ve_profileCount'));
     showVesselBottomStyle($('ve_seamStyle').value);
     showVesselTopShape($('ve_topShape').value);
-    showVesselTopPoints(num('ve_topPtCount'));
+    showVeCurvePointCount('top', num('ve_topPtCount'));
+    showVesselBottomShape($('ve_bottomShape').value);
+    showVeCurvePointCount('bot', num('ve_botPtCount'));
     showProject(activeProject());
   }
 
@@ -2481,12 +2813,27 @@
   });
   $('hangExportSvgBtn').addEventListener('click', exportHangerSvg);
 
-  $('ve_topPtCount').addEventListener('change', () => {
-    evenSpaceVesselTopPoints(num('ve_topPtCount'));
-    updateShapeUI();
+  ['top', 'bot'].forEach((kind) => {
+    const pre = vePtPrefix(kind);
+    $(pre + 'Count').addEventListener('change', () => {
+      evenSpaceVeCurvePoints(kind, num(pre + 'Count'));
+      showVeCurvePointCount(kind, num(pre + 'Count'));
+      updateShapeUI();
+    });
+    $(pre + 'PrevBtn').addEventListener('click', () => selectVePoint(kind, vePtSelected(kind) - 1));
+    $(pre + 'NextBtn').addEventListener('click', () => selectVePoint(kind, vePtSelected(kind) + 1));
+    $(pre + 'RandCountBtn').addEventListener('click', () => {
+      randomizeVeCurveCount(kind);
+      updateShapeUI();
+    });
+    $(pre + 'RandRBtn').addEventListener('click', () => {
+      randomizeVeCurveR(kind);
+      updateShapeUI();
+    });
+    wireVesselCurveCanvas(kind);
   });
-  $('ve_topPtRandomizeBtn').addEventListener('click', () => {
-    randomizeVesselTopPoints();
+  $('ve_topPtRandZBtn').addEventListener('click', () => {
+    randomizeVeCurveZ('top');
     updateShapeUI();
   });
 

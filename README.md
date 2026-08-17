@@ -244,11 +244,36 @@ keep **fully independent settings** per project:
   read directly off each point's own value (bilinear-interpolated around the loop,
   same lookup the star's radius-based weight uses) rather than derived from
   radius, ramps in linearly with height the same way, and is equally
-  extrusion-uncompensated. A **randomize points** button fills every point's
-  outward/Z values with a fresh random number inside a configurable min/max domain
-  per axis; changing the point count re-spaces every point's own position evenly
-  (without touching outward/Z) rather than trying to preserve a hand-tuned layout
-  at the old count. The wall's own Z pacing is separately overhang-aware: instead
+  extrusion-uncompensated. Three independent **randomize** buttons — point count,
+  outward movement, Z movement — each fill their own axis with a fresh random
+  number inside its own configurable min/max domain, so one randomize pass can vary
+  a single axis without disturbing the others; changing the point count (by hand or
+  via its own randomizer) re-spaces every point's own position evenly (without
+  touching outward/Z) rather than trying to preserve a hand-tuned layout at the old
+  count. The **bottom** cross-section can be customized the same way, independently
+  of the top: a **bottom shape** dropdown offers the plain chosen cross-section
+  (default), **same as top curve, flattened** (reuses the top curve's own points but
+  zeroes every Z — the bottom never has a Z axis to move along), or a fully
+  **separate custom points** curve with its own point count/position/outward inputs
+  (no Z field, same reason). Whichever shape the bottom ends up being feeds both the
+  flat bottom fill pattern and the wall's own base cross-section, and the wall then
+  cross-fades UP from that shape into whichever the top ends up being — so either
+  end, both, or neither can be customized in any combination, and "same as top,
+  flattened" needs the top curve actually set to custom points or it falls back to
+  the plain cross-section with a warning. Each curve gets its own **2D top-down
+  preview canvas** — the plain cross-section as a faint dashed reference, the
+  resulting curve solid, and one marker per point (the selected point drawn bigger
+  and red; for the top curve, unselected points shade from blue toward warm the more
+  they're lifted in Z, so which points pull up reads at a glance without opening
+  each one's own fields). Only the *selected* point's own fields are ever shown
+  below the canvas — **prev/next point** buttons step the selection, or tap/drag a
+  marker directly on the canvas: tapping selects it and exposes its fields; dragging
+  live-adjusts its outward value by projecting the drag onto that point's own local
+  outward normal (the same normal the curve math itself displaces along, so what's
+  dragged is exactly what changes). Z stays a plain number input — a flat top-down
+  view can't represent height unambiguously by dragging. The dragged marker and the
+  exposed number field always write to the same underlying input, so either one
+  reflects the other. The wall's own Z pacing is separately overhang-aware: instead
   of a flat layer height every revolution, each revolution's physical Z step is
   paced by the same lampshade-style `cos(angle)` squeeze the filleted bottom style
   uses, sampled once per revolution at the seam rather than per vertex (the radius
