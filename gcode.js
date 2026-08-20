@@ -1320,16 +1320,19 @@
     let vWallN = 1;
     let vFlatTop = true;
     let wallH = 0;
-    // Top curve shape: by default the wall keeps the bottom's own
-    // cross-section at every height, uniformly resized by the radius
-    // profile (today's behavior, untouched below). Choosing "rounded star"
-    // instead cross-fades the wall's cross-section from the bottom shape
-    // toward a smooth Catmull-Rom star outline as height increases —
-    // linearly over the whole wall height — alongside (not instead of) the
-    // radius profile's own scaling. vBotRes/vTopRes are both outlines
-    // resampled to the SAME point count, starting at the same seam-relative
-    // vertex, so index i on each names "the same fractional position around
-    // the perimeter" and can be blended point-for-point.
+    // Top and bottom cross-section shape, independently: by default the
+    // wall keeps the SAME cross-section (the plain base shape) at every
+    // height, uniformly resized by the radius profile (today's behavior,
+    // untouched below). Either end can instead be a smooth Catmull-Rom
+    // curve — the star, or fully custom per-point control — cross-fading
+    // between whatever the bottom and top ends up being, linearly over the
+    // whole wall height, alongside (not instead of) the radius profile's
+    // own scaling. vBotRes/vTopRes are both outlines resampled to the SAME
+    // point count, starting at the same seam-relative vertex, so index i on
+    // each names "the same fractional position around the perimeter" and
+    // can be blended point-for-point. vBottomOutline is the actual (still
+    // unscaled) shape the bottom fill/fillet trace — the base shape unless
+    // the bottom itself is customized.
     let vTopBlend = false;
     let vBotRes = null;
     let vTopRes = null;
@@ -1341,11 +1344,13 @@
     // vStarInnerWeight entirely (those stay exactly as they were for the
     // 'roundedStar' mode).
     let vTopPointsMode = false;
+    let vTopStarMode = false;
+    let vBottomCustom = false;
+    let vBottomOutline = base;
     if (isVessel) {
       const ve = cfg.vessel || {};
       vProfile = makeProfile(buildVesselProfileCps(ve));
       const s0 = vProfile(0);
-      vBase = base.map((p) => ({ x: p.x * s0, y: p.y * s0 }));
       vBottomStyle =
         ['alternating', 'spiral', 'filleted'].indexOf(ve.seamStyle) >= 0 ? ve.seamStyle : 'staircase';
       vAlt = vBottomStyle === 'alternating';
@@ -1354,33 +1359,63 @@
       vWallN = Math.max(1, Math.round((ve.height || lh) / lh));
       wallH = vWallN * lh;
 
-      if (ve.topShape === 'roundedStar' && ve.topStarOuter > 0 && ve.topStarInner > 0 && ve.topStarPoints >= 2) {
-        const NB = 480;
-        vBotRes = Geo.resampleClosed(base, NB);
-        const topOutline = Geo.rotateToSeam(
-          Geo.roundedStar(ve.topStarOuter, ve.topStarInner, ve.topStarPoints, cfg.tolerance),
-          cfg.seamSide || 'back'
-        );
-        vTopRes = Geo.resampleClosed(topOutline, NB);
-        vTopBlend = true;
-        vZDiffMax = (Math.max(0, Math.min(100, ve.topStarZDiffPct || 0)) / 100) * 25;
-      } else if (ve.topShape === 'points' && Array.isArray(ve.topPoints) && ve.topPoints.length >= 3) {
-        const NB = 480;
-        vBotRes = Geo.resampleClosed(base, NB);
-        const ptsSorted = ve.topPoints
+      const NB = 480;
+      // Sorted, clamped, mm-converted points ready for Geo.customTopCurve.
+      // includeZ=false zeroes every point's Z (the bottom is never lifted —
+      // "without the z difference", per instruction).
+      function sortedCurvePoints(points, includeZ) {
+        return points
           .map((p) => ({
             u: Math.max(0, Math.min(1, p.u)),
             radialMM: (Math.max(-100, Math.min(100, p.radialPct)) / 100) * 25,
-            zMM: (Math.max(-100, Math.min(100, p.zPct)) / 100) * 25,
+            zMM: includeZ ? (Math.max(-100, Math.min(100, p.zPct)) / 100) * 25 : 0,
           }))
           .sort((a, b) => a.u - b.u);
-        const topOutline = Geo.rotateToSeam(
-          Geo.customTopCurve(base, ptsSorted, dirSign, cfg.tolerance),
+      }
+
+      let topOutline = null;
+      if (ve.topShape === 'roundedStar' && ve.topStarOuter > 0 && ve.topStarInner > 0 && ve.topStarPoints >= 2) {
+        topOutline = Geo.rotateToSeam(
+          Geo.roundedStar(ve.topStarOuter, ve.topStarInner, ve.topStarPoints, cfg.tolerance),
           cfg.seamSide || 'back'
         );
-        vTopRes = Geo.resampleClosed(topOutline, NB);
-        vTopBlend = true;
+        vTopStarMode = true;
+        vZDiffMax = (Math.max(0, Math.min(100, ve.topStarZDiffPct || 0)) / 100) * 25;
+      } else if (ve.topShape === 'points' && Array.isArray(ve.topPoints) && ve.topPoints.length >= 3) {
+        topOutline = Geo.rotateToSeam(
+          Geo.customTopCurve(base, sortedCurvePoints(ve.topPoints, true), dirSign, cfg.tolerance),
+          cfg.seamSide || 'back'
+        );
         vTopPointsMode = true;
+      }
+
+      if (ve.bottomShape === 'sameAsTop' && ve.topShape === 'points' && vTopPointsMode) {
+        vBottomOutline = Geo.rotateToSeam(
+          Geo.customTopCurve(base, sortedCurvePoints(ve.topPoints, false), dirSign, cfg.tolerance),
+          cfg.seamSide || 'back'
+        );
+        vBottomCustom = true;
+      } else if (ve.bottomShape === 'points' && Array.isArray(ve.bottomPoints) && ve.bottomPoints.length >= 3) {
+        vBottomOutline = Geo.rotateToSeam(
+          Geo.customTopCurve(base, sortedCurvePoints(ve.bottomPoints, false), dirSign, cfg.tolerance),
+          cfg.seamSide || 'back'
+        );
+        vBottomCustom = true;
+      } else {
+        if (ve.bottomShape === 'sameAsTop') {
+          warnings.push(
+            'Bottom shape "same as top curve" needs the top curve set to Custom points — using the plain base shape instead.'
+          );
+        }
+        vBottomOutline = base;
+      }
+
+      vBase = vBottomOutline.map((p) => ({ x: p.x * s0, y: p.y * s0 }));
+
+      if (topOutline || vBottomCustom) {
+        vBotRes = Geo.resampleClosed(vBottomOutline, NB);
+        vTopRes = Geo.resampleClosed(topOutline || base, NB);
+        vTopBlend = true;
       }
     }
 
@@ -2767,12 +2802,21 @@
               ')') +
           ' + spiral wall to z=' + wallH.toFixed(2) + ' ---'
       );
-      if (vTopBlend && vTopPointsMode) {
+      if (vBottomCustom) {
+        lines.push(
+          '; bottom curve: ' +
+            (ve.bottomShape === 'sameAsTop'
+              ? 'same points as the top curve, flattened (no Z)'
+              : 'custom ' + ve.bottomPoints.length + '-point curve') +
+            ', shaping the wall base and the flat bottom fill alike'
+        );
+      }
+      if (vTopPointsMode) {
         lines.push(
           '; top curve: cross-fading into a custom ' + ve.topPoints.length +
             '-point curve linearly over the full wall height (radial + Z per point, uncompensated)'
         );
-      } else if (vTopBlend) {
+      } else if (vTopStarMode) {
         lines.push(
           '; top curve: cross-fading into a rounded star (outer=' + ve.topStarOuter +
             ' inner=' + ve.topStarInner + ' points=' + ve.topStarPoints + ') linearly over the full wall height' +
@@ -2802,14 +2846,14 @@
         const s0 = vProfile(0);
         let ctx0 = 0;
         let cty0 = 0;
-        base.forEach((p) => {
+        vBottomOutline.forEach((p) => {
           ctx0 += p.x;
           cty0 += p.y;
         });
-        ctx0 /= base.length;
-        cty0 /= base.length;
+        ctx0 /= vBottomOutline.length;
+        cty0 /= vBottomOutline.length;
         let Rchar0 = 0;
-        base.forEach((p) => {
+        vBottomOutline.forEach((p) => {
           Rchar0 = Math.max(Rchar0, Geo.dist(p, { x: ctx0, y: cty0 }));
         });
         const Rchar = Rchar0 * s0;
@@ -2831,7 +2875,7 @@
         // stretch of one long line straight into the fillet and the wall),
         // so it skips ringFill's usual near-center extrusion taper and
         // prints at full flow from the very first point.
-        const flatBase = base.map((p) => ({ x: p.x * flatScale, y: p.y * flatScale }));
+        const flatBase = vBottomOutline.map((p) => ({ x: p.x * flatScale, y: p.y * flatScale }));
         let flatPoly = null;
         if (flatScale > 1e-6) {
           const innerFlat = Geo.offsetClosed(flatBase, -cfg.lineWidth, dirSign);

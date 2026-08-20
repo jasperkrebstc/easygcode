@@ -539,6 +539,83 @@
           <div class="field"><label>Middle 3 height (0–1)</label><input type="number" id="ve_profMidH3" value="0.8" min="0" max="1" step="0.05" /></div>
           <div class="field"><label>Middle 3 scale (×)</label><input type="number" id="ve_profMid3" value="1.0" min="0.05" step="0.05" /></div>
         </div>
+        <h3 class="subhead">Bottom curve</h3>
+        <div class="grid">
+          <div class="field">
+            <label>Bottom shape</label>
+            <select id="ve_bottomShape">
+              <option value="base">Same as chosen cross-section (default)</option>
+              <option value="sameAsTop">Same as top curve, flattened (no Z)</option>
+              <option value="points">Custom points (separate curve)</option>
+            </select>
+          </div>
+        </div>
+        <div id="ve_botPtFields" hidden>
+          <canvas id="ve_botCurveCanvas" width="600" height="600"></canvas>
+          <div class="grid">
+            <div class="field"><label>Points (3–10)</label><input type="number" id="ve_botPtCount" value="5" min="3" max="10" step="1" /></div>
+          </div>
+          <p class="hint">Tap or drag a point on the curve above to select and adjust it —
+            outward moves it away from (or into) the chosen cross-section's own outline. No Z
+            here — the bottom stays flat. Shapes both the flat bottom fill and the wall's own
+            base (h=0), blending up into whatever the top ends up being.</p>
+          <p class="hint" id="ve_botPtSelHint">Point 1 of 5</p>
+          <div class="buttons">
+            <button type="button" id="ve_botPtPrevBtn">◀ Prev point</button>
+            <button type="button" id="ve_botPtNextBtn">Next point ▶</button>
+          </div>
+          <div class="ve-bot-point grid" data-pt="1">
+            <div class="field"><label>Point position (0–1)</label><input type="number" id="ve_botPtU1" value="0" min="0" max="1" step="0.01" /></div>
+            <div class="field"><label>Point outward (−100…100%)</label><input type="number" id="ve_botPtR1" value="0" min="-100" max="100" step="5" /></div>
+          </div>
+          <div class="ve-bot-point grid" data-pt="2" hidden>
+            <div class="field"><label>Point position (0–1)</label><input type="number" id="ve_botPtU2" value="0.2" min="0" max="1" step="0.01" /></div>
+            <div class="field"><label>Point outward (−100…100%)</label><input type="number" id="ve_botPtR2" value="0" min="-100" max="100" step="5" /></div>
+          </div>
+          <div class="ve-bot-point grid" data-pt="3" hidden>
+            <div class="field"><label>Point position (0–1)</label><input type="number" id="ve_botPtU3" value="0.4" min="0" max="1" step="0.01" /></div>
+            <div class="field"><label>Point outward (−100…100%)</label><input type="number" id="ve_botPtR3" value="0" min="-100" max="100" step="5" /></div>
+          </div>
+          <div class="ve-bot-point grid" data-pt="4" hidden>
+            <div class="field"><label>Point position (0–1)</label><input type="number" id="ve_botPtU4" value="0.6" min="0" max="1" step="0.01" /></div>
+            <div class="field"><label>Point outward (−100…100%)</label><input type="number" id="ve_botPtR4" value="0" min="-100" max="100" step="5" /></div>
+          </div>
+          <div class="ve-bot-point grid" data-pt="5" hidden>
+            <div class="field"><label>Point position (0–1)</label><input type="number" id="ve_botPtU5" value="0.8" min="0" max="1" step="0.01" /></div>
+            <div class="field"><label>Point outward (−100…100%)</label><input type="number" id="ve_botPtR5" value="0" min="-100" max="100" step="5" /></div>
+          </div>
+          <div class="ve-bot-point grid" data-pt="6" hidden>
+            <div class="field"><label>Point position (0–1)</label><input type="number" id="ve_botPtU6" value="0.833" min="0" max="1" step="0.01" /></div>
+            <div class="field"><label>Point outward (−100…100%)</label><input type="number" id="ve_botPtR6" value="0" min="-100" max="100" step="5" /></div>
+          </div>
+          <div class="ve-bot-point grid" data-pt="7" hidden>
+            <div class="field"><label>Point position (0–1)</label><input type="number" id="ve_botPtU7" value="0.857" min="0" max="1" step="0.01" /></div>
+            <div class="field"><label>Point outward (−100…100%)</label><input type="number" id="ve_botPtR7" value="0" min="-100" max="100" step="5" /></div>
+          </div>
+          <div class="ve-bot-point grid" data-pt="8" hidden>
+            <div class="field"><label>Point position (0–1)</label><input type="number" id="ve_botPtU8" value="0.875" min="0" max="1" step="0.01" /></div>
+            <div class="field"><label>Point outward (−100…100%)</label><input type="number" id="ve_botPtR8" value="0" min="-100" max="100" step="5" /></div>
+          </div>
+          <div class="ve-bot-point grid" data-pt="9" hidden>
+            <div class="field"><label>Point position (0–1)</label><input type="number" id="ve_botPtU9" value="0.889" min="0" max="1" step="0.01" /></div>
+            <div class="field"><label>Point outward (−100…100%)</label><input type="number" id="ve_botPtR9" value="0" min="-100" max="100" step="5" /></div>
+          </div>
+          <div class="ve-bot-point grid" data-pt="10" hidden>
+            <div class="field"><label>Point position (0–1)</label><input type="number" id="ve_botPtU10" value="0.9" min="0" max="1" step="0.01" /></div>
+            <div class="field"><label>Point outward (−100…100%)</label><input type="number" id="ve_botPtR10" value="0" min="-100" max="100" step="5" /></div>
+          </div>
+          <h3 class="subhead">Randomize bottom points</h3>
+          <div class="grid">
+            <div class="field"><label>Point count min</label><input type="number" id="ve_botPtRandCountMin" value="4" min="3" max="10" step="1" /></div>
+            <div class="field"><label>Point count max</label><input type="number" id="ve_botPtRandCountMax" value="7" min="3" max="10" step="1" /></div>
+          </div>
+          <div class="buttons"><button type="button" id="ve_botPtRandCountBtn">Randomize point count</button></div>
+          <div class="grid">
+            <div class="field"><label>Outward min (%)</label><input type="number" id="ve_botPtRandRMin" value="-30" min="-100" max="100" step="5" /></div>
+            <div class="field"><label>Outward max (%)</label><input type="number" id="ve_botPtRandRMax" value="30" min="-100" max="100" step="5" /></div>
+          </div>
+          <div class="buttons"><button type="button" id="ve_botPtRandRBtn">Randomize outward movement</button></div>
+        </div>
         <h3 class="subhead">Top curve</h3>
         <div class="grid">
           <div class="field">
@@ -557,72 +634,85 @@
           <div class="field"><label>Inner-point Z lift (0–100%, 100% = 25mm)</label><input type="number" id="ve_topStar_zDiffPct" value="0" min="0" max="100" step="5" /></div>
         </div>
         <div id="ve_topPointsFields" hidden>
+          <canvas id="ve_topCurveCanvas" width="600" height="600"></canvas>
           <div class="grid">
             <div class="field"><label>Points (3–10)</label><input type="number" id="ve_topPtCount" value="5" min="3" max="10" step="1" /></div>
           </div>
-          <p class="hint">Each point sits on the bottom shape's own outline (evenly spaced by
-            default, reset whenever the point count above changes) and moves outward along the
-            curve's own tangent-cross-Z normal, and up or down, by its own percentage — 100% is
-            25mm either way. The top curve blends in from the bottom shape linearly over the
-            whole wall height, same as the rounded star.</p>
+          <p class="hint">Tap or drag a point on the curve above to select and adjust it —
+            outward moves it away from (or into) the bottom shape's own outline, Z lifts it up
+            or down (100% = 25mm either way). The top curve blends in from the bottom shape
+            linearly over the whole wall height.</p>
+          <p class="hint" id="ve_topPtSelHint">Point 1 of 5</p>
+          <div class="buttons">
+            <button type="button" id="ve_topPtPrevBtn">◀ Prev point</button>
+            <button type="button" id="ve_topPtNextBtn">Next point ▶</button>
+          </div>
           <div class="ve-top-point grid" data-pt="1">
-            <div class="field"><label>Point 1 position (0–1)</label><input type="number" id="ve_topPtU1" value="0" min="0" max="1" step="0.01" /></div>
-            <div class="field"><label>Point 1 outward (−100…100%)</label><input type="number" id="ve_topPtR1" value="0" min="-100" max="100" step="5" /></div>
-            <div class="field"><label>Point 1 Z (−100…100%)</label><input type="number" id="ve_topPtZ1" value="0" min="-100" max="100" step="5" /></div>
+            <div class="field"><label>Point position (0–1)</label><input type="number" id="ve_topPtU1" value="0" min="0" max="1" step="0.01" /></div>
+            <div class="field"><label>Point outward (−100…100%)</label><input type="number" id="ve_topPtR1" value="0" min="-100" max="100" step="5" /></div>
+            <div class="field"><label>Point Z (−100…100%)</label><input type="number" id="ve_topPtZ1" value="0" min="-100" max="100" step="5" /></div>
           </div>
-          <div class="ve-top-point grid" data-pt="2">
-            <div class="field"><label>Point 2 position (0–1)</label><input type="number" id="ve_topPtU2" value="0.2" min="0" max="1" step="0.01" /></div>
-            <div class="field"><label>Point 2 outward (−100…100%)</label><input type="number" id="ve_topPtR2" value="0" min="-100" max="100" step="5" /></div>
-            <div class="field"><label>Point 2 Z (−100…100%)</label><input type="number" id="ve_topPtZ2" value="0" min="-100" max="100" step="5" /></div>
+          <div class="ve-top-point grid" data-pt="2" hidden>
+            <div class="field"><label>Point position (0–1)</label><input type="number" id="ve_topPtU2" value="0.2" min="0" max="1" step="0.01" /></div>
+            <div class="field"><label>Point outward (−100…100%)</label><input type="number" id="ve_topPtR2" value="0" min="-100" max="100" step="5" /></div>
+            <div class="field"><label>Point Z (−100…100%)</label><input type="number" id="ve_topPtZ2" value="0" min="-100" max="100" step="5" /></div>
           </div>
-          <div class="ve-top-point grid" data-pt="3">
-            <div class="field"><label>Point 3 position (0–1)</label><input type="number" id="ve_topPtU3" value="0.4" min="0" max="1" step="0.01" /></div>
-            <div class="field"><label>Point 3 outward (−100…100%)</label><input type="number" id="ve_topPtR3" value="0" min="-100" max="100" step="5" /></div>
-            <div class="field"><label>Point 3 Z (−100…100%)</label><input type="number" id="ve_topPtZ3" value="0" min="-100" max="100" step="5" /></div>
+          <div class="ve-top-point grid" data-pt="3" hidden>
+            <div class="field"><label>Point position (0–1)</label><input type="number" id="ve_topPtU3" value="0.4" min="0" max="1" step="0.01" /></div>
+            <div class="field"><label>Point outward (−100…100%)</label><input type="number" id="ve_topPtR3" value="0" min="-100" max="100" step="5" /></div>
+            <div class="field"><label>Point Z (−100…100%)</label><input type="number" id="ve_topPtZ3" value="0" min="-100" max="100" step="5" /></div>
           </div>
-          <div class="ve-top-point grid" data-pt="4">
-            <div class="field"><label>Point 4 position (0–1)</label><input type="number" id="ve_topPtU4" value="0.6" min="0" max="1" step="0.01" /></div>
-            <div class="field"><label>Point 4 outward (−100…100%)</label><input type="number" id="ve_topPtR4" value="0" min="-100" max="100" step="5" /></div>
-            <div class="field"><label>Point 4 Z (−100…100%)</label><input type="number" id="ve_topPtZ4" value="0" min="-100" max="100" step="5" /></div>
+          <div class="ve-top-point grid" data-pt="4" hidden>
+            <div class="field"><label>Point position (0–1)</label><input type="number" id="ve_topPtU4" value="0.6" min="0" max="1" step="0.01" /></div>
+            <div class="field"><label>Point outward (−100…100%)</label><input type="number" id="ve_topPtR4" value="0" min="-100" max="100" step="5" /></div>
+            <div class="field"><label>Point Z (−100…100%)</label><input type="number" id="ve_topPtZ4" value="0" min="-100" max="100" step="5" /></div>
           </div>
-          <div class="ve-top-point grid" data-pt="5">
-            <div class="field"><label>Point 5 position (0–1)</label><input type="number" id="ve_topPtU5" value="0.8" min="0" max="1" step="0.01" /></div>
-            <div class="field"><label>Point 5 outward (−100…100%)</label><input type="number" id="ve_topPtR5" value="0" min="-100" max="100" step="5" /></div>
-            <div class="field"><label>Point 5 Z (−100…100%)</label><input type="number" id="ve_topPtZ5" value="0" min="-100" max="100" step="5" /></div>
+          <div class="ve-top-point grid" data-pt="5" hidden>
+            <div class="field"><label>Point position (0–1)</label><input type="number" id="ve_topPtU5" value="0.8" min="0" max="1" step="0.01" /></div>
+            <div class="field"><label>Point outward (−100…100%)</label><input type="number" id="ve_topPtR5" value="0" min="-100" max="100" step="5" /></div>
+            <div class="field"><label>Point Z (−100…100%)</label><input type="number" id="ve_topPtZ5" value="0" min="-100" max="100" step="5" /></div>
           </div>
           <div class="ve-top-point grid" data-pt="6" hidden>
-            <div class="field"><label>Point 6 position (0–1)</label><input type="number" id="ve_topPtU6" value="0.833" min="0" max="1" step="0.01" /></div>
-            <div class="field"><label>Point 6 outward (−100…100%)</label><input type="number" id="ve_topPtR6" value="0" min="-100" max="100" step="5" /></div>
-            <div class="field"><label>Point 6 Z (−100…100%)</label><input type="number" id="ve_topPtZ6" value="0" min="-100" max="100" step="5" /></div>
+            <div class="field"><label>Point position (0–1)</label><input type="number" id="ve_topPtU6" value="0.833" min="0" max="1" step="0.01" /></div>
+            <div class="field"><label>Point outward (−100…100%)</label><input type="number" id="ve_topPtR6" value="0" min="-100" max="100" step="5" /></div>
+            <div class="field"><label>Point Z (−100…100%)</label><input type="number" id="ve_topPtZ6" value="0" min="-100" max="100" step="5" /></div>
           </div>
           <div class="ve-top-point grid" data-pt="7" hidden>
-            <div class="field"><label>Point 7 position (0–1)</label><input type="number" id="ve_topPtU7" value="0.857" min="0" max="1" step="0.01" /></div>
-            <div class="field"><label>Point 7 outward (−100…100%)</label><input type="number" id="ve_topPtR7" value="0" min="-100" max="100" step="5" /></div>
-            <div class="field"><label>Point 7 Z (−100…100%)</label><input type="number" id="ve_topPtZ7" value="0" min="-100" max="100" step="5" /></div>
+            <div class="field"><label>Point position (0–1)</label><input type="number" id="ve_topPtU7" value="0.857" min="0" max="1" step="0.01" /></div>
+            <div class="field"><label>Point outward (−100…100%)</label><input type="number" id="ve_topPtR7" value="0" min="-100" max="100" step="5" /></div>
+            <div class="field"><label>Point Z (−100…100%)</label><input type="number" id="ve_topPtZ7" value="0" min="-100" max="100" step="5" /></div>
           </div>
           <div class="ve-top-point grid" data-pt="8" hidden>
-            <div class="field"><label>Point 8 position (0–1)</label><input type="number" id="ve_topPtU8" value="0.875" min="0" max="1" step="0.01" /></div>
-            <div class="field"><label>Point 8 outward (−100…100%)</label><input type="number" id="ve_topPtR8" value="0" min="-100" max="100" step="5" /></div>
-            <div class="field"><label>Point 8 Z (−100…100%)</label><input type="number" id="ve_topPtZ8" value="0" min="-100" max="100" step="5" /></div>
+            <div class="field"><label>Point position (0–1)</label><input type="number" id="ve_topPtU8" value="0.875" min="0" max="1" step="0.01" /></div>
+            <div class="field"><label>Point outward (−100…100%)</label><input type="number" id="ve_topPtR8" value="0" min="-100" max="100" step="5" /></div>
+            <div class="field"><label>Point Z (−100…100%)</label><input type="number" id="ve_topPtZ8" value="0" min="-100" max="100" step="5" /></div>
           </div>
           <div class="ve-top-point grid" data-pt="9" hidden>
-            <div class="field"><label>Point 9 position (0–1)</label><input type="number" id="ve_topPtU9" value="0.889" min="0" max="1" step="0.01" /></div>
-            <div class="field"><label>Point 9 outward (−100…100%)</label><input type="number" id="ve_topPtR9" value="0" min="-100" max="100" step="5" /></div>
-            <div class="field"><label>Point 9 Z (−100…100%)</label><input type="number" id="ve_topPtZ9" value="0" min="-100" max="100" step="5" /></div>
+            <div class="field"><label>Point position (0–1)</label><input type="number" id="ve_topPtU9" value="0.889" min="0" max="1" step="0.01" /></div>
+            <div class="field"><label>Point outward (−100…100%)</label><input type="number" id="ve_topPtR9" value="0" min="-100" max="100" step="5" /></div>
+            <div class="field"><label>Point Z (−100…100%)</label><input type="number" id="ve_topPtZ9" value="0" min="-100" max="100" step="5" /></div>
           </div>
           <div class="ve-top-point grid" data-pt="10" hidden>
-            <div class="field"><label>Point 10 position (0–1)</label><input type="number" id="ve_topPtU10" value="0.9" min="0" max="1" step="0.01" /></div>
-            <div class="field"><label>Point 10 outward (−100…100%)</label><input type="number" id="ve_topPtR10" value="0" min="-100" max="100" step="5" /></div>
-            <div class="field"><label>Point 10 Z (−100…100%)</label><input type="number" id="ve_topPtZ10" value="0" min="-100" max="100" step="5" /></div>
+            <div class="field"><label>Point position (0–1)</label><input type="number" id="ve_topPtU10" value="0.9" min="0" max="1" step="0.01" /></div>
+            <div class="field"><label>Point outward (−100…100%)</label><input type="number" id="ve_topPtR10" value="0" min="-100" max="100" step="5" /></div>
+            <div class="field"><label>Point Z (−100…100%)</label><input type="number" id="ve_topPtZ10" value="0" min="-100" max="100" step="5" /></div>
           </div>
-          <h3 class="subhead">Randomize points</h3>
+          <h3 class="subhead">Randomize top points</h3>
+          <div class="grid">
+            <div class="field"><label>Point count min</label><input type="number" id="ve_topPtRandCountMin" value="4" min="3" max="10" step="1" /></div>
+            <div class="field"><label>Point count max</label><input type="number" id="ve_topPtRandCountMax" value="7" min="3" max="10" step="1" /></div>
+          </div>
+          <div class="buttons"><button type="button" id="ve_topPtRandCountBtn">Randomize point count</button></div>
           <div class="grid">
             <div class="field"><label>Outward min (%)</label><input type="number" id="ve_topPtRandRMin" value="-30" min="-100" max="100" step="5" /></div>
             <div class="field"><label>Outward max (%)</label><input type="number" id="ve_topPtRandRMax" value="30" min="-100" max="100" step="5" /></div>
+          </div>
+          <div class="buttons"><button type="button" id="ve_topPtRandRBtn">Randomize outward movement</button></div>
+          <div class="grid">
             <div class="field"><label>Z min (%)</label><input type="number" id="ve_topPtRandZMin" value="0" min="-100" max="100" step="5" /></div>
             <div class="field"><label>Z max (%)</label><input type="number" id="ve_topPtRandZMax" value="100" min="-100" max="100" step="5" /></div>
           </div>
-          <button type="button" id="ve_topPtRandomizeBtn">Randomize points</button>
+          <div class="buttons"><button type="button" id="ve_topPtRandZBtn">Randomize Z movement</button></div>
         </div>
         <p class="hint" id="ve_hint"></p>
         <canvas id="ve_profile" width="600" height="360"></canvas>

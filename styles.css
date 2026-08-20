@@ -180,7 +180,9 @@ canvas#ve_preview,
 canvas#ve_profile,
 canvas#sp_preview,
 canvas#ls_preview,
-canvas#preview3d {
+canvas#preview3d,
+canvas#ve_topCurveCanvas,
+canvas#ve_botCurveCanvas {
   width: 100%;
   height: auto;
   aspect-ratio: 1 / 1;
@@ -189,6 +191,12 @@ canvas#preview3d {
   border-radius: 12px;
   margin-top: 12px;
   display: block;
+}
+
+canvas#ve_topCurveCanvas,
+canvas#ve_botCurveCanvas {
+  touch-action: none; /* dragging a point shouldn't scroll the page */
+  cursor: pointer;
 }
 
 canvas#ve_profile {
