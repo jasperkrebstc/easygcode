@@ -3119,17 +3119,39 @@
         // one angle per revolution, sampled at the seam (u=0), not per
         // vertex: the radius profile's own taper affects the whole loop far
         // more than the top curve's per-vertex variation away from the seam,
-        // which is comparatively minor surface finish (see vSeamAngle).
-        let zCursor = vZOffset + wallStartL * lh;
+        // which is comparatively minor surface finish (see vSeamAngle). The
+        // natural step sizes are computed FIRST (a dry run, not emitted),
+        // then the WHOLE sequence is rescaled by one constant factor so it
+        // sums to EXACTLY wallH — the same leftover-turn fix the fillet's
+        // own climb already uses just above, generalized here. Without it,
+        // whatever's left over once the natural steps run out becomes one
+        // arbitrarily tiny final revolution; harmless under a flat cap
+        // (masked by the intentional flat ramp-down loop on top of it), but
+        // for an open-spiral top — no cap loop — that tiny leftover turn IS
+        // the very last thing printed, and reads as the wall going flat
+        // instead of continuing to climb like every other turn.
+        const zStart = vZOffset + wallStartL * lh;
+        const naturalDz = [];
+        {
+          let zc0 = zStart;
+          let guard0 = 0;
+          while (zc0 < wallH - 1e-6 && guard0++ < 100000) {
+            const guessDz = Math.max(0.05, Math.cos(vSeamAngle(zc0))) * lh;
+            const aMid = vSeamAngle(Math.min(wallH, zc0 + guessDz / 2));
+            const dz = Math.max(0.05, Math.cos(aMid)) * lh;
+            naturalDz.push(dz);
+            zc0 += dz;
+          }
+        }
+        let naturalSum = 0;
+        for (let k = 0; k < naturalDz.length; k++) naturalSum += naturalDz[k];
+        const wallScale = naturalSum > 1e-9 ? (wallH - zStart) / naturalSum : 1;
+
+        let zCursor = zStart;
         let L = wallStartL;
-        let guard = 0;
-        while (zCursor < wallH - 1e-6 && guard++ < 100000) {
-          const guessDz = Math.max(0.05, Math.cos(vSeamAngle(zCursor))) * lh;
-          const aMid = vSeamAngle(Math.min(wallH, zCursor + guessDz / 2));
-          let dz = Math.max(0.05, Math.cos(aMid)) * lh;
-          if (zCursor + dz > wallH) dz = wallH - zCursor;
+        for (let k = 0; k < naturalDz.length; k++) {
           const z0 = zCursor;
-          const z1 = zCursor + dz;
+          const z1 = k === naturalDz.length - 1 ? wallH : zCursor + naturalDz[k] * wallScale;
           if (L === 1 && includeStartEnd && fanPWM > 0 && vBottomLayers < 2 && !vFilleted) {
             lines.push('M106 S' + fanPWM + ' ; part cooling fan on after ramp loop');
           }

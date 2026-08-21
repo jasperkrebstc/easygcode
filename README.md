@@ -209,7 +209,15 @@ keep **fully independent settings** per project:
   and ramps the extrusion back down to zero, closing the top cleanly; **open spiral**
   adds nothing — the wall simply completes its last revolution at full flow and
   stops, leaving an even full-width bead all the way to the end (with the spiral's
-  one-layer helical step at the seam). A **top curve** dropdown separately controls
+  one-layer helical step at the seam). Every revolution's own Z-step is chosen
+  greedily from the local overhang angle, which rarely divides the total wall
+  height evenly — the whole sequence of steps is rescaled by one constant factor
+  so it always lands exactly on the target height, the same fix already used for
+  the filleted style's own climb (see below), so the *last* revolution is a fair
+  proportional share like every other one, not an arbitrarily tiny leftover turn
+  (harmless under a flat cap, since that adds its own intentionally-flat loop on
+  top of it either way, but genuinely visible as a flat-looking last turn under
+  open spiral, which has no such loop to mask it). A **top curve** dropdown separately controls
   the wall's *cross-section*, as opposed to its scale: **same as bottom** (default)
   keeps the bottom shape's own outline at every height, just resized by the radius
   profile above; **rounded star** instead cross-fades the outline from the bottom
