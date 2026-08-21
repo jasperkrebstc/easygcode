@@ -605,11 +605,9 @@
             <div class="field"><label>Point outward (−100…100%)</label><input type="number" id="ve_botPtR10" value="0" min="-100" max="100" step="5" /></div>
           </div>
           <h3 class="subhead">Randomize bottom points</h3>
-          <div class="grid">
-            <div class="field"><label>Point count min</label><input type="number" id="ve_botPtRandCountMin" value="4" min="3" max="10" step="1" /></div>
-            <div class="field"><label>Point count max</label><input type="number" id="ve_botPtRandCountMax" value="7" min="3" max="10" step="1" /></div>
-          </div>
-          <div class="buttons"><button type="button" id="ve_botPtRandCountBtn">Randomize point count</button></div>
+          <p class="hint">Shuffling never lets a point cross past its neighbor on either
+            side — the curve's overall point order always stays the same.</p>
+          <div class="buttons"><button type="button" id="ve_botPtShuffleBtn">Shuffle point positions</button></div>
           <div class="grid">
             <div class="field"><label>Outward min (%)</label><input type="number" id="ve_botPtRandRMin" value="-30" min="-100" max="100" step="5" /></div>
             <div class="field"><label>Outward max (%)</label><input type="number" id="ve_botPtRandRMax" value="30" min="-100" max="100" step="5" /></div>
@@ -698,11 +696,9 @@
             <div class="field"><label>Point Z (−100…100%)</label><input type="number" id="ve_topPtZ10" value="0" min="-100" max="100" step="5" /></div>
           </div>
           <h3 class="subhead">Randomize top points</h3>
-          <div class="grid">
-            <div class="field"><label>Point count min</label><input type="number" id="ve_topPtRandCountMin" value="4" min="3" max="10" step="1" /></div>
-            <div class="field"><label>Point count max</label><input type="number" id="ve_topPtRandCountMax" value="7" min="3" max="10" step="1" /></div>
-          </div>
-          <div class="buttons"><button type="button" id="ve_topPtRandCountBtn">Randomize point count</button></div>
+          <p class="hint">Shuffling never lets a point cross past its neighbor on either
+            side — the curve's overall point order always stays the same.</p>
+          <div class="buttons"><button type="button" id="ve_topPtShuffleBtn">Shuffle point positions</button></div>
           <div class="grid">
             <div class="field"><label>Outward min (%)</label><input type="number" id="ve_topPtRandRMin" value="-30" min="-100" max="100" step="5" /></div>
             <div class="field"><label>Outward max (%)</label><input type="number" id="ve_topPtRandRMax" value="30" min="-100" max="100" step="5" /></div>
