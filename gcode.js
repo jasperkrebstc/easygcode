@@ -1410,6 +1410,31 @@
         vBottomOutline = base;
       }
 
+      if (vBottomCustom) {
+        // customTopCurve's dense-Catmull-Rom-then-RDP-simplify output mixes
+        // long, sparse chords on gentle/straight stretches with tightly
+        // packed points on sharp curves. Geo.offsetClosed's per-vertex
+        // averaged-normal offset only closely approximates a true
+        // parallel curve where consecutive edges are nearly collinear —
+        // true for the plain circle/star everything else here offsets,
+        // since those stay densely and evenly sampled, but NOT true at a
+        // sparse vertex's own sharper turning angle, where the offset
+        // undershoots the target line width. That unevenness is exactly
+        // what shows up as inconsistent bottom-fill ring spacing/bead
+        // width on a custom bottom curve. Densify to a fine, EQUAL
+        // arc-length spacing before any offsetting touches it — a pure
+        // resample of the same curve, not a shape change — so every
+        // vertex gets the same gentle, near-collinear step a smooth base
+        // shape's own vertices already have. Only the custom-bottom path
+        // is touched; the plain base shape (by far the common case) never
+        // takes this extra resample.
+        const denseN = Math.max(
+          NB,
+          Math.ceil(Geo.makeSampler(vBottomOutline).perimeter / Math.max(0.02, cfg.lineWidth / 8))
+        );
+        vBottomOutline = Geo.resampleClosed(vBottomOutline, denseN);
+      }
+
       vBase = vBottomOutline.map((p) => ({ x: p.x * s0, y: p.y * s0 }));
 
       if (topOutline || vBottomCustom) {
@@ -2879,7 +2904,9 @@
         let flatPoly = null;
         if (flatScale > 1e-6) {
           const innerFlat = Geo.offsetClosed(flatBase, -cfg.lineWidth, dirSign);
-          const fillFlat = Geo.ringFill(innerFlat, cfg.lineWidth, tolV, 'spiral', cfg.seamSide || 'back', flatBase, true);
+          const fillFlat = Geo.ringFill(
+            innerFlat, cfg.lineWidth, tolV, 'spiral', cfg.seamSide || 'back', flatBase, true, vBottomCustom
+          );
           flatPoly = fillFlat.loops[0] || null;
         }
         if (!flatPoly) {
@@ -2973,7 +3000,8 @@
         const innerBase = Geo.offsetClosed(vBase, -cfg.lineWidth, dirSign);
         const vSpiralB = vBottomStyle === 'spiral';
         const fill = Geo.ringFill(
-          innerBase, cfg.lineWidth, tolV, vBottomStyle, cfg.seamSide || 'back', vSpiralB ? vBase : null
+          innerBase, cfg.lineWidth, tolV, vBottomStyle, cfg.seamSide || 'back', vSpiralB ? vBase : null,
+          false, vBottomCustom
         );
         if (!fill.loops.length) {
           warnings.push('Bottom is too small to fill at this line width — the vessel has no closed bottom.');

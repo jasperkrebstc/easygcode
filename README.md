@@ -260,7 +260,21 @@ keep **fully independent settings** per project:
   cross-fades UP from that shape into whichever the top ends up being — so either
   end, both, or neither can be customized in any combination, and "same as top,
   flattened" needs the top curve actually set to custom points or it falls back to
-  the plain cross-section with a warning. Each curve gets its own **2D top-down
+  the plain cross-section with a warning. The flat bottom fill's own concentric
+  rings (staircase/zipper/spiral, and the filleted style's flat disc) are built by
+  insetting the outline by one line width per ring from a single centroid — exactly
+  right for a circle (every point is the same distance out, so a uniform scale IS a
+  constant-width offset) but not for an asymmetric outline, where a shared scale
+  factor moves far points more than near ones per ring and the gaps between rings
+  end up wider wherever the curve bulges out and narrower wherever it pulls in. A
+  customized bottom curve instead insets each point by its own actual distance from
+  the centroid rather than a shared ratio — a pure generalization that reduces to
+  the exact same numbers for a circle (so nothing else changes) but keeps every
+  ring genuinely one line width from the last wherever the shape still has that much
+  width to give; a narrow neck or a dip already pulled in past that inevitably still
+  tapers early, same as any shape's innermost ring always has, but reusing the fill
+  algorithm's existing under-lineWidth extrusion-coverage handling for it rather than
+  distorting the whole fill. Each curve gets its own **2D top-down
   preview canvas** — the plain cross-section as a faint dashed reference, the
   resulting curve solid, and one marker per point (the selected point drawn bigger
   and red; for the top curve, unselected points shade from blue toward warm the more

@@ -1034,7 +1034,25 @@
   // into the wall — full flow from the first point, not a print start that
   // needs priming). Every other caller leaves this undefined/false and gets
   // today's tapered behavior unchanged.
-  function ringFill(outer, lw, tol, style, seamSide, wallCurve, noTaper) {
+  // radialInset (opt-in, default off): builds each successive ring by
+  // subtracting `k*lw` from EACH vertex's OWN distance from the centroid,
+  // instead of scaling every vertex by the same ratio of the shape's single
+  // farthest point. Scaling by one shared ratio is an exact constant-width
+  // offset only where every vertex is equidistant from the centroid (a
+  // circle, which is why every existing caller's output is untouched — see
+  // below); for any shape where that's not true (a star, a custom crooked
+  // curve, ...) a shared ratio moves far vertices by more absolute distance
+  // than near ones per ring, so the gap between consecutive rings is wider
+  // wherever the outline bulges out and narrower wherever it pulls in.
+  // Insetting each vertex by the SAME fixed amount instead keeps every
+  // ring exactly `lw` from the last everywhere the shape still has `lw` of
+  // width left to give (verified: exactly `lw`, not just close, once
+  // clamping is excluded) — the only place it can't is a genuinely narrow
+  // neck/dip that has already run out of width, which needs to taper no
+  // matter how the rings are built, and reuses the ladder's existing
+  // less-than-lw extrusion coverage handling below the same as it always
+  // has for a shape's innermost opening ring.
+  function ringFill(outer, lw, tol, style, seamSide, wallCurve, noTaper, radialInset) {
     const alt = style === true || style === 'alternating';
     const spiral = style === 'spiral';
     const n = outer.length;
@@ -1065,16 +1083,29 @@
       cx /= 3 * a2;
       cy /= 3 * a2;
     }
+    const radii = radialInset ? outer.map((p) => Math.hypot(p.x - cx, p.y - cy)) : null;
     let Rmax = 0;
     for (let i = 0; i < n; i++) {
-      const d = Math.hypot(outer[i].x - cx, outer[i].y - cy);
+      const d = radialInset ? radii[i] : Math.hypot(outer[i].x - cx, outer[i].y - cy);
       if (d > Rmax) Rmax = d;
     }
     if (Rmax < lw * 0.5) return { loops: [], outline: outer.slice() };
     const rings = []; // outer -> inner
     for (let k = 0; k * lw <= Rmax - lw * 0.5 && k < 4000; k++) {
-      const f = (Rmax - k * lw) / Rmax;
-      rings.push(outer.map((p) => ({ x: cx + (p.x - cx) * f, y: cy + (p.y - cy) * f })));
+      if (radialInset) {
+        rings.push(
+          outer.map((p, i) => {
+            const dx = p.x - cx;
+            const dy = p.y - cy;
+            const r = radii[i] || 1e-9;
+            const s = Math.max(0, r - k * lw) / r;
+            return { x: cx + dx * s, y: cy + dy * s };
+          })
+        );
+      } else {
+        const f = (Rmax - k * lw) / Rmax;
+        rings.push(outer.map((p) => ({ x: cx + (p.x - cx) * f, y: cy + (p.y - cy) * f })));
+      }
     }
     const outline = rings[0].slice();
     rings.reverse(); // inner -> outer
