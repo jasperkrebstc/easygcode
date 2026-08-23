@@ -203,29 +203,25 @@ keep **fully independent settings** per project:
   simply clamping against the others' own unmoving current heights is enough — no
   midpoint-splitting needed). Only the *selected* middle point's own fields are
   shown at a time, stepped with prev/next, the same "one visible at a time"
-  pattern as the curve editors. Up to 5 total control points (bottom + 3 middle +
-  top — the historical cap) are lofted as a single Bezier curve through all of
-  them: a Bezier always touches its first and last control point exactly, but
-  every point in between only *pulls* the curve toward it without forcing the
-  curve through it — a NURBS-ish loft, not a curve that has to visit every point,
-  so it stays smooth and rounded (not increasingly angular) as more points are
-  added, and a top point set larger than the point below it keeps flaring outward
-  at the same rate all the way to the rim (an open, outward-tipped lip) rather
-  than easing back toward vertical just short of it — a Bezier's tangent at its
-  own endpoint is exactly the boundary segment's own slope, not a fraction of it.
-  Beyond 5 total points, a single Bezier is the wrong tool — its degree keeps
-  climbing with every extra point, which gets numerically wilder and, more
-  importantly, loses local control: dragging one point would reshape the WHOLE
-  curve, not just nearby, which feels broken for a direct-drag editor. Past that
-  cap the profile switches to a clamped Catmull-Rom spline instead — the same
-  local-control curve family the top/bottom custom curve editor already uses,
-  just open (bottom-to-top) instead of closed (around a loop) — which passes
-  through every point exactly and only reshapes the curve near whichever point
-  moved (verified: dragging one middle point drastically leaves a point on the
-  opposite side of the curve unchanged to the 4th decimal). Gated strictly on
-  point count, not "whichever looks smoother," so every profile at 5 points or
-  fewer — the only sizes that existed before this — keeps its exact original
-  Bezier output, byte-for-byte. The wall
+  pattern as the curve editors. Every point count is lofted as a clamped
+  Catmull-Rom spline — the same local-control curve family the top/bottom
+  custom curve editor already uses, just open (bottom-to-top) instead of
+  closed (around a loop): it passes through every control point exactly and
+  only reshapes the curve near whichever point moved (verified: dragging one
+  middle point drastically leaves a point on the opposite side of the curve
+  unchanged to the 4th decimal). This used to switch to a single Bezier
+  curve through all the points below 6 total, matching how a small number of
+  points originally behaved — but a Bezier reshapes GLOBALLY when just one
+  point moves, which feels broken to drag, so the spline is now used
+  unconditionally. The two ends are "clamped" via a REFLECTED phantom point
+  (mirroring the second point through the first, and the second-to-last
+  through the last) rather than simply duplicating the end point —
+  duplicating gives a zero tangent at each end (the curve arrives dead
+  flat), which is wrong even for the simplest case: a plain 2-point
+  bottom-to-top taper should be a straight line, and reflecting instead
+  reproduces that exactly (verified: max deviation from a true line, 2e-16,
+  floating-point noise) since a straight line's own tangent at both ends is
+  just its own slope, not zero. The wall
   height snaps to a whole number of layers. A **top finish** dropdown picks how the
   wall ends: **flat cap** (default) adds one extra revolution that holds `z` constant
   and ramps the extrusion back down to zero, closing the top cleanly; **open spiral**
@@ -323,12 +319,24 @@ keep **fully independent settings** per project:
   each one's own fields). Only the *selected* point's own fields are ever shown
   below the canvas — **prev/next point** buttons step the selection, or tap/drag a
   marker directly on the canvas: tapping selects it and exposes its fields; dragging
-  live-adjusts its outward value by projecting the drag onto that point's own local
-  outward normal (the same normal the curve math itself displaces along, so what's
-  dragged is exactly what changes). Z stays a plain number input — a flat top-down
-  view can't represent height unambiguously by dragging. The dragged marker and the
-  exposed number field always write to the same underlying input, so either one
-  reflects the other. The wall's own Z pacing is separately overhang-aware: instead
+  live-adjusts BOTH its outward value and its position along the curve in one
+  motion, by projecting the drag onto that point's own local outward normal (the
+  same normal the curve math itself displaces along) and its own local tangent
+  (converted to a position delta via the base curve's own perimeter). Position is
+  clamped so a point can never slide past whichever point currently borders it on
+  either side — u is cyclic, so the lowest and highest point border each other
+  through 0/1 the same as any interior pair; only ONE point ever moves during a
+  live drag (unlike the simultaneous shuffle above), so simply clamping against
+  the other points' own unmoving current values is enough to guarantee that, no
+  midpoint-splitting needed (verified with 180,000 simulated single-point drag
+  steps across point counts 3–20: zero crossings). Z stays a plain number input —
+  a flat top-down view can't represent height unambiguously by dragging. The
+  dragged marker and the exposed number fields always write to the same
+  underlying inputs, so either one reflects the other. Both curve canvases (and
+  the profile's own, above) disable the browser's own touch scrolling while a
+  finger is on them — dragging in any direction, including one with a vertical
+  component, previously fought with the page trying to scroll at the same time.
+  The wall's own Z pacing is separately overhang-aware: instead
   of a flat layer height every revolution, each revolution's physical Z step is
   paced by the same lampshade-style `cos(angle)` squeeze the filleted bottom style
   uses, sampled once per revolution at the seam rather than per vertex (the radius

@@ -28,30 +28,31 @@
     return (ww - h) * h + Math.PI * (h / 2) * (h / 2);
   }
 
-  // Smooth radius profile through control points {h, s} (sorted, h in [0,1]).
-  // Up to 5 points (the historical cap: bottom + up to 3 middle + top): a
-  // single Bezier curve of degree (n-1) through ALL the control points — a
-  // Bezier always touches its first and last control point exactly, while
-  // every point in between only "pulls" the curve toward it without forcing
-  // the curve to pass through it, a NURBS-ish loft rather than an
-  // interpolating spline through every point (so more points make the
-  // curve gentler and rounder, not more angular). Scale clamped to a small
-  // positive minimum so the wall can never collapse or invert.
+  // Smooth radius profile through control points {h, s} (sorted, h in [0,1]),
+  // as a clamped Catmull-Rom spline: it passes through every point exactly
+  // and only reshapes the curve near whichever point moved — the same
+  // local-control curve family the top/bottom custom curve editor already
+  // uses, just open (bottom-to-top) instead of closed (around a loop), so
+  // there's no wraparound at the two ends. Local control matters here
+  // because the profile is a direct-drag editor: a single global curve
+  // (a Bezier through every point, this function's own previous approach)
+  // reshapes GLOBALLY when just one point moves, which feels broken to drag,
+  // and gets numerically wilder the more points it has to fit. Scale
+  // clamped to a small positive minimum so the wall can never collapse or
+  // invert.
   //
-  // Beyond 5 points, a single Bezier is the wrong tool: its degree keeps
-  // climbing with every extra point, which both behaves numerically worse
-  // (high-degree Bezier curves get progressively more prone to wide, wavy
-  // overshoot) and loses local control — dragging ONE point reshapes the
-  // WHOLE curve, not just nearby, which feels broken for a direct-drag
-  // editor. A clamped Catmull-Rom spline is used instead there: it passes
-  // through every point exactly (like the Bezier does at its endpoints, but
-  // now everywhere) and only reshapes the curve near whichever point moved
-  // — the same local-control curve family the top/bottom custom curve
-  // editor already uses, just open (bottom-to-top) instead of closed
-  // (around a loop), so there's no wraparound at the two ends. Gated
-  // strictly on point count (not "whichever is smoother") so every
-  // already-shipped profile — capped at 5 points before this — keeps
-  // exactly its original Bezier output.
+  // The two ends are "clamped" via a REFLECTED phantom point (mirroring the
+  // second point through the first, and the second-to-last through the
+  // last) rather than simply duplicating the end point — duplicating gives
+  // a zero tangent at each end (the curve arrives dead flat), which is
+  // wrong even for the simplest 2-point case: a plain bottom-to-top taper
+  // should be a straight line, and a straight line's own tangent at both
+  // ends is just its own slope, not zero. Reflecting instead makes the
+  // tangent at each end match the adjacent segment's own direction, which
+  // — verified directly — reproduces an exact straight line for 2 points
+  // (matching this function's own single-Bezier output for that case,
+  // since a 2-point Bezier is already just a line) and stays exact through
+  // every real control point for any larger count.
   function makeProfile(cps) {
     if (cps.length === 1) {
       const s0 = Math.max(0.05, cps[0].s);
@@ -81,42 +82,27 @@
     const n = cps.length;
     const NT = 256;
     const table = [];
-    if (n <= 5) {
-      const deg = n - 1;
-      const binom = [1];
-      for (let k = 1; k <= deg; k++) binom.push((binom[k - 1] * (deg - k + 1)) / k);
-      const bezierAt = (t) => {
-        let h = 0;
-        let s = 0;
-        for (let k = 0; k < n; k++) {
-          const b = binom[k] * Math.pow(t, k) * Math.pow(1 - t, deg - k);
-          h += b * cps[k].h;
-          s += b * cps[k].s;
-        }
-        return { h: h, s: s };
-      };
-      for (let k = 0; k <= NT; k++) table.push(bezierAt(k / NT));
-    } else {
-      const catmullAt = (t) => {
-        const seg = Math.max(0, Math.min(n - 2, Math.floor(t)));
-        const tt = t - seg;
-        const p0 = cps[Math.max(0, seg - 1)];
-        const p1 = cps[seg];
-        const p2 = cps[seg + 1];
-        const p3 = cps[Math.min(n - 1, seg + 2)];
-        const t2 = tt * tt;
-        const t3 = t2 * tt;
-        const blend = (a, b, c, d) =>
-          0.5 * (2 * b + (-a + c) * tt + (2 * a - 5 * b + 4 * c - d) * t2 + (-a + 3 * b - 3 * c + d) * t3);
-        return { h: blend(p0.h, p1.h, p2.h, p3.h), s: blend(p0.s, p1.s, p2.s, p3.s) };
-      };
-      for (let k = 0; k <= NT; k++) table.push(catmullAt((k / NT) * (n - 1)));
-    }
-    // Both curve families' own h(t) isn't simply t once there are 3+
-    // points, so a query height has to be inverted back to the curve's own
-    // parameter — a dense lookup table plus a binary search does that
-    // cheaply (built once here, not per query) without needing h(t) to be
-    // perfectly monotonic for an odd point placement.
+    const phantomBefore = { h: 2 * cps[0].h - cps[1].h, s: 2 * cps[0].s - cps[1].s };
+    const phantomAfter = { h: 2 * cps[n - 1].h - cps[n - 2].h, s: 2 * cps[n - 1].s - cps[n - 2].s };
+    const catmullAt = (t) => {
+      const seg = Math.max(0, Math.min(n - 2, Math.floor(t)));
+      const tt = t - seg;
+      const p0 = seg - 1 < 0 ? phantomBefore : cps[seg - 1];
+      const p1 = cps[seg];
+      const p2 = cps[seg + 1];
+      const p3 = seg + 2 > n - 1 ? phantomAfter : cps[seg + 2];
+      const t2 = tt * tt;
+      const t3 = t2 * tt;
+      const blend = (a, b, c, d) =>
+        0.5 * (2 * b + (-a + c) * tt + (2 * a - 5 * b + 4 * c - d) * t2 + (-a + 3 * b - 3 * c + d) * t3);
+      return { h: blend(p0.h, p1.h, p2.h, p3.h), s: blend(p0.s, p1.s, p2.s, p3.s) };
+    };
+    for (let k = 0; k <= NT; k++) table.push(catmullAt((k / NT) * (n - 1)));
+    // The curve's own h(t) isn't simply t once there are 3+ points, so a
+    // query height has to be inverted back to the curve's own parameter —
+    // a dense lookup table plus a binary search does that cheaply (built
+    // once here, not per query) without needing h(t) to be perfectly
+    // monotonic for an odd point placement.
     return function (hf) {
       const x = Math.max(0, Math.min(1, hf));
       let lo = 0;
