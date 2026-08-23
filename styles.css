@@ -201,6 +201,8 @@ canvas#ve_botCurveCanvas {
 
 canvas#ve_profile {
   aspect-ratio: 5 / 3;
+  touch-action: none; /* dragging a point shouldn't scroll the page */
+  cursor: pointer;
 }
 
 /* Side elevation of the shade profile — wider than tall for most shades. */

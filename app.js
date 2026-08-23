@@ -1933,7 +1933,7 @@
       const nx = s.tan.y;
       const ny = -s.tan.x;
       const mag = Math.hypot(nx, ny) || 1;
-      return { base: s.pos, nx: nx / mag, ny: ny / mag };
+      return { u: u, base: s.pos, nx: nx / mag, ny: ny / mag, tx: s.tan.x / mag, ty: s.tan.y / mag };
     });
 
     let curve = null;
@@ -2030,10 +2030,10 @@
       ctx.strokeStyle = '#fff';
       ctx.stroke();
 
-      hit.push({ idx, cx, cy, baseX: a.base.x, baseY: a.base.y, nx: a.nx, ny: a.ny });
+      hit.push({ idx, cx, cy, u: a.u, baseX: a.base.x, baseY: a.base.y, nx: a.nx, ny: a.ny, tx: a.tx, ty: a.ty });
     });
 
-    veCurveState[kind] = { W, H, scale, ox, oy, hit };
+    veCurveState[kind] = { W, H, scale, ox, oy, perimeter: sampler.perimeter, hit };
   }
 
   // Pointer wiring for a curve canvas: tap a marker to select it (exposes
@@ -2087,12 +2087,43 @@
     canvas.addEventListener('pointercancel', endDrag);
   }
 
+  // A point's position (u) can never cross past its own CURRENT immediate
+  // neighbor on either side — u is cyclic (a closed loop), so the lowest
+  // and highest point border each other through 0/1 the same as any
+  // interior pair. Only ONE point ever moves during a live drag (unlike
+  // the simultaneous shuffle above), so simply clamping against the other
+  // points' own unmoving current values is enough to guarantee that — the
+  // same reasoning the profile editor's own height clamp already uses.
+  function clampCurveU(kind, idx, desiredU) {
+    const pre = vePtPrefix(kind);
+    const count = vePtCount(kind);
+    const d = ((desiredU % 1) + 1) % 1;
+    const others = [];
+    for (let i = 1; i <= count; i++) if (i !== idx) others.push(((num(pre + 'U' + i) % 1) + 1) % 1);
+    if (!others.length) return d;
+    let lo = -Infinity;
+    let hi = Infinity;
+    others.forEach((v) => {
+      if (v <= d && v > lo) lo = v;
+      if (v >= d && v < hi) hi = v;
+    });
+    if (lo === -Infinity) lo = Math.max.apply(null, others) - 1;
+    if (hi === Infinity) hi = Math.min.apply(null, others) + 1;
+    const eps = Math.min(0.01, (hi - lo) * 0.1);
+    const clamped = Math.max(lo + eps, Math.min(hi - eps, d));
+    return ((clamped % 1) + 1) % 1;
+  }
+
   // Projects the pointer's world position onto point idx's own stored
   // outward normal (the SAME normal customTopCurve itself displaces along)
-  // to get a new radial mm value, converts it to the field's -100..100%
-  // domain, and writes it into the corresponding input — dispatching
-  // input/change so the app's existing generic wiring picks it up exactly
-  // like typing would.
+  // to get a new radial mm value, AND onto its stored tangent to get a new
+  // position along the curve (u) — dragging in any direction combines
+  // "move away from/into the curve" with "slide along it", the same way
+  // the profile editor's middle points move both sideways and up/down in
+  // one drag. Position is clamped so a point can never cross a neighbor
+  // (clampCurveU); outward is only clamped to the field's own -100..100%
+  // range. Both write into their inputs — dispatching input/change so the
+  // app's existing generic wiring picks it up exactly like typing would.
   function dragAdjust(kind, idx, p) {
     const st = veCurveState[kind];
     if (!st) return;
@@ -2100,13 +2131,27 @@
     if (!h) return;
     const wx = st.ox + (p.x - st.W / 2) / st.scale;
     const wy = st.oy - (p.y - st.H / 2) / st.scale;
-    const mm = (wx - h.baseX) * h.nx + (wy - h.baseY) * h.ny;
-    const pct = Math.max(-100, Math.min(100, Math.round((mm / 25) * 100)));
-    const el = $(vePtPrefix(kind) + 'R' + idx);
-    if (!el) return;
-    el.value = pct;
-    el.dispatchEvent(new Event('input', { bubbles: true }));
-    el.dispatchEvent(new Event('change', { bubbles: true }));
+    const dx = wx - h.baseX;
+    const dy = wy - h.baseY;
+    const radialMM = dx * h.nx + dy * h.ny;
+    const pct = Math.max(-100, Math.min(100, Math.round((radialMM / 25) * 100)));
+    const rEl = $(vePtPrefix(kind) + 'R' + idx);
+    if (rEl) {
+      rEl.value = pct;
+      rEl.dispatchEvent(new Event('input', { bubbles: true }));
+      rEl.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+    if (st.perimeter > 1e-6) {
+      const tangentMM = dx * h.tx + dy * h.ty;
+      const desiredU = h.u + tangentMM / st.perimeter;
+      const newU = clampCurveU(kind, idx, desiredU);
+      const uEl = $(vePtPrefix(kind) + 'U' + idx);
+      if (uEl) {
+        uEl.value = newU.toFixed(3);
+        uEl.dispatchEvent(new Event('input', { bubbles: true }));
+        uEl.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+    }
   }
 
   // --- 3D toolpath viewer ---
