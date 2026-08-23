@@ -189,21 +189,43 @@ keep **fully independent settings** per project:
   revolution, while with the true-spiral or filleted bottom it continues from the
   handoff with no travel and no ramp — for the filleted style this handoff sits
   partway through a layer height rather than on a layer boundary, so the wall's
-  revolution count adjusts to still land exactly on the configured wall height. A **radius
-  profile** — bottom / top scale control points plus a configurable **2–5 profile
-  points** total (0–3 extra middle points, each its own height 0–1 and scale), shown
-  as a live side-silhouette preview — tapers the wall with height for cones, bellied
-  vases, and flared trays (all `1` = a straight prism; 2 points = a plain straight
-  bottom-to-top taper). Lofted as a single Bezier curve through all the points rather
-  than an interpolating spline: a Bezier always touches its first and last control
-  point exactly, but every point in between only *pulls* the curve toward it without
-  forcing the curve through it — a NURBS-ish loft, not a curve that has to visit
-  every point, so it stays smooth and rounded (not increasingly angular) as more
-  points are added, and a top point set larger than the point below it keeps
-  flaring outward at the same rate all the way to the rim (an open, outward-tipped
-  lip) rather than easing back toward vertical just short of it — a Bezier's tangent
-  at its own endpoint is exactly the boundary segment's own slope, not a fraction
-  of it. The wall
+  revolution count adjusts to still land exactly on the configured wall height. A
+  **radius profile** — bottom/top scale plus **0–8 middle points**, each its own
+  height (0–1) and scale — tapers the wall with height for cones, bellied vases,
+  and flared trays (bottom = top = every middle scale all `1` is a straight prism;
+  0 middle points is a plain straight bottom-to-top taper). Its own **interactive
+  side-silhouette canvas** mirrors the top/bottom curve editors: tap or drag a point
+  directly on the curve to select and adjust it — bottom and top only ever move
+  sideways (scale, their height is fixed at 0/1 by definition), middle points move
+  both sideways and up/down, live, in one drag, clamped to never cross past
+  whichever point currently borders it above or below (unlike the top/bottom
+  curve's simultaneous shuffle, only one point ever moves during a live drag, so
+  simply clamping against the others' own unmoving current heights is enough — no
+  midpoint-splitting needed). Only the *selected* middle point's own fields are
+  shown at a time, stepped with prev/next, the same "one visible at a time"
+  pattern as the curve editors. Up to 5 total control points (bottom + 3 middle +
+  top — the historical cap) are lofted as a single Bezier curve through all of
+  them: a Bezier always touches its first and last control point exactly, but
+  every point in between only *pulls* the curve toward it without forcing the
+  curve through it — a NURBS-ish loft, not a curve that has to visit every point,
+  so it stays smooth and rounded (not increasingly angular) as more points are
+  added, and a top point set larger than the point below it keeps flaring outward
+  at the same rate all the way to the rim (an open, outward-tipped lip) rather
+  than easing back toward vertical just short of it — a Bezier's tangent at its
+  own endpoint is exactly the boundary segment's own slope, not a fraction of it.
+  Beyond 5 total points, a single Bezier is the wrong tool — its degree keeps
+  climbing with every extra point, which gets numerically wilder and, more
+  importantly, loses local control: dragging one point would reshape the WHOLE
+  curve, not just nearby, which feels broken for a direct-drag editor. Past that
+  cap the profile switches to a clamped Catmull-Rom spline instead — the same
+  local-control curve family the top/bottom custom curve editor already uses,
+  just open (bottom-to-top) instead of closed (around a loop) — which passes
+  through every point exactly and only reshapes the curve near whichever point
+  moved (verified: dragging one middle point drastically leaves a point on the
+  opposite side of the curve unchanged to the 4th decimal). Gated strictly on
+  point count, not "whichever looks smoother," so every profile at 5 points or
+  fewer — the only sizes that existed before this — keeps its exact original
+  Bezier output, byte-for-byte. The wall
   height snaps to a whole number of layers. A **top finish** dropdown picks how the
   wall ends: **flat cap** (default) adds one extra revolution that holds `z` constant
   and ramps the extrusion back down to zero, closing the top cleanly; **open spiral**
@@ -237,7 +259,7 @@ keep **fully independent settings** per project:
   shows up at the very top layer; deliberately left extrusion-uncompensated (the
   layer is simply allowed to stretch taller at the lifted points) since it only
   touches a handful of vertices per revolution and is meant as surface finish, not a
-  structural overhang. **Custom points** is a third, fully manual top curve: 3–10
+  structural overhang. **Custom points** is a third, fully manual top curve: 3–20
   points, each one placed on the *bottom shape's own outline* — whatever shape that
   is, not necessarily a circle — at a configurable position around it (0–1, evenly
   spaced by default, freely editable so the points can bunch up or spread out

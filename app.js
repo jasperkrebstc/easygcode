@@ -19,7 +19,7 @@
     return v === 'bendstool' || v === 'vessel' || v === 'spoon' || v === 'lamp' ? v : 'cordhanger';
   }
 
-  const VE_PT_MAX = 10;
+  const VE_PT_MAX = 20;
   // Both the top and bottom custom-curve editors share the exact same field
   // layout/behavior (point count, up to VE_PT_MAX pre-built field groups
   // with only the SELECTED one ever shown, prev/next, drag-to-adjust on a
@@ -39,6 +39,24 @@
   // lets the pointer handlers hit-test and drag without recomputing the
   // base-shape geometry on every move.
   let veCurveState = { top: null, bot: null };
+
+  // Radius profile's own middle points (bottom/top are always-visible,
+  // separate fields, not part of this selector — see showSelectedProfMid):
+  // same "only the selected one visible, prev/next" pattern as the top/
+  // bottom curves, but with its own state since it's a single list, not a
+  // 'top'/'bot' pair.
+  const PROF_MID_MAX = 8;
+  let veProfMidSelected = 1;
+  let veProfCurveState = null;
+  function profMidCount() {
+    return Math.max(0, Math.min(PROF_MID_MAX, Math.round(num('ve_profMidCount')) || 0));
+  }
+  function readProfileMidPoints() {
+    const count = profMidCount();
+    const pts = [];
+    for (let i = 1; i <= PROF_MID_MAX; i++) pts.push({ h: num('ve_profMidH' + i), s: num('ve_profMid' + i) });
+    return pts.slice(0, count);
+  }
 
   // Read one curve's points (up to VE_PT_MAX pre-built field groups),
   // sliced to the configured count — mirrors how the radius profile's own
@@ -199,12 +217,8 @@
           topStyle: $('ve_topStyle').value === 'spiral' ? 'spiral' : 'flat',
           bottomFillet: Math.max(0, num('ve_bottomFillet')),
           bottom: num('ve_profBottom'),
-          profileCount: Math.max(2, Math.min(5, Math.round(num('ve_profileCount')))),
-          midPoints: [
-            { h: num('ve_profMidH1'), s: num('ve_profMid1') },
-            { h: num('ve_profMidH2'), s: num('ve_profMid2') },
-            { h: num('ve_profMidH3'), s: num('ve_profMid3') },
-          ].slice(0, Math.max(0, Math.min(5, Math.round(num('ve_profileCount'))) - 2)),
+          midCount: profMidCount(),
+          midPoints: readProfileMidPoints(),
           top: num('ve_profTop'),
           topShape:
             ['roundedStar', 'points'].indexOf($('ve_topShape').value) >= 0 ? $('ve_topShape').value : 'same',
@@ -472,8 +486,8 @@
         return 'Bottom layers must be 0 or more.';
       const pr = cfg.vessel;
       if (!isPos(pr.bottom) || !isPos(pr.top)) return 'Profile scales must be greater than 0.';
-      if (!(pr.profileCount >= 2 && pr.profileCount <= 5))
-        return 'Profile points must be between 2 and 5.';
+      if (!(pr.midCount >= 0 && pr.midCount <= PROF_MID_MAX))
+        return 'Middle points must be between 0 and ' + PROF_MID_MAX + '.';
       for (const m of pr.midPoints) {
         if (!Number.isFinite(m.h) || m.h < 0 || m.h > 1) return 'Middle height must be between 0 and 1.';
         if (!isPos(m.s)) return 'Middle scale must be greater than 0.';
@@ -860,13 +874,35 @@
     });
   }
 
-  // Show exactly (profileCount - 2) of the vessel's 3 pre-built middle-point
-  // field pairs — 2 points means none at all (a plain bottom-to-top loft).
-  function showVesselMidPoints(count) {
-    const n = Math.max(0, Math.min(3, Math.round(count || 3) - 2));
-    document.querySelectorAll('.ve-mid-point').forEach((el) => {
-      el.hidden = Number(el.getAttribute('data-mid')) > n;
+  // Only the SELECTED middle point's own field group is ever shown (same
+  // "one visible at a time" pattern as the top/bottom curve editors) — 0
+  // middle points means a plain bottom-to-top loft, so the whole field
+  // block hides rather than showing an empty selector.
+  function showProfMidCount(count) {
+    const n = Math.max(0, Math.min(PROF_MID_MAX, Math.round(count || 0)));
+    $('ve_profMidFields').hidden = n === 0;
+    if (veProfMidSelected > n) veProfMidSelected = Math.max(1, n);
+    showSelectedProfMid();
+  }
+
+  function showSelectedProfMid() {
+    const count = profMidCount();
+    if (count === 0) return;
+    const sel = Math.max(1, Math.min(count, veProfMidSelected));
+    veProfMidSelected = sel;
+    document.querySelectorAll('.ve-prof-mid').forEach((el) => {
+      el.hidden = Number(el.getAttribute('data-mid')) !== sel;
     });
+    const hint = $('ve_profMidSelHint');
+    if (hint) hint.textContent = 'Middle point ' + sel + ' of ' + count;
+  }
+
+  function selectProfMid(n) {
+    const count = profMidCount();
+    if (count === 0) return;
+    veProfMidSelected = Math.max(1, Math.min(count, n));
+    showSelectedProfMid();
+    updateShapeUI();
   }
 
   // The filleted bottom style always uses exactly one flat layer before it
@@ -1640,14 +1676,25 @@
     drawVesselCurve('bot', cfg);
   }
 
-  // Side silhouette: radius scale (× base max radius) vs height, mirrored, with
-  // the control points marked. Shows exactly the lofted profile the wall uses.
+  // Side silhouette: radius scale (× base max radius) vs height, mirrored,
+  // with the control points marked — bottom/top (green) and every middle
+  // point (the SELECTED one bigger/red, others plain). Shows exactly the
+  // lofted profile the wall uses. Markers are built from the raw FIELD
+  // values (ve_profBottom/ve_profTop/ve_profMidH+ve_profMid{n}), not the
+  // sorted/filtered curve-building list, so a marker's position always
+  // matches its own field even for a not-yet-valid middle point (e.g. two
+  // points momentarily at the same height mid-drag). Each point is drawn
+  // mirrored (± radius); both sides hit-test to the same field, so grabbing
+  // either one drags the same value. Tap/drag wiring lives in
+  // wireVesselProfileCanvas/profileDragAdjust against the hit-list stored
+  // here in veProfCurveState.
   function drawVesselProfile(cfg) {
     const canvas = $('ve_profile');
     const ctx = canvas.getContext('2d');
     const W = canvas.width;
     const H = canvas.height;
     ctx.clearRect(0, 0, W, H);
+    veProfCurveState = null;
     const sf = W / 600;
     const ve = cfg.vessel;
     if (!isPos(ve.height)) return;
@@ -1669,7 +1716,7 @@
       const hf = i / N;
       pts.push({ r: baseR * prof(hf), z: hf * H0 });
     }
-    const maxR = Math.max.apply(null, pts.map((p) => p.r)) * 1.06 || 1;
+    const maxR = Math.max.apply(null, pts.map((p) => p.r).concat([baseR * ve.bottom, baseR * ve.top])) * 1.06 || 1;
     const pad = 24 * sf;
     const sx = (W / 2 - pad) / maxR;
     const sz = (H - 2 * pad) / (H0 || 1);
@@ -1704,16 +1751,141 @@
     ctx.lineTo(X(pts[0].r), Y(0));
     ctx.stroke();
 
-    ctx.fillStyle = '#ff5252';
-    cps.forEach((cp) => {
-      const r = baseR * cp.s;
-      const z = cp.h * H0;
+    const count = profMidCount();
+    const sel = veProfMidSelected;
+    const hit = [];
+    const drawMarker = (r, z, color, radius) => {
       [r, -r].forEach((rr) => {
+        const cx2 = X(rr);
+        const cy2 = Y(z);
         ctx.beginPath();
-        ctx.arc(X(rr), Y(z), 4.5 * sf, 0, 2 * Math.PI);
+        ctx.arc(cx2, cy2, radius * sf, 0, 2 * Math.PI);
+        ctx.fillStyle = color;
         ctx.fill();
+        ctx.lineWidth = 1.5 * sf;
+        ctx.strokeStyle = '#fff';
+        ctx.stroke();
       });
+    };
+
+    drawMarker(baseR * ve.bottom, 0, '#2bd9a0', 5);
+    hit.push({ idx: 0, type: 'bottom', cx: X(baseR * ve.bottom), cy: Y(0) });
+    hit.push({ idx: 0, type: 'bottom', cx: X(-baseR * ve.bottom), cy: Y(0) });
+    drawMarker(baseR * ve.top, H0, '#2bd9a0', 5);
+    hit.push({ idx: 0, type: 'top', cx: X(baseR * ve.top), cy: Y(H0) });
+    hit.push({ idx: 0, type: 'top', cx: X(-baseR * ve.top), cy: Y(H0) });
+
+    for (let i = 1; i <= count; i++) {
+      const h = Math.max(0, Math.min(1, num('ve_profMidH' + i)));
+      const s = num('ve_profMid' + i);
+      const isSel = i === sel;
+      drawMarker(baseR * s, h * H0, isSel ? '#ff5252' : '#4f9dff', isSel ? 7 : 5);
+      hit.push({ idx: i, type: 'mid', cx: X(baseR * s), cy: Y(h * H0) });
+      hit.push({ idx: i, type: 'mid', cx: X(-baseR * s), cy: Y(h * H0) });
+    }
+
+    veProfCurveState = { W: W, H: H, sx: sx, sz: sz, cxp: cxp, bottomY: bottomY, baseR: baseR, hit: hit };
+  }
+
+  // Pointer wiring for the profile canvas — tap a middle point to select it
+  // (exposing its own height/scale fields below), drag any marker (bottom,
+  // top, or middle) to live-adjust it. Bottom/top only ever move sideways
+  // (scale) — their height is fixed at 0/1 by definition, not a choice.
+  function wireVesselProfileCanvas() {
+    const canvas = $('ve_profile');
+    let dragging = null;
+
+    function canvasPt(e) {
+      const r = canvas.getBoundingClientRect();
+      const k = canvas.width / (r.width || 1);
+      return { x: (e.clientX - r.left) * k, y: (e.clientY - r.top) * k };
+    }
+    function hitTest(p) {
+      const st = veProfCurveState;
+      if (!st) return null;
+      let best = null;
+      let bestD = 22 * (st.W / 600);
+      st.hit.forEach((h) => {
+        const d = Math.hypot(p.x - h.cx, p.y - h.cy);
+        if (d < bestD) {
+          bestD = d;
+          best = h;
+        }
+      });
+      return best;
+    }
+
+    canvas.addEventListener('pointerdown', (e) => {
+      const p = canvasPt(e);
+      const found = hitTest(p);
+      if (!found) return;
+      dragging = found;
+      canvas.setPointerCapture(e.pointerId);
+      if (found.type === 'mid') selectProfMid(found.idx);
+      profileDragAdjust(found, p);
+      e.preventDefault();
     });
+    canvas.addEventListener('pointermove', (e) => {
+      if (!dragging) return;
+      profileDragAdjust(dragging, canvasPt(e));
+      e.preventDefault();
+    });
+    const endDrag = () => {
+      dragging = null;
+    };
+    canvas.addEventListener('pointerup', endDrag);
+    canvas.addEventListener('pointercancel', endDrag);
+  }
+
+  // A middle point's height can never cross past its own CURRENT immediate
+  // neighbor (by height) on either side — bottom (0) and top (1) always
+  // count as neighbors too. Unlike the top/bottom curve's simultaneous
+  // shuffle, only ONE point ever moves during a live drag, so simply
+  // clamping against the other points' own (unmoving) current values is
+  // enough to guarantee no crossing here — no midpoint-splitting needed.
+  function clampMidHeight(idx, desiredH) {
+    const count = profMidCount();
+    let lo = 0;
+    let hi = 1;
+    for (let i = 1; i <= count; i++) {
+      if (i === idx) continue;
+      const h = num('ve_profMidH' + i);
+      if (h <= desiredH && h > lo) lo = h;
+      if (h >= desiredH && h < hi) hi = h;
+    }
+    const eps = Math.min(0.02, (hi - lo) * 0.1);
+    return Math.max(lo + eps, Math.min(hi - eps, desiredH));
+  }
+
+  function profileDragAdjust(hitEntry, p) {
+    const st = veProfCurveState;
+    if (!st) return;
+    const r = Math.abs(p.x - st.cxp) / st.sx;
+    const scale = Math.max(0.05, r / st.baseR);
+    if (hitEntry.type === 'bottom') {
+      const el = $('ve_profBottom');
+      el.value = scale.toFixed(3);
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+    } else if (hitEntry.type === 'top') {
+      const el = $('ve_profTop');
+      el.value = scale.toFixed(3);
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+    } else {
+      const z = (st.bottomY - p.y) / st.sz;
+      const H0 = num('ve_height');
+      const desiredH = H0 > 0 ? z / H0 : 0;
+      const h = clampMidHeight(hitEntry.idx, Math.max(0, Math.min(1, desiredH)));
+      const hEl = $('ve_profMidH' + hitEntry.idx);
+      const sEl = $('ve_profMid' + hitEntry.idx);
+      hEl.value = h.toFixed(3);
+      sEl.value = scale.toFixed(3);
+      hEl.dispatchEvent(new Event('input', { bubbles: true }));
+      hEl.dispatchEvent(new Event('change', { bubbles: true }));
+      sEl.dispatchEvent(new Event('input', { bubbles: true }));
+      sEl.dispatchEvent(new Event('change', { bubbles: true }));
+    }
   }
 
   // 2D top-down preview of one custom curve (top or bottom): the shape it
@@ -2152,7 +2324,7 @@
       showHangerParams(cfg.hanger.mode === 'double' ? 'double' : 'single');
     } else if (cfg.project === 'vessel') {
       showShapeParams(cfg.shape, 've-shape-params');
-      showVesselMidPoints(cfg.vessel.profileCount);
+      showProfMidCount(cfg.vessel.midCount);
       showVesselBottomStyle(cfg.vessel.seamStyle);
       showVesselTopShape(cfg.vessel.topShape);
       showVeCurvePointCount('top', cfg.vessel.topPointsCount);
@@ -2593,7 +2765,7 @@
     $('ls_flowFeedFields').hidden = !$('ls_flowFeedEnabled').checked;
     showLampSocketParams($('ls_socket').value);
     showLampShapeParams($('ls_shape').value);
-    showVesselMidPoints(num('ve_profileCount'));
+    showProfMidCount(num('ve_profMidCount'));
     showVesselBottomStyle($('ve_seamStyle').value);
     showVesselTopShape($('ve_topShape').value);
     showVeCurvePointCount('top', num('ve_topPtCount'));
@@ -2856,6 +3028,14 @@
     randomizeVeCurveZ('top');
     updateShapeUI();
   });
+
+  $('ve_profMidCount').addEventListener('change', () => {
+    showProfMidCount(num('ve_profMidCount'));
+    updateShapeUI();
+  });
+  $('ve_profMidPrevBtn').addEventListener('click', () => selectProfMid(veProfMidSelected - 1));
+  $('ve_profMidNextBtn').addEventListener('click', () => selectProfMid(veProfMidSelected + 1));
+  wireVesselProfileCanvas();
 
   $('bs_brimEnabled').addEventListener('change', () => {
     $('bs_brimFields').hidden = !$('bs_brimEnabled').checked;
