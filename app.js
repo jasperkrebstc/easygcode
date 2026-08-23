@@ -1037,6 +1037,17 @@
     }
   }
 
+  // "Make it unique" — one call combining every axis this curve has
+  // (position, outward, and Z for the top curve only) so a single button
+  // press produces a fresh, unrepeated shape. Point count is never
+  // touched — always a deliberate input decision, not something to
+  // randomize.
+  function randomizeVeCurveAll(kind) {
+    shuffleVeCurvePositions(kind);
+    randomizeVeCurveR(kind);
+    if (vePtHasZ(kind)) randomizeVeCurveZ(kind);
+  }
+
   // Resolve the lampshade's socket thread (diameter + pitch) — from the
   // built-in IEC 60399 table the generator itself exports, so the preview and
   // the G-code can never disagree about what an E14 or E27 actually is.
@@ -1835,6 +1846,57 @@
     };
     canvas.addEventListener('pointerup', endDrag);
     canvas.addEventListener('pointercancel', endDrag);
+  }
+
+  // Shuffle every middle point's own HEIGHT at once — same non-crossing
+  // guarantee as the top/bottom curve's own shuffleVeCurvePositions, and
+  // for the same reason: giving each point the full range up to its
+  // neighbor's raw height would let two adjacent points both land in the
+  // gap between them and swap order, since they'd move simultaneously.
+  // Bounding each point's range at the MIDPOINT to each neighbor instead
+  // means two adjacent points' ranges meet exactly at that shared midpoint
+  // and can never overlap. Bottom (0) and top (1) always count as fixed
+  // neighbors — this only ever touches middle points.
+  function shuffleProfMidHeights() {
+    const count = profMidCount();
+    if (count === 0) return;
+    const order = [];
+    for (let i = 1; i <= count; i++) order.push(i);
+    order.sort((a, b) => num('ve_profMidH' + a) - num('ve_profMidH' + b));
+    const seq = [0].concat(order.map((i) => num('ve_profMidH' + i))).concat([1]);
+    const margin = 0.1;
+    for (let j = 0; j < count; j++) {
+      const i = order[j];
+      const left = seq[j];
+      const p = seq[j + 1];
+      const right = seq[j + 2];
+      const lo = (left + p) / 2;
+      const hi = (p + right) / 2;
+      const pad = (hi - lo) * margin;
+      const h = lo + pad + Math.random() * Math.max(0, hi - lo - 2 * pad);
+      $('ve_profMidH' + i).value = h.toFixed(3);
+    }
+  }
+
+  // Randomize every point's own SCALE within one shared domain — bottom,
+  // top, and every middle point alike (middle points' own height is left
+  // to shuffleProfMidHeights, not touched here).
+  function randomizeProfScale() {
+    const a = Math.min(num('ve_profRandScaleMin'), num('ve_profRandScaleMax'));
+    const b = Math.max(num('ve_profRandScaleMin'), num('ve_profRandScaleMax'));
+    const pick = () => (a + Math.random() * (b - a)).toFixed(3);
+    $('ve_profBottom').value = pick();
+    $('ve_profTop').value = pick();
+    const count = profMidCount();
+    for (let i = 1; i <= count; i++) $('ve_profMid' + i).value = pick();
+  }
+
+  // "Make it unique" — shuffles every middle point's height AND randomizes
+  // every point's scale in one call, so a single button press produces a
+  // fresh, unrepeated profile. Point count is never touched.
+  function randomizeProfileAll() {
+    shuffleProfMidHeights();
+    randomizeProfScale();
   }
 
   // A middle point's height can never cross past its own CURRENT immediate
@@ -3073,6 +3135,10 @@
     randomizeVeCurveZ('top');
     updateShapeUI();
   });
+  $('ve_topPtRandomizeAllBtn').addEventListener('click', () => {
+    randomizeVeCurveAll('top');
+    updateShapeUI();
+  });
 
   $('ve_profMidCount').addEventListener('change', () => {
     showProfMidCount(num('ve_profMidCount'));
@@ -3080,6 +3146,10 @@
   });
   $('ve_profMidPrevBtn').addEventListener('click', () => selectProfMid(veProfMidSelected - 1));
   $('ve_profMidNextBtn').addEventListener('click', () => selectProfMid(veProfMidSelected + 1));
+  $('ve_profRandomizeBtn').addEventListener('click', () => {
+    randomizeProfileAll();
+    updateShapeUI();
+  });
   wireVesselProfileCanvas();
 
   $('bs_brimEnabled').addEventListener('change', () => {
