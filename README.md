@@ -203,7 +203,13 @@ keep **fully independent settings** per project:
   simply clamping against the others' own unmoving current heights is enough — no
   midpoint-splitting needed). Only the *selected* middle point's own fields are
   shown at a time, stepped with prev/next, the same "one visible at a time"
-  pattern as the curve editors. Every point count is lofted as a clamped
+  pattern as the curve editors. A **"Randomize everything"** button shuffles every
+  middle point's own height (the same non-crossing, midpoint-bounded technique as
+  the top/bottom curve's own shuffle, adapted to an open 0–1 range with bottom/top
+  as fixed immovable neighbors instead of a cyclic one) and randomizes every
+  point's scale — bottom, top, and every middle point — within one shared min/max
+  domain, in a single call, so one tap makes a completely fresh, unrepeated vessel
+  without ever touching the point count. Every point count is lofted as a clamped
   Catmull-Rom spline — the same local-control curve family the top/bottom
   custom curve editor already uses, just open (bottom-to-top) instead of
   closed (around a loop): it passes through every control point exactly and
@@ -287,7 +293,11 @@ keep **fully independent settings** per project:
   min/max domain, so one randomize pass can vary a single axis without disturbing
   the others; changing the point count by hand re-spaces every point's own
   position evenly (without touching outward/Z) rather than trying to preserve a
-  hand-tuned layout at the old count. The **bottom** cross-section can be customized the same way, independently
+  hand-tuned layout at the old count. A **"Randomize everything"** button (top curve
+  only, since it's the one with all three axes) combines all of them in one call —
+  shuffle position, randomize outward, randomize Z (top curve only has Z) — so one
+  tap produces a completely fresh, unrepeated shape without ever touching the point
+  count. The **bottom** cross-section can be customized the same way, independently
   of the top: a **bottom shape** dropdown offers the plain chosen cross-section
   (default), **same as top curve, flattened** (reuses the top curve's own points but
   zeroes every Z — the bottom never has a Z axis to move along), or a fully
