@@ -943,19 +943,39 @@
     for (let i = 1; i <= n; i++) $(pre + 'U' + i).value = ((i - 1) / n).toFixed(3);
   }
 
-  // Randomize just the point COUNT, within its own configured domain — a
-  // fresh count re-spaces every point's position evenly (same as changing
-  // the count by hand) but leaves outward/Z values alone.
-  function randomizeVeCurveCount(kind) {
+  // Shuffle every visible point's own POSITION (u) — never the point count,
+  // which is always a deliberate input decision, not something to
+  // randomize. Each point's new position is drawn independently, so two
+  // points cannot simply be given the SAME neighbor as a shared bound (that
+  // still lets both land in the shared overlap and swap order) — instead
+  // each point's range stops at the MIDPOINT to each of its own CURRENT
+  // immediate neighbors, not the neighbor's own raw position. Two adjacent
+  // points' ranges then meet exactly at that shared midpoint and never
+  // overlap, so crossing is impossible by construction, not just unlikely,
+  // regardless of what either point's own draw comes out to. u is cyclic (a
+  // closed loop), so the smallest and largest point border each other
+  // through 0/1 the same way any interior pair borders each other. A small
+  // margin keeps a shuffled point from landing exactly on its own boundary.
+  function shuffleVeCurvePositions(kind) {
     const pre = vePtPrefix(kind);
-    const lo = Math.max(3, Math.min(VE_PT_MAX, Math.round(num(pre + 'RandCountMin'))));
-    const hi = Math.max(3, Math.min(VE_PT_MAX, Math.round(num(pre + 'RandCountMax'))));
-    const a = Math.min(lo, hi);
-    const b = Math.max(lo, hi);
-    const n = a + Math.floor(Math.random() * (b - a + 1));
-    $(pre + 'Count').value = n;
-    evenSpaceVeCurvePoints(kind, n);
-    showVeCurvePointCount(kind, n);
+    const count = vePtCount(kind);
+    const us = [];
+    for (let i = 1; i <= count; i++) us.push(num(pre + 'U' + i));
+    const order = us.map((_, idx) => idx).sort((a, b) => us[a] - us[b]);
+    const margin = 0.1;
+    for (let j = 0; j < count; j++) {
+      const i = order[j];
+      const p = us[i];
+      let left = us[order[(j - 1 + count) % count]];
+      let right = us[order[(j + 1) % count]];
+      if (j === 0) left -= 1; // the point just before the smallest u is one full turn back
+      if (j === count - 1) right += 1; // the point just after the largest u is one full turn ahead
+      const lo = (left + p) / 2;
+      const hi = (p + right) / 2;
+      const pad = (hi - lo) * margin;
+      const u = (((lo + pad + Math.random() * Math.max(0, hi - lo - 2 * pad)) % 1) + 1) % 1;
+      $(pre + 'U' + (i + 1)).value = u.toFixed(3);
+    }
   }
 
   // Randomize every visible point's OUTWARD value within its own domain.
@@ -2822,8 +2842,8 @@
     });
     $(pre + 'PrevBtn').addEventListener('click', () => selectVePoint(kind, vePtSelected(kind) - 1));
     $(pre + 'NextBtn').addEventListener('click', () => selectVePoint(kind, vePtSelected(kind) + 1));
-    $(pre + 'RandCountBtn').addEventListener('click', () => {
-      randomizeVeCurveCount(kind);
+    $(pre + 'ShuffleBtn').addEventListener('click', () => {
+      shuffleVeCurvePositions(kind);
       updateShapeUI();
     });
     $(pre + 'RandRBtn').addEventListener('click', () => {

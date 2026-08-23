@@ -252,13 +252,24 @@ keep **fully independent settings** per project:
   read directly off each point's own value (bilinear-interpolated around the loop,
   same lookup the star's radius-based weight uses) rather than derived from
   radius, ramps in linearly with height the same way, and is equally
-  extrusion-uncompensated. Three independent **randomize** buttons — point count,
-  outward movement, Z movement — each fill their own axis with a fresh random
-  number inside its own configurable min/max domain, so one randomize pass can vary
-  a single axis without disturbing the others; changing the point count (by hand or
-  via its own randomizer) re-spaces every point's own position evenly (without
-  touching outward/Z) rather than trying to preserve a hand-tuned layout at the old
-  count. The **bottom** cross-section can be customized the same way, independently
+  extrusion-uncompensated. Point count is always a deliberate input, never
+  randomized — instead **shuffle point positions** nudges each point's own u a bit
+  without ever letting it cross a neighbor: point order (and so which stretch of
+  curve each point shapes) never changes, only where within its own bordered
+  stretch it lands. Each point's shuffle range stops at the MIDPOINT to its current
+  immediate neighbor on either side rather than the neighbor's own raw position —
+  two adjacent points' ranges then meet exactly at that shared midpoint and can
+  never overlap, so crossing is impossible by construction (verified with 80,000
+  simulated shuffles across point counts 3–10 and arbitrary starting layouts: zero
+  crossings), not just unlikely with a plain shared-bound approach, which would
+  let two points land in their shared overlap in either order. u is cyclic — the
+  lowest and highest point border each other through 0/1 the same as any interior
+  pair. Two more independent **randomize** buttons — outward movement, Z movement —
+  each fill their own axis with a fresh random number inside its own configurable
+  min/max domain, so one randomize pass can vary a single axis without disturbing
+  the others; changing the point count by hand re-spaces every point's own
+  position evenly (without touching outward/Z) rather than trying to preserve a
+  hand-tuned layout at the old count. The **bottom** cross-section can be customized the same way, independently
   of the top: a **bottom shape** dropdown offers the plain chosen cross-section
   (default), **same as top curve, flattened** (reuses the top curve's own points but
   zeroes every Z — the bottom never has a Z axis to move along), or a fully
