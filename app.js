@@ -992,7 +992,8 @@
   // closed loop), so the smallest and largest point border each other
   // through 0/1 the same way any interior pair borders each other. A small
   // margin keeps a shuffled point from landing exactly on its own boundary.
-  function shuffleVeCurvePositions(kind) {
+  function shuffleVeCurvePositions(kind, rng) {
+    const rand = rng || Math.random;
     const pre = vePtPrefix(kind);
     const count = vePtCount(kind);
     const us = [];
@@ -1009,31 +1010,33 @@
       const lo = (left + p) / 2;
       const hi = (p + right) / 2;
       const pad = (hi - lo) * margin;
-      const u = (((lo + pad + Math.random() * Math.max(0, hi - lo - 2 * pad)) % 1) + 1) % 1;
+      const u = (((lo + pad + rand() * Math.max(0, hi - lo - 2 * pad)) % 1) + 1) % 1;
       $(pre + 'U' + (i + 1)).value = u.toFixed(3);
     }
   }
 
   // Randomize every visible point's OUTWARD value within its own domain.
-  function randomizeVeCurveR(kind) {
+  function randomizeVeCurveR(kind, rng) {
+    const rand = rng || Math.random;
     const pre = vePtPrefix(kind);
     const count = vePtCount(kind);
     const a = Math.min(num(pre + 'RandRMin'), num(pre + 'RandRMax'));
     const b = Math.max(num(pre + 'RandRMin'), num(pre + 'RandRMax'));
     for (let i = 1; i <= count; i++) {
-      $(pre + 'R' + i).value = Math.round(a + Math.random() * (b - a));
+      $(pre + 'R' + i).value = Math.round(a + rand() * (b - a));
     }
   }
 
   // Randomize every visible point's Z value within its own domain — top
   // curve only, since the bottom never has a Z field at all.
-  function randomizeVeCurveZ(kind) {
+  function randomizeVeCurveZ(kind, rng) {
+    const rand = rng || Math.random;
     const pre = vePtPrefix(kind);
     const count = vePtCount(kind);
     const a = Math.min(num(pre + 'RandZMin'), num(pre + 'RandZMax'));
     const b = Math.max(num(pre + 'RandZMin'), num(pre + 'RandZMax'));
     for (let i = 1; i <= count; i++) {
-      $(pre + 'Z' + i).value = Math.round(a + Math.random() * (b - a));
+      $(pre + 'Z' + i).value = Math.round(a + rand() * (b - a));
     }
   }
 
@@ -1041,11 +1044,12 @@
   // (position, outward, and Z for the top curve only) so a single button
   // press produces a fresh, unrepeated shape. Point count is never
   // touched — always a deliberate input decision, not something to
-  // randomize.
-  function randomizeVeCurveAll(kind) {
-    shuffleVeCurvePositions(kind);
-    randomizeVeCurveR(kind);
-    if (vePtHasZ(kind)) randomizeVeCurveZ(kind);
+  // randomize. An optional seeded rng (see mulberry32 below) lets the
+  // master "randomize everything" button drive this deterministically.
+  function randomizeVeCurveAll(kind, rng) {
+    shuffleVeCurvePositions(kind, rng);
+    randomizeVeCurveR(kind, rng);
+    if (vePtHasZ(kind)) randomizeVeCurveZ(kind, rng);
   }
 
   // Resolve the lampshade's socket thread (diameter + pitch) — from the
@@ -1857,7 +1861,8 @@
   // means two adjacent points' ranges meet exactly at that shared midpoint
   // and can never overlap. Bottom (0) and top (1) always count as fixed
   // neighbors — this only ever touches middle points.
-  function shuffleProfMidHeights() {
+  function shuffleProfMidHeights(rng) {
+    const rand = rng || Math.random;
     const count = profMidCount();
     if (count === 0) return;
     const order = [];
@@ -1873,7 +1878,7 @@
       const lo = (left + p) / 2;
       const hi = (p + right) / 2;
       const pad = (hi - lo) * margin;
-      const h = lo + pad + Math.random() * Math.max(0, hi - lo - 2 * pad);
+      const h = lo + pad + rand() * Math.max(0, hi - lo - 2 * pad);
       $('ve_profMidH' + i).value = h.toFixed(3);
     }
   }
@@ -1881,10 +1886,11 @@
   // Randomize every point's own SCALE within one shared domain — bottom,
   // top, and every middle point alike (middle points' own height is left
   // to shuffleProfMidHeights, not touched here).
-  function randomizeProfScale() {
+  function randomizeProfScale(rng) {
+    const rand = rng || Math.random;
     const a = Math.min(num('ve_profRandScaleMin'), num('ve_profRandScaleMax'));
     const b = Math.max(num('ve_profRandScaleMin'), num('ve_profRandScaleMax'));
-    const pick = () => (a + Math.random() * (b - a)).toFixed(3);
+    const pick = () => (a + rand() * (b - a)).toFixed(3);
     $('ve_profBottom').value = pick();
     $('ve_profTop').value = pick();
     const count = profMidCount();
@@ -1893,10 +1899,75 @@
 
   // "Make it unique" — shuffles every middle point's height AND randomizes
   // every point's scale in one call, so a single button press produces a
-  // fresh, unrepeated profile. Point count is never touched.
-  function randomizeProfileAll() {
-    shuffleProfMidHeights();
-    randomizeProfScale();
+  // fresh, unrepeated profile. Point count is never touched. An optional
+  // seeded rng (see mulberry32 below) lets the master "randomize
+  // everything" button drive this deterministically.
+  function randomizeProfileAll(rng) {
+    shuffleProfMidHeights(rng);
+    randomizeProfScale(rng);
+  }
+
+  // Deterministic PRNG (mulberry32) — the same algorithm gcode.js's own
+  // pattern seed already uses for its drop layout, just not exported from
+  // there, so a small self-contained copy lives here too rather than
+  // reaching across module boundaries. Given the same seed, always
+  // produces the same sequence, which is what lets the master "randomize
+  // everything" button reproduce an exact vase from a seed number later.
+  function mulberry32(seed) {
+    let a = seed >>> 0;
+    return function () {
+      a |= 0;
+      a = (a + 0x6d2b79f5) | 0;
+      let t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  // Reset every visible middle point's own height to an even spacing across
+  // the open (0,1) interval — point i of n at i/(n+1), so n points divide
+  // the range into n+1 equal spans (bottom and top themselves are the two
+  // endpoints, not part of this spacing). Mirrors evenSpaceVeCurvePoints'
+  // own role for the curve editors.
+  function evenSpaceProfMidHeights(count) {
+    const n = Math.max(0, Math.min(PROF_MID_MAX, Math.round(count || 0)));
+    for (let i = 1; i <= n; i++) $('ve_profMidH' + i).value = (i / (n + 1)).toFixed(3);
+  }
+
+  // Randomizes every axis of the vessel that's currently randomizable — the
+  // radius profile always, plus the top and/or bottom curve whenever
+  // they're actually set to custom points (randomizing a curve that isn't
+  // in points mode would silently change fields with no visible effect,
+  // which would make the seed less meaningful, not more). Point counts are
+  // never touched anywhere.
+  //
+  // shuffleProfMidHeights/shuffleVeCurvePositions both nudge each point
+  // from wherever it CURRENTLY sits — exactly right for the standalone
+  // "shuffle a bit more" buttons, but wrong for a seed: the same seed would
+  // then produce a different result depending on whatever was already in
+  // the fields, not a reproducible one. So a seeded pass always resets
+  // every position to its even-spacing baseline FIRST, then shuffles from
+  // that fixed, known starting point — making the whole result a pure
+  // function of (seed, point counts, mid count, randomize domains), fully
+  // reproducible regardless of what was there before.
+  function veRandomizeAllFromSeed(seed) {
+    const rng = mulberry32(seed);
+    evenSpaceProfMidHeights(profMidCount());
+    randomizeProfileAll(rng);
+    if ($('ve_topShape').value === 'points') {
+      evenSpaceVeCurvePoints('top', vePtCount('top'));
+      randomizeVeCurveAll('top', rng);
+    }
+    if ($('ve_bottomShape').value === 'points') {
+      evenSpaceVeCurvePoints('bot', vePtCount('bot'));
+      randomizeVeCurveAll('bot', rng);
+    }
+  }
+
+  function veRandomizeEverything() {
+    const seed = Math.floor(Math.random() * 1e9);
+    $('ve_seed').value = seed;
+    veRandomizeAllFromSeed(seed);
   }
 
   // A middle point's height can never cross past its own CURRENT immediate
@@ -3151,6 +3222,15 @@
     updateShapeUI();
   });
   wireVesselProfileCanvas();
+
+  $('ve_randomizeAllBtn').addEventListener('click', () => {
+    veRandomizeEverything();
+    updateShapeUI();
+  });
+  $('ve_seed').addEventListener('change', () => {
+    veRandomizeAllFromSeed(Math.max(0, Math.round(num('ve_seed'))));
+    updateShapeUI();
+  });
 
   $('bs_brimEnabled').addEventListener('change', () => {
     $('bs_brimFields').hidden = !$('bs_brimEnabled').checked;

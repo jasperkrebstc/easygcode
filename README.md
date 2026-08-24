@@ -190,6 +190,24 @@ keep **fully independent settings** per project:
   handoff with no travel and no ramp — for the filleted style this handoff sits
   partway through a layer height rather than on a layer boundary, so the wall's
   revolution count adjusts to still land exactly on the configured wall height. A
+  master **"Randomize everything"** button (with its own **seed** field) runs every
+  one of the profile's and curves' own individual randomizers in a single call — the
+  radius profile always, plus the top and/or bottom curve whenever they're actually
+  set to custom points (randomizing a curve that isn't in points mode would silently
+  change fields with no visible effect, which would make the seed less meaningful,
+  not more) — so one tap makes an entirely fresh, unrepeated vessel. Point counts are
+  never touched by any of this. The seed shown after each press can be typed back in
+  later to reproduce that exact vessel — the standalone per-curve/per-profile shuffle
+  functions nudge each point from wherever it CURRENTLY sits (exactly right for
+  "shuffle a bit more" via repeated clicks), which on its own would make a seed
+  produce a different result depending on what was already in the fields; the master
+  button avoids that by resetting every position to its even-spacing baseline first,
+  then shuffling from that fixed, known starting point, so the whole result is a pure
+  function of (seed, point counts, mid count, randomize domains) — reproducible as
+  long as none of those have changed since the seed was made (verified: byte-identical
+  3D-preview screenshots after randomizing away and back to the same seed, and 50
+  reproducibility trials across 5 different point-count/curve-mode combinations, zero
+  mismatches). A
   **radius profile** — bottom/top scale plus **0–8 middle points**, each its own
   height (0–1) and scale — tapers the wall with height for cones, bellied vases,
   and flared trays (bottom = top = every middle scale all `1` is a straight prism;

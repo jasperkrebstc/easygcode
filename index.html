@@ -522,6 +522,14 @@
           <div class="field"><label>Bottom fillet height (mm)</label><input type="number" id="ve_bottomFillet" value="10" min="0" step="1" /></div>
         </div>
         <p class="hint" id="ve_hint"></p>
+        <h3 class="subhead">Randomize everything</h3>
+        <p class="hint">One tap randomizes every randomizable part of this vessel at once —
+          the radius profile always, plus the top and/or bottom curve whenever they're set to
+          custom points. Point counts are never touched. Enter a seed and change any field to
+          reproduce the exact same vessel later, as long as the point counts and randomize
+          domains haven't changed since.</p>
+        <div class="buttons"><button type="button" id="ve_randomizeAllBtn">Randomize everything</button></div>
+        <div class="field"><label>Seed</label><input type="number" id="ve_seed" value="1" min="0" step="1" /></div>
       </section>
 
       <section class="card" data-project="vessel" hidden>
