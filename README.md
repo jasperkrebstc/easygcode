@@ -528,9 +528,13 @@ keep **fully independent settings** per project:
   opposite, for the two threads to actually mesh once flipped. Exposed as the lid's own
   explicit print-direction setting (defaulting to match the base) rather than hard-coded,
   since this is subtle enough to be worth a physical test print — a one-field flip if a first
-  attempt doesn't seat right, not a code change. The two print settings cards note that layer
-  height should match between base and lid too — mismatched pitch would keep the threads from
-  engaging smoothly regardless of handedness.
+  attempt doesn't seat right, not a code change. Layer height and line width are NOT
+  independent lid settings at all — both directly set the vase-mode "thread" pitch/wall
+  thickness, so a mismatch there would keep the two threads from ever engaging regardless of
+  handedness. The lid's own print-settings card shows a live "currently Xmm / Ymm" hint
+  instead of separate fields, and the generator itself reads both straight off the base's own
+  config, ignoring any stale value that might otherwise linger on the lid's side — not just a
+  UI convenience, a hard guarantee they can never drift apart.
 
 The coat hanger is a dead-simple, phone-first tool to generate **vase-mode G-code** for
 **Klipper pellet 3D printing** (or the Bambu P1P in filament mode). Pick a cross-section
