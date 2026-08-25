@@ -1622,11 +1622,15 @@
     const lid = cfg.lid || {};
     const cx = lid.centerX;
     const cy = lid.centerY;
-    const lh = lid.layerHeight;
-    const lw = lid.lineWidth;
+    // Layer height and line width are NOT independent lid settings — both
+    // directly set the vase-mode "thread" pitch/wall thickness, and a
+    // mismatch there would keep the lid from ever engaging the base
+    // cleanly, so the lid always uses the base's own values.
+    const lh = cn.layerHeight;
+    const lw = cn.lineWidth;
     const tol = lid.tolerance > 0 ? lid.tolerance : 0.05;
-    if (!(lh > 0) || !(lw > 0)) return bail('Enter a valid layer height and line width.');
-    if (!(cn.radius > 0) || !(cn.lineWidth > 0)) return bail('The container base needs a valid radius and line width first.');
+    if (!(lh > 0) || !(lw > 0)) return bail('The container base needs a valid layer height and line width first.');
+    if (!(cn.radius > 0)) return bail('The container base needs a valid radius first.');
     if (!(lid.straightHeight > 0)) return bail('Enter a valid lid height.');
 
     const radius = cn.radius + cn.lineWidth + (lid.fitTolerance || 0);
@@ -1685,7 +1689,7 @@
       '; printDirection=' + (dirSign < 0 ? 'CW' : 'CCW') +
         ' (matches the base so the vase-mode spiral seam threads together when flipped on)'
     );
-    lines.push('; layerHeight=' + lh + ' lineWidth=' + lw + ' tolerance=' + tol + 'mm');
+    lines.push('; layerHeight=' + lh + ' lineWidth=' + lw + ' (inherited from the base) tolerance=' + tol + 'mm');
     lines.push('; printFeed=' + lid.printFeed + ' travelFeed=' + lid.travelFeed + ' (mm/min)');
     lines.push(
       '; printer=' + mode + ' multiplier=' + mult +

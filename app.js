@@ -360,8 +360,11 @@
         },
         lid: {
           printer: readPrinter('cnl_'),
-          layerHeight: num('cnl_layerHeight'),
-          lineWidth: num('cnl_lineWidth'),
+          // Layer height and line width are NOT independent lid settings —
+          // both directly set the vase-mode "thread" pitch/wall thickness,
+          // and a mismatch there would keep the lid from ever engaging the
+          // base cleanly, so the lid always uses the base's own values
+          // (read straight off cfg.container in gcode.js).
           printFeed: num('cnl_printFeed'),
           travelFeed: num('cnl_travelFeed'),
           tolerance: num('cnl_tolerance'),
@@ -699,8 +702,6 @@
       if (cnpErr) return 'Base: ' + cnpErr;
 
       const lidChecks = {
-        'lid layer height': lid.layerHeight,
-        'lid line width': lid.lineWidth,
         'lid print feed': lid.printFeed,
         'lid travel feed': lid.travelFeed,
         'lid chord tolerance': lid.tolerance,
@@ -1487,6 +1488,13 @@
     }
     if (cfg.project === 'container') {
       cnDrawProfile(cfg);
+      const hint = $('cnl_inheritedHint');
+      if (hint) {
+        hint.textContent =
+          'Layer height and line width always match the base (currently ' + cfg.container.layerHeight +
+          'mm / ' + cfg.container.lineWidth + 'mm) — mismatched pitch or wall thickness would keep the two ' +
+          'vase-mode "threads" from engaging, so they\'re not separate settings here.';
+      }
       return;
     }
     const canvas = $('preview');
