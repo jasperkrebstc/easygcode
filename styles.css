@@ -182,7 +182,8 @@ canvas#sp_preview,
 canvas#ls_preview,
 canvas#preview3d,
 canvas#ve_topCurveCanvas,
-canvas#ve_botCurveCanvas {
+canvas#ve_botCurveCanvas,
+canvas#cn_profile {
   width: 100%;
   height: auto;
   aspect-ratio: 1 / 1;
@@ -199,7 +200,8 @@ canvas#ve_botCurveCanvas {
   cursor: pointer;
 }
 
-canvas#ve_profile {
+canvas#ve_profile,
+canvas#cn_profile {
   aspect-ratio: 5 / 3;
   touch-action: none; /* dragging a point shouldn't scroll the page */
   cursor: pointer;

@@ -13,10 +13,18 @@
   const isPos = (v) => Number.isFinite(v) && v > 0;
 
   let lastGcode = '';
+  // The container project produces two G-codes (base + lid) from one
+  // generate() call — stored together here, with cnActivePart choosing
+  // which one currently populates the app's single shared output section
+  // (3D preview, stats, warnings, textarea, download).
+  let lastContainerResult = null;
+  let cnActivePart = 'base';
 
   function activeProject() {
     const v = $('activeProject').value;
-    return v === 'bendstool' || v === 'vessel' || v === 'spoon' || v === 'lamp' ? v : 'cordhanger';
+    return v === 'bendstool' || v === 'vessel' || v === 'spoon' || v === 'lamp' || v === 'container'
+      ? v
+      : 'cordhanger';
   }
 
   const VE_PT_MAX = 20;
@@ -55,6 +63,24 @@
     const count = profMidCount();
     const pts = [];
     for (let i = 1; i <= PROF_MID_MAX; i++) pts.push({ h: num('ve_profMidH' + i), s: num('ve_profMid' + i) });
+    return pts.slice(0, count);
+  }
+
+  // The container project's own radius profile editor — a duplicate of the
+  // vessel's own (same fields/behavior, cn_ prefixed) rather than a shared
+  // generalization, a deliberate choice to ship the container without
+  // touching the vessel's already-shipped, already-tested profile code in
+  // the same pass. Worth revisiting as a follow-up cleanup once the
+  // container itself has settled.
+  let cnProfMidSelected = 1;
+  let cnProfCurveState = null;
+  function cnProfMidCount() {
+    return Math.max(0, Math.min(PROF_MID_MAX, Math.round(num('cn_profMidCount')) || 0));
+  }
+  function cnReadProfileMidPoints() {
+    const count = cnProfMidCount();
+    const pts = [];
+    for (let i = 1; i <= PROF_MID_MAX; i++) pts.push({ h: num('cn_profMidH' + i), s: num('cn_profMid' + i) });
     return pts.slice(0, count);
   }
 
@@ -306,6 +332,46 @@
           layerHeight: num('ls_brimLayerHeight'),
           feed: num('ls_brimFeed'),
           multiplier: num('ls_brimMultiplier'),
+        },
+      };
+    }
+
+    if (activeProject() === 'container') {
+      return {
+        project: 'container',
+        container: {
+          printer: readPrinter('cn_'),
+          layerHeight: num('cn_layerHeight'),
+          lineWidth: num('cn_lineWidth'),
+          printFeed: num('cn_printFeed'),
+          travelFeed: num('cn_travelFeed'),
+          tolerance: num('cn_tolerance'),
+          printDirection: $('cn_printDirection').value === 'cw' ? 'cw' : 'ccw',
+          seamSide: $('cn_seamSide').value,
+          centerX: num('cn_centerX'),
+          centerY: num('cn_centerY'),
+          radius: num('cn_radius'),
+          height: num('cn_height'),
+          bottomFillet: Math.max(0, num('cn_bottomFillet')),
+          bottom: num('cn_profBottom'),
+          midCount: cnProfMidCount(),
+          midPoints: cnReadProfileMidPoints(),
+          top: num('cn_profTop'),
+        },
+        lid: {
+          printer: readPrinter('cnl_'),
+          layerHeight: num('cnl_layerHeight'),
+          lineWidth: num('cnl_lineWidth'),
+          printFeed: num('cnl_printFeed'),
+          travelFeed: num('cnl_travelFeed'),
+          tolerance: num('cnl_tolerance'),
+          printDirection: $('cnl_printDirection').value === 'cw' ? 'cw' : 'ccw',
+          seamSide: $('cnl_seamSide').value,
+          centerX: num('cnl_centerX'),
+          centerY: num('cnl_centerY'),
+          straightHeight: num('cnl_straightHeight'),
+          fillet: Math.max(0, num('cnl_fillet')),
+          fitTolerance: num('cnl_fitTolerance'),
         },
       };
     }
@@ -605,6 +671,54 @@
       return validatePrinter(cfg) || validateBrim(cfg.brim);
     }
 
+    if (cfg.project === 'container') {
+      const cn = cfg.container;
+      const lid = cfg.lid;
+      const cnChecks = {
+        'base layer height': cn.layerHeight,
+        'base line width': cn.lineWidth,
+        'base print feed': cn.printFeed,
+        'base travel feed': cn.travelFeed,
+        'base chord tolerance': cn.tolerance,
+        'base radius': cn.radius,
+        'base wall height': cn.height,
+      };
+      for (const name in cnChecks) {
+        if (!isPos(cnChecks[name])) return 'Enter a valid ' + name + ' (must be greater than 0).';
+      }
+      if (!Number.isFinite(cn.centerX) || !Number.isFinite(cn.centerY)) return 'Enter valid base bed center X/Y.';
+      if (!(cn.bottomFillet >= 0)) return 'Base fillet height must be 0 or more.';
+      if (!isPos(cn.bottom) || !isPos(cn.top)) return 'Base profile scales must be greater than 0.';
+      if (!(cn.midCount >= 0 && cn.midCount <= PROF_MID_MAX))
+        return 'Base middle points must be between 0 and ' + PROF_MID_MAX + '.';
+      for (const m of cn.midPoints) {
+        if (!Number.isFinite(m.h) || m.h < 0 || m.h > 1) return 'Base middle height must be between 0 and 1.';
+        if (!isPos(m.s)) return 'Base middle scale must be greater than 0.';
+      }
+      const cnpErr = validatePrinter(cn);
+      if (cnpErr) return 'Base: ' + cnpErr;
+
+      const lidChecks = {
+        'lid layer height': lid.layerHeight,
+        'lid line width': lid.lineWidth,
+        'lid print feed': lid.printFeed,
+        'lid travel feed': lid.travelFeed,
+        'lid chord tolerance': lid.tolerance,
+        'lid straight height': lid.straightHeight,
+      };
+      for (const name in lidChecks) {
+        if (!isPos(lidChecks[name])) return 'Enter a valid ' + name + ' (must be greater than 0).';
+      }
+      if (!Number.isFinite(lid.centerX) || !Number.isFinite(lid.centerY)) return 'Enter valid lid bed center X/Y.';
+      if (!(lid.fillet >= 0)) return 'Lid fillet height must be 0 or more.';
+      if (!Number.isFinite(lid.fitTolerance)) return 'Enter a valid lid fit tolerance.';
+      if (!(cn.radius + cn.lineWidth + lid.fitTolerance > 0))
+        return 'Lid radius (base radius + line width + fit tolerance) came out to zero or less.';
+      const lidpErr = validatePrinter(lid);
+      if (lidpErr) return 'Lid: ' + lidpErr;
+      return null;
+    }
+
     const checks = {
       'layer height': cfg.layerHeight,
       'line width': cfg.lineWidth,
@@ -693,6 +807,8 @@
       ['ve_printerMode', 'printer-params-ve', 've_printerHint'],
       ['sp_printerMode', 'printer-params-sp', 'sp_printerHint'],
       ['ls_printerMode', 'printer-params-ls', 'ls_printerHint'],
+      ['cn_printerMode', 'printer-params-cn', 'cn_printerHint'],
+      ['cnl_printerMode', 'printer-params-cnl', 'cnl_printerHint'],
     ].forEach(([selId, cls, hintId]) => {
       const sel = $(selId);
       if (!sel) return;
@@ -711,11 +827,51 @@
     document.querySelectorAll('.card[data-project]').forEach((el) => {
       el.hidden = el.getAttribute('data-project') !== p;
     });
+    if (p === 'container') cnApplyPartVisibility();
     $('tabCordhanger').classList.toggle('active', p === 'cordhanger');
     $('tabBendstool').classList.toggle('active', p === 'bendstool');
     $('tabVessel').classList.toggle('active', p === 'vessel');
     $('tabSpoon').classList.toggle('active', p === 'spoon');
     $('tabLamp').classList.toggle('active', p === 'lamp');
+    $('tabContainer').classList.toggle('active', p === 'container');
+  }
+
+  // The container tab holds base AND lid settings/output on one page,
+  // switched by this toggle rather than two separate top-level tabs — cards
+  // tagged data-container-part show/hide by it (on top of the normal
+  // data-project show/hide above, which already narrows to "any container
+  // card"), and the shared output section (3D preview/stats/warnings/
+  // textarea/download) re-renders from whichever half of the last
+  // generate() result matches.
+  function cnApplyPartVisibility() {
+    document.querySelectorAll('.card[data-container-part]').forEach((el) => {
+      el.hidden = el.getAttribute('data-container-part') !== cnActivePart;
+    });
+    $('cnPartBaseBtn').classList.toggle('active', cnActivePart === 'base');
+    $('cnPartLidBtn').classList.toggle('active', cnActivePart === 'lid');
+  }
+
+  function cnSetPart(part) {
+    cnActivePart = part === 'lid' ? 'lid' : 'base';
+    cnApplyPartVisibility();
+    cnRenderOutput();
+  }
+
+  // Pushes whichever half (base/lid) of the last container generate() call
+  // cnActivePart selects into the app's one shared output section — same
+  // fields regenerate() itself populates for every other project.
+  function cnRenderOutput() {
+    if (!lastContainerResult) return;
+    const r = cnActivePart === 'lid' ? lastContainerResult.lid : lastContainerResult.base;
+    lastGcode = r.gcode;
+    $('output').value = r.gcode;
+    View3D.setPath(r.path || []);
+    const s = r.stats;
+    $('stats').textContent =
+      Math.round(s.loops) + ' loops · ' + s.moves + ' moves · ' +
+      s.materialVolume.toFixed(0) + ' mm³ · ' + (s.pathLength / 1000).toFixed(1) + ' m path' +
+      (s.actualTimeMin > 0 ? ' · ~' + fmtTime(s.actualTimeMin) : '');
+    showWarnings(r.warnings, false);
   }
 
   function showPatternParams(type) {
@@ -905,6 +1061,35 @@
     updateShapeUI();
   }
 
+  // Container project's own copy of the three functions above (cn_ prefix,
+  // .cn-prof-mid class) — see the note by cnProfMidSelected.
+  function cnShowProfMidCount(count) {
+    const n = Math.max(0, Math.min(PROF_MID_MAX, Math.round(count || 0)));
+    $('cn_profMidFields').hidden = n === 0;
+    if (cnProfMidSelected > n) cnProfMidSelected = Math.max(1, n);
+    cnShowSelectedProfMid();
+  }
+
+  function cnShowSelectedProfMid() {
+    const count = cnProfMidCount();
+    if (count === 0) return;
+    const sel = Math.max(1, Math.min(count, cnProfMidSelected));
+    cnProfMidSelected = sel;
+    document.querySelectorAll('.cn-prof-mid').forEach((el) => {
+      el.hidden = Number(el.getAttribute('data-mid')) !== sel;
+    });
+    const hint = $('cn_profMidSelHint');
+    if (hint) hint.textContent = 'Middle point ' + sel + ' of ' + count;
+  }
+
+  function cnSelectProfMid(n) {
+    const count = cnProfMidCount();
+    if (count === 0) return;
+    cnProfMidSelected = Math.max(1, Math.min(count, n));
+    cnShowSelectedProfMid();
+    updateShapeUI();
+  }
+
   // The filleted bottom style always uses exactly one flat layer before it
   // starts rounding into the wall — "bottom layers" plays no part in it — so
   // that field is swapped for the fillet's own height input instead.
@@ -992,7 +1177,8 @@
   // closed loop), so the smallest and largest point border each other
   // through 0/1 the same way any interior pair borders each other. A small
   // margin keeps a shuffled point from landing exactly on its own boundary.
-  function shuffleVeCurvePositions(kind) {
+  function shuffleVeCurvePositions(kind, rng) {
+    const rand = rng || Math.random;
     const pre = vePtPrefix(kind);
     const count = vePtCount(kind);
     const us = [];
@@ -1009,31 +1195,33 @@
       const lo = (left + p) / 2;
       const hi = (p + right) / 2;
       const pad = (hi - lo) * margin;
-      const u = (((lo + pad + Math.random() * Math.max(0, hi - lo - 2 * pad)) % 1) + 1) % 1;
+      const u = (((lo + pad + rand() * Math.max(0, hi - lo - 2 * pad)) % 1) + 1) % 1;
       $(pre + 'U' + (i + 1)).value = u.toFixed(3);
     }
   }
 
   // Randomize every visible point's OUTWARD value within its own domain.
-  function randomizeVeCurveR(kind) {
+  function randomizeVeCurveR(kind, rng) {
+    const rand = rng || Math.random;
     const pre = vePtPrefix(kind);
     const count = vePtCount(kind);
     const a = Math.min(num(pre + 'RandRMin'), num(pre + 'RandRMax'));
     const b = Math.max(num(pre + 'RandRMin'), num(pre + 'RandRMax'));
     for (let i = 1; i <= count; i++) {
-      $(pre + 'R' + i).value = Math.round(a + Math.random() * (b - a));
+      $(pre + 'R' + i).value = Math.round(a + rand() * (b - a));
     }
   }
 
   // Randomize every visible point's Z value within its own domain — top
   // curve only, since the bottom never has a Z field at all.
-  function randomizeVeCurveZ(kind) {
+  function randomizeVeCurveZ(kind, rng) {
+    const rand = rng || Math.random;
     const pre = vePtPrefix(kind);
     const count = vePtCount(kind);
     const a = Math.min(num(pre + 'RandZMin'), num(pre + 'RandZMax'));
     const b = Math.max(num(pre + 'RandZMin'), num(pre + 'RandZMax'));
     for (let i = 1; i <= count; i++) {
-      $(pre + 'Z' + i).value = Math.round(a + Math.random() * (b - a));
+      $(pre + 'Z' + i).value = Math.round(a + rand() * (b - a));
     }
   }
 
@@ -1041,11 +1229,12 @@
   // (position, outward, and Z for the top curve only) so a single button
   // press produces a fresh, unrepeated shape. Point count is never
   // touched — always a deliberate input decision, not something to
-  // randomize.
-  function randomizeVeCurveAll(kind) {
-    shuffleVeCurvePositions(kind);
-    randomizeVeCurveR(kind);
-    if (vePtHasZ(kind)) randomizeVeCurveZ(kind);
+  // randomize. An optional seeded rng (see mulberry32 below) lets the
+  // master "randomize everything" button drive this deterministically.
+  function randomizeVeCurveAll(kind, rng) {
+    shuffleVeCurvePositions(kind, rng);
+    randomizeVeCurveR(kind, rng);
+    if (vePtHasZ(kind)) randomizeVeCurveZ(kind, rng);
   }
 
   // Resolve the lampshade's socket thread (diameter + pitch) — from the
@@ -1294,6 +1483,10 @@
     }
     if (cfg.project === 'lamp') {
       drawPreviewLamp(cfg);
+      return;
+    }
+    if (cfg.project === 'container') {
+      cnDrawProfile(cfg);
       return;
     }
     const canvas = $('preview');
@@ -1848,6 +2041,148 @@
     canvas.addEventListener('pointercancel', endDrag);
   }
 
+  // Container project's own copy of drawVesselProfile/wireVesselProfileCanvas
+  // (cn_ prefix, cfg.container instead of cfg.vessel) — see the note by
+  // cnProfMidSelected.
+  function cnDrawProfile(cfg) {
+    const canvas = $('cn_profile');
+    const ctx = canvas.getContext('2d');
+    const W = canvas.width;
+    const H = canvas.height;
+    ctx.clearRect(0, 0, W, H);
+    cnProfCurveState = null;
+    const sf = W / 600;
+    const cn = cfg.container;
+    if (!cn || !isPos(cn.height)) return;
+
+    const cps = window.GcodeGen.buildVesselProfileCps(cn);
+    const prof = window.GcodeGen.makeProfile(cps);
+
+    const baseR = isPos(cn.radius) ? cn.radius : 30;
+    const H0 = cn.height;
+    const N = 120;
+    const pts = [];
+    for (let i = 0; i <= N; i++) {
+      const hf = i / N;
+      pts.push({ r: baseR * prof(hf), z: hf * H0 });
+    }
+    const maxR = Math.max.apply(null, pts.map((p) => p.r).concat([baseR * cn.bottom, baseR * cn.top])) * 1.06 || 1;
+    const pad = 24 * sf;
+    const sx = (W / 2 - pad) / maxR;
+    const sz = (H - 2 * pad) / (H0 || 1);
+    const cxp = W / 2;
+    const bottomY = H - pad;
+    const X = (r) => cxp + r * sx;
+    const Y = (z) => bottomY - z * sz;
+
+    ctx.beginPath();
+    pts.forEach((p, i) => (i === 0 ? ctx.moveTo(X(p.r), Y(p.z)) : ctx.lineTo(X(p.r), Y(p.z))));
+    for (let i = pts.length - 1; i >= 0; i--) ctx.lineTo(X(-pts[i].r), Y(pts[i].z));
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(79,157,255,0.18)';
+    ctx.fill();
+    ctx.strokeStyle = '#4f9dff';
+    ctx.lineWidth = 2 * sf;
+    ctx.stroke();
+
+    ctx.strokeStyle = 'rgba(154,163,178,0.35)';
+    ctx.lineWidth = 1 * sf;
+    ctx.setLineDash([4 * sf, 4 * sf]);
+    ctx.beginPath();
+    ctx.moveTo(cxp, Y(0));
+    ctx.lineTo(cxp, Y(H0));
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    ctx.strokeStyle = 'rgba(43,217,160,0.8)';
+    ctx.lineWidth = 2.5 * sf;
+    ctx.beginPath();
+    ctx.moveTo(X(-pts[0].r), Y(0));
+    ctx.lineTo(X(pts[0].r), Y(0));
+    ctx.stroke();
+
+    const count = cnProfMidCount();
+    const sel = cnProfMidSelected;
+    const hit = [];
+    const drawMarker = (r, z, color, radius) => {
+      [r, -r].forEach((rr) => {
+        const cx2 = X(rr);
+        const cy2 = Y(z);
+        ctx.beginPath();
+        ctx.arc(cx2, cy2, radius * sf, 0, 2 * Math.PI);
+        ctx.fillStyle = color;
+        ctx.fill();
+        ctx.lineWidth = 1.5 * sf;
+        ctx.strokeStyle = '#fff';
+        ctx.stroke();
+      });
+    };
+
+    drawMarker(baseR * cn.bottom, 0, '#2bd9a0', 5);
+    hit.push({ idx: 0, type: 'bottom', cx: X(baseR * cn.bottom), cy: Y(0) });
+    hit.push({ idx: 0, type: 'bottom', cx: X(-baseR * cn.bottom), cy: Y(0) });
+    drawMarker(baseR * cn.top, H0, '#2bd9a0', 5);
+    hit.push({ idx: 0, type: 'top', cx: X(baseR * cn.top), cy: Y(H0) });
+    hit.push({ idx: 0, type: 'top', cx: X(-baseR * cn.top), cy: Y(H0) });
+
+    for (let i = 1; i <= count; i++) {
+      const h = Math.max(0, Math.min(1, num('cn_profMidH' + i)));
+      const s = num('cn_profMid' + i);
+      const isSel = i === sel;
+      drawMarker(baseR * s, h * H0, isSel ? '#ff5252' : '#4f9dff', isSel ? 7 : 5);
+      hit.push({ idx: i, type: 'mid', cx: X(baseR * s), cy: Y(h * H0) });
+      hit.push({ idx: i, type: 'mid', cx: X(-baseR * s), cy: Y(h * H0) });
+    }
+
+    cnProfCurveState = { W: W, H: H, sx: sx, sz: sz, cxp: cxp, bottomY: bottomY, baseR: baseR, hit: hit };
+  }
+
+  function cnWireProfileCanvas() {
+    const canvas = $('cn_profile');
+    let dragging = null;
+
+    function canvasPt(e) {
+      const r = canvas.getBoundingClientRect();
+      const k = canvas.width / (r.width || 1);
+      return { x: (e.clientX - r.left) * k, y: (e.clientY - r.top) * k };
+    }
+    function hitTest(p) {
+      const st = cnProfCurveState;
+      if (!st) return null;
+      let best = null;
+      let bestD = 22 * (st.W / 600);
+      st.hit.forEach((h) => {
+        const d = Math.hypot(p.x - h.cx, p.y - h.cy);
+        if (d < bestD) {
+          bestD = d;
+          best = h;
+        }
+      });
+      return best;
+    }
+
+    canvas.addEventListener('pointerdown', (e) => {
+      const p = canvasPt(e);
+      const found = hitTest(p);
+      if (!found) return;
+      dragging = found;
+      canvas.setPointerCapture(e.pointerId);
+      if (found.type === 'mid') cnSelectProfMid(found.idx);
+      cnProfileDragAdjust(found, p);
+      e.preventDefault();
+    });
+    canvas.addEventListener('pointermove', (e) => {
+      if (!dragging) return;
+      cnProfileDragAdjust(dragging, canvasPt(e));
+      e.preventDefault();
+    });
+    const endDragCn = () => {
+      dragging = null;
+    };
+    canvas.addEventListener('pointerup', endDragCn);
+    canvas.addEventListener('pointercancel', endDragCn);
+  }
+
   // Shuffle every middle point's own HEIGHT at once — same non-crossing
   // guarantee as the top/bottom curve's own shuffleVeCurvePositions, and
   // for the same reason: giving each point the full range up to its
@@ -1857,7 +2192,8 @@
   // means two adjacent points' ranges meet exactly at that shared midpoint
   // and can never overlap. Bottom (0) and top (1) always count as fixed
   // neighbors — this only ever touches middle points.
-  function shuffleProfMidHeights() {
+  function shuffleProfMidHeights(rng) {
+    const rand = rng || Math.random;
     const count = profMidCount();
     if (count === 0) return;
     const order = [];
@@ -1873,7 +2209,7 @@
       const lo = (left + p) / 2;
       const hi = (p + right) / 2;
       const pad = (hi - lo) * margin;
-      const h = lo + pad + Math.random() * Math.max(0, hi - lo - 2 * pad);
+      const h = lo + pad + rand() * Math.max(0, hi - lo - 2 * pad);
       $('ve_profMidH' + i).value = h.toFixed(3);
     }
   }
@@ -1881,10 +2217,11 @@
   // Randomize every point's own SCALE within one shared domain — bottom,
   // top, and every middle point alike (middle points' own height is left
   // to shuffleProfMidHeights, not touched here).
-  function randomizeProfScale() {
+  function randomizeProfScale(rng) {
+    const rand = rng || Math.random;
     const a = Math.min(num('ve_profRandScaleMin'), num('ve_profRandScaleMax'));
     const b = Math.max(num('ve_profRandScaleMin'), num('ve_profRandScaleMax'));
-    const pick = () => (a + Math.random() * (b - a)).toFixed(3);
+    const pick = () => (a + rand() * (b - a)).toFixed(3);
     $('ve_profBottom').value = pick();
     $('ve_profTop').value = pick();
     const count = profMidCount();
@@ -1893,10 +2230,75 @@
 
   // "Make it unique" — shuffles every middle point's height AND randomizes
   // every point's scale in one call, so a single button press produces a
-  // fresh, unrepeated profile. Point count is never touched.
-  function randomizeProfileAll() {
-    shuffleProfMidHeights();
-    randomizeProfScale();
+  // fresh, unrepeated profile. Point count is never touched. An optional
+  // seeded rng (see mulberry32 below) lets the master "randomize
+  // everything" button drive this deterministically.
+  function randomizeProfileAll(rng) {
+    shuffleProfMidHeights(rng);
+    randomizeProfScale(rng);
+  }
+
+  // Deterministic PRNG (mulberry32) — the same algorithm gcode.js's own
+  // pattern seed already uses for its drop layout, just not exported from
+  // there, so a small self-contained copy lives here too rather than
+  // reaching across module boundaries. Given the same seed, always
+  // produces the same sequence, which is what lets the master "randomize
+  // everything" button reproduce an exact vase from a seed number later.
+  function mulberry32(seed) {
+    let a = seed >>> 0;
+    return function () {
+      a |= 0;
+      a = (a + 0x6d2b79f5) | 0;
+      let t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  // Reset every visible middle point's own height to an even spacing across
+  // the open (0,1) interval — point i of n at i/(n+1), so n points divide
+  // the range into n+1 equal spans (bottom and top themselves are the two
+  // endpoints, not part of this spacing). Mirrors evenSpaceVeCurvePoints'
+  // own role for the curve editors.
+  function evenSpaceProfMidHeights(count) {
+    const n = Math.max(0, Math.min(PROF_MID_MAX, Math.round(count || 0)));
+    for (let i = 1; i <= n; i++) $('ve_profMidH' + i).value = (i / (n + 1)).toFixed(3);
+  }
+
+  // Randomizes every axis of the vessel that's currently randomizable — the
+  // radius profile always, plus the top and/or bottom curve whenever
+  // they're actually set to custom points (randomizing a curve that isn't
+  // in points mode would silently change fields with no visible effect,
+  // which would make the seed less meaningful, not more). Point counts are
+  // never touched anywhere.
+  //
+  // shuffleProfMidHeights/shuffleVeCurvePositions both nudge each point
+  // from wherever it CURRENTLY sits — exactly right for the standalone
+  // "shuffle a bit more" buttons, but wrong for a seed: the same seed would
+  // then produce a different result depending on whatever was already in
+  // the fields, not a reproducible one. So a seeded pass always resets
+  // every position to its even-spacing baseline FIRST, then shuffles from
+  // that fixed, known starting point — making the whole result a pure
+  // function of (seed, point counts, mid count, randomize domains), fully
+  // reproducible regardless of what was there before.
+  function veRandomizeAllFromSeed(seed) {
+    const rng = mulberry32(seed);
+    evenSpaceProfMidHeights(profMidCount());
+    randomizeProfileAll(rng);
+    if ($('ve_topShape').value === 'points') {
+      evenSpaceVeCurvePoints('top', vePtCount('top'));
+      randomizeVeCurveAll('top', rng);
+    }
+    if ($('ve_bottomShape').value === 'points') {
+      evenSpaceVeCurvePoints('bot', vePtCount('bot'));
+      randomizeVeCurveAll('bot', rng);
+    }
+  }
+
+  function veRandomizeEverything() {
+    const seed = Math.floor(Math.random() * 1e9);
+    $('ve_seed').value = seed;
+    veRandomizeAllFromSeed(seed);
   }
 
   // A middle point's height can never cross past its own CURRENT immediate
@@ -1941,6 +2343,53 @@
       const h = clampMidHeight(hitEntry.idx, Math.max(0, Math.min(1, desiredH)));
       const hEl = $('ve_profMidH' + hitEntry.idx);
       const sEl = $('ve_profMid' + hitEntry.idx);
+      hEl.value = h.toFixed(3);
+      sEl.value = scale.toFixed(3);
+      hEl.dispatchEvent(new Event('input', { bubbles: true }));
+      hEl.dispatchEvent(new Event('change', { bubbles: true }));
+      sEl.dispatchEvent(new Event('input', { bubbles: true }));
+      sEl.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+  }
+
+  // Container project's own copy of clampMidHeight/profileDragAdjust (cn_
+  // prefix) — see the note by cnProfMidSelected.
+  function cnClampMidHeight(idx, desiredH) {
+    const count = cnProfMidCount();
+    let lo = 0;
+    let hi = 1;
+    for (let i = 1; i <= count; i++) {
+      if (i === idx) continue;
+      const h = num('cn_profMidH' + i);
+      if (h <= desiredH && h > lo) lo = h;
+      if (h >= desiredH && h < hi) hi = h;
+    }
+    const eps = Math.min(0.02, (hi - lo) * 0.1);
+    return Math.max(lo + eps, Math.min(hi - eps, desiredH));
+  }
+
+  function cnProfileDragAdjust(hitEntry, p) {
+    const st = cnProfCurveState;
+    if (!st) return;
+    const r = Math.abs(p.x - st.cxp) / st.sx;
+    const scale = Math.max(0.05, r / st.baseR);
+    if (hitEntry.type === 'bottom') {
+      const el = $('cn_profBottom');
+      el.value = scale.toFixed(3);
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+    } else if (hitEntry.type === 'top') {
+      const el = $('cn_profTop');
+      el.value = scale.toFixed(3);
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+    } else {
+      const z = (st.bottomY - p.y) / st.sz;
+      const H0 = num('cn_height');
+      const desiredH = H0 > 0 ? z / H0 : 0;
+      const h = cnClampMidHeight(hitEntry.idx, Math.max(0, Math.min(1, desiredH)));
+      const hEl = $('cn_profMidH' + hitEntry.idx);
+      const sEl = $('cn_profMid' + hitEntry.idx);
       hEl.value = h.toFixed(3);
       sEl.value = scale.toFixed(3);
       hEl.dispatchEvent(new Event('input', { bubbles: true }));
@@ -2445,6 +2894,8 @@
     } else if (cfg.project === 'lamp') {
       showLampSocketParams(cfg.lamp.socket);
       showLampShapeParams(cfg.lamp.shape);
+    } else if (cfg.project === 'container') {
+      cnShowProfMidCount(cfg.container.midCount);
     }
     syncPrinterCards();
   }
@@ -2576,6 +3027,16 @@
       return;
     }
 
+    if (cfg.project === 'container') {
+      // Both G-codes come out of one generate() call (they're geometrically
+      // linked — the lid's radius depends on the base, the base's collar on
+      // the lid) — store both, then render whichever the Base/Lid toggle
+      // currently shows into the app's one shared output section.
+      lastContainerResult = result;
+      cnRenderOutput();
+      return;
+    }
+
     lastGcode = result.gcode;
     $('output').value = result.gcode;
     View3D.setPath(result.path || []);
@@ -2612,6 +3073,7 @@
     $('stats').textContent = '';
     lastGcode = '';
     $('output').value = '';
+    lastContainerResult = null;
   }
 
   function showWarnings(list, isError) {
@@ -2646,6 +3108,8 @@
         ? 'spoon'
         : p === 'lamp'
         ? 'lampshade'
+        : p === 'container'
+        ? 'container_' + cnActivePart
         : 'vase_' + $('shape').value;
     return stem + '_' + Date.now() + '.gcode';
   }
@@ -2815,7 +3279,7 @@
   function fitCanvases() {
     [
       'preview', 'previewBS', 've_preview', 've_profile', 've_topCurveCanvas', 've_botCurveCanvas',
-      'sp_preview', 'ls_preview', 'preview3d',
+      'sp_preview', 'ls_preview', 'preview3d', 'cn_profile',
     ].forEach((id) => {
       const c = $(id);
       const dpr = Math.min(window.devicePixelRatio || 1, 2.5);
@@ -2824,7 +3288,7 @@
       // layout size and grow without bound (belt-and-braces vs missing CSS).
       const px = Math.min(1600, Math.round(w * dpr));
       // Backing store must match the CSS aspect ratio or the drawing skews.
-      const ratio = { ve_profile: 0.6, ls_preview: 0.75 }[id] || 1;
+      const ratio = { ve_profile: 0.6, ls_preview: 0.75, cn_profile: 0.6 }[id] || 1;
       const py = Math.round(px * ratio);
       if (px > 0 && (c.width !== px || c.height !== py)) {
         c.width = px;
@@ -2878,6 +3342,8 @@
     showVeCurvePointCount('top', num('ve_topPtCount'));
     showVesselBottomShape($('ve_bottomShape').value);
     showVeCurvePointCount('bot', num('ve_botPtCount'));
+    cnShowProfMidCount(num('cn_profMidCount'));
+    cnSetPart(cnActivePart);
     showProject(activeProject());
   }
 
@@ -3152,6 +3618,25 @@
   });
   wireVesselProfileCanvas();
 
+  $('ve_randomizeAllBtn').addEventListener('click', () => {
+    veRandomizeEverything();
+    updateShapeUI();
+  });
+  $('ve_seed').addEventListener('change', () => {
+    veRandomizeAllFromSeed(Math.max(0, Math.round(num('ve_seed'))));
+    updateShapeUI();
+  });
+
+  $('cn_profMidCount').addEventListener('change', () => {
+    cnShowProfMidCount(num('cn_profMidCount'));
+    updateShapeUI();
+  });
+  $('cn_profMidPrevBtn').addEventListener('click', () => cnSelectProfMid(cnProfMidSelected - 1));
+  $('cn_profMidNextBtn').addEventListener('click', () => cnSelectProfMid(cnProfMidSelected + 1));
+  cnWireProfileCanvas();
+  $('cnPartBaseBtn').addEventListener('click', () => cnSetPart('base'));
+  $('cnPartLidBtn').addEventListener('click', () => cnSetPart('lid'));
+
   $('bs_brimEnabled').addEventListener('change', () => {
     $('bs_brimFields').hidden = !$('bs_brimEnabled').checked;
     updateShapeUI();
@@ -3205,6 +3690,7 @@
   $('tabVessel').addEventListener('click', () => switchProject('vessel'));
   $('tabSpoon').addEventListener('click', () => switchProject('spoon'));
   $('tabLamp').addEventListener('click', () => switchProject('lamp'));
+  $('tabContainer').addEventListener('click', () => switchProject('container'));
 
   $('regenBtn').addEventListener('click', regenerate);
   $('copyBtn').addEventListener('click', copy);

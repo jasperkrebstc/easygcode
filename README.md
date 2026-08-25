@@ -190,6 +190,24 @@ keep **fully independent settings** per project:
   handoff with no travel and no ramp — for the filleted style this handoff sits
   partway through a layer height rather than on a layer boundary, so the wall's
   revolution count adjusts to still land exactly on the configured wall height. A
+  master **"Randomize everything"** button (with its own **seed** field) runs every
+  one of the profile's and curves' own individual randomizers in a single call — the
+  radius profile always, plus the top and/or bottom curve whenever they're actually
+  set to custom points (randomizing a curve that isn't in points mode would silently
+  change fields with no visible effect, which would make the seed less meaningful,
+  not more) — so one tap makes an entirely fresh, unrepeated vessel. Point counts are
+  never touched by any of this. The seed shown after each press can be typed back in
+  later to reproduce that exact vessel — the standalone per-curve/per-profile shuffle
+  functions nudge each point from wherever it CURRENTLY sits (exactly right for
+  "shuffle a bit more" via repeated clicks), which on its own would make a seed
+  produce a different result depending on what was already in the fields; the master
+  button avoids that by resetting every position to its even-spacing baseline first,
+  then shuffling from that fixed, known starting point, so the whole result is a pure
+  function of (seed, point counts, mid count, randomize domains) — reproducible as
+  long as none of those have changed since the seed was made (verified: byte-identical
+  3D-preview screenshots after randomizing away and back to the same seed, and 50
+  reproducibility trials across 5 different point-count/curve-mode combinations, zero
+  mismatches). A
   **radius profile** — bottom/top scale plus **0–8 middle points**, each its own
   height (0–1) and scale — tapers the wall with height for cones, bellied vases,
   and flared trays (bottom = top = every middle scale all `1` is a straight prism;
@@ -474,6 +492,45 @@ keep **fully independent settings** per project:
   the throat on the bed this changes nothing (the throat is a cylinder, so the radius is
   already constant); it matters when the wide rim goes down first and the wall is already
   sloping at z=0.
+
+- **Container** — a circle-only vase-mode container with a separate screw-on lid, deliberately
+  a cross between the vessel and the lampshade: the vessel's filleted bottom and
+  drag-editable radius profile for the base, the lampshade's overhang-paced Z-stepping for
+  the wall (they're the same mechanism — the vessel's own filleted style already borrowed it
+  from there). Two G-codes from one linked set of settings, on one tab with a **Base/Lid**
+  toggle rather than two separate top-level tabs: switching it swaps both which input cards
+  are shown and which of the two already-generated G-codes populates the app's one shared
+  output section (3D preview, stats, warnings, textarea, download) — one **Regenerate**
+  press computes both, so flipping the toggle afterward needs no second press. No shape
+  choice (always a circle — just a radius), no brim, no pattern, no bottom-style choice
+  (always the filleted transition), no top cap on either part (both stay open — the base for
+  the lid to go over, the lid because it's the rim that slides over the base).
+  The **base**'s wall height is the total, the fillet a carve-out of the bottom of it — same
+  convention as the vessel — plus an automatic straight **collar** on top exactly as tall as
+  the lid's own straight section, so the lid has a full-height grip along its whole skirt
+  rather than hanging past the end of a too-short base wall. The base's own radius profile
+  is the vessel's drag-editable one verbatim (same Catmull-Rom local-control curve, same
+  bottom/top scale + up to 8 middle points, same tap-to-select/drag interaction) — duplicated
+  under its own `cn_` prefix rather than shared with the vessel's code, a deliberate choice to
+  ship without touching the vessel's already-tested implementation in the same pass; a
+  reasonable follow-up cleanup once the container itself has settled. The **lid** never gets
+  a profile — always a plain straight wall — just a height input (its straight section, kept
+  separate from its own fillet: "the height plus the fillet", not a total that includes it,
+  unlike the base's own convention) and its own fillet height. Its **radius** is derived, not
+  chosen: base radius + base line width + a signed **fit tolerance** field to fine-tune a
+  snug fit by hand. Both print vase-mode, so their walls are naturally a shallow single-start
+  helix (one line width's rise per revolution) rather than a true cylinder — the two are
+  meant to *thread* together via that helix when the lid is physically flipped onto the base,
+  and getting the handedness right needed real care: a physical flip is a rotation, and a
+  rotation preserves a helix's handedness (verified two independent ways — an abstract
+  parametrization argument and a concrete coordinate check of angle-vs-height slope before
+  and after the flip) — so the lid needs the **same** print direction as the base, not the
+  opposite, for the two threads to actually mesh once flipped. Exposed as the lid's own
+  explicit print-direction setting (defaulting to match the base) rather than hard-coded,
+  since this is subtle enough to be worth a physical test print — a one-field flip if a first
+  attempt doesn't seat right, not a code change. The two print settings cards note that layer
+  height should match between base and lid too — mismatched pitch would keep the threads from
+  engaging smoothly regardless of handedness.
 
 The coat hanger is a dead-simple, phone-first tool to generate **vase-mode G-code** for
 **Klipper pellet 3D printing** (or the Bambu P1P in filament mode). Pick a cross-section
