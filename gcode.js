@@ -1268,9 +1268,595 @@
     return { gcode: lines.join('\n') + '\n', warnings, stats, path };
   }
 
+  // ---- Container: a circle-only vase-mode base with a separate screw-on
+  // lid, printed as its own G-code ----
+  // A focused, self-contained pair of generators rather than another branch
+  // threaded through generate()'s own shared vessel/coat-hanger machinery
+  // above, which carries a lot of pattern/hanger/brim/multi-shape complexity
+  // this project doesn't need. Circle only, always a filleted bottom
+  // rounding straight into the wall, no brim, no pattern, no top cap (both
+  // ends stay open — the base for the lid to go over, the lid because it's
+  // the rim that slides over the base). Both reuse the exact same closed-
+  // form fillet math the vessel's own filleted style already proved out.
+  //
+  // Base + lid are generated TOGETHER (see generate() below) since they're
+  // geometrically linked: the lid's own radius is the base's radius + line
+  // width + a fit tolerance, and the base's wall gets an extra straight
+  // "collar" on top exactly as tall as the lid's own straight section, so
+  // the lid's skirt has a full-height collar to grip — without it, part of
+  // the lid would hang past the bottom of the base's own wall with nothing
+  // to grip.
+  //
+  // Threading: both print vase-mode, so their walls are naturally a shallow
+  // single-start helix (one line width's rise per revolution), not a true
+  // cylinder. Printing both with the SAME print direction gives them the
+  // SAME helix handedness, which is what lets the lid's skirt thread down
+  // over the base's collar when flipped into place — physically flipping a
+  // printed part is a rotation, and a rotation preserves a helix's
+  // handedness (verified two independent ways: an abstract parametrization
+  // argument, and a concrete coordinate check tracking angle-vs-height
+  // slope before and after the flip). Exposed as its own setting on the lid
+  // (defaulting to match the base) rather than hard-coded, since this is
+  // subtle enough to be worth a physical test print — a one-field flip if a
+  // first attempt doesn't seat right, not a code change.
+  function generateContainer(cfg) {
+    const warnings = [];
+    const lines = [];
+    const path = [];
+    let totalVolume = 0;
+    let pathLength = 0;
+    let moveCount = 0;
+
+    function bail(msg) {
+      return {
+        gcode: '; ERROR: ' + msg,
+        warnings: [msg],
+        stats: { volume: 0, pathLength: 0, moves: 0, loops: 0, timeMin: 0, materialVolume: 0, actualTimeMin: 0 },
+        path: [],
+      };
+    }
+
+    const cn = cfg.container || {};
+    const lid = cfg.lid || {};
+    const cx = cn.centerX;
+    const cy = cn.centerY;
+    const lh = cn.layerHeight;
+    const lw = cn.lineWidth;
+    const tol = cn.tolerance > 0 ? cn.tolerance : 0.05;
+    if (!(lh > 0) || !(lw > 0)) return bail('Enter a valid layer height and line width.');
+    if (!(cn.radius > 0)) return bail('Enter a valid radius.');
+    if (!(cn.height > 0)) return bail('Enter a valid wall height.');
+
+    const dirSign = cn.printDirection === 'cw' ? -1 : 1;
+    let base = Geo.adaptiveShape('circle', { radius: cn.radius }, tol);
+    if (dirSign < 0) base = Geo.reverseWinding(base);
+    base = Geo.rotateToSeam(base, cn.seamSide || 'back');
+    const sampler = Geo.makeSampler(base);
+    const perim = sampler.perimeter;
+    if (!(perim > 1e-6)) return bail('Shape has zero size — check the radius.');
+
+    // Wall height (like the vessel's own) is the TOTAL, of which the
+    // bottom fillet is a carve-out — a plain straight collar exactly as
+    // tall as the lid's own straight section is added on top of that
+    // total, so it's never part of the drag-editable profile itself.
+    const vProfile = makeProfile(buildVesselProfileCps(cn));
+    const s0 = vProfile(0);
+    const profileWallN = Math.max(1, Math.round(cn.height / lh));
+    const profileWallH = profileWallN * lh;
+    const collarN = Math.max(0, Math.round((lid.straightHeight || 0) / lh));
+    const collarH = collarN * lh;
+    const wallH = profileWallH + collarH;
+
+    // Cross-section scale at absolute height z: the profile through its own
+    // configured height, then held at the profile's own top scale for the
+    // collar above it — a plain, un-tapered straight extension regardless
+    // of what the profile itself does below it.
+    function scaleAt(zAbs) {
+      const hf = profileWallH > 1e-9 ? Math.max(0, Math.min(1, zAbs / profileWallH)) : 1;
+      return vProfile(hf);
+    }
+    function seamXY(zAbs) {
+      const s = scaleAt(zAbs);
+      return { x: base[0].x * s, y: base[0].y * s };
+    }
+    // Overhang angle (from vertical) of the wall centerline at the seam, at
+    // height z — the same cos(angle) squeeze convention as the vessel's own
+    // fillet/wall use, floored the same way so a genuine 90 degree turn
+    // can't divide by zero.
+    function seamAngle(zAbs) {
+      const eps = Math.max(1e-3, lh * 0.02);
+      const zLo = Math.max(0, zAbs - eps);
+      const zHi = Math.min(wallH, zAbs + eps);
+      const a = seamXY(zLo);
+      const b = seamXY(zHi);
+      const lateral = Math.hypot(b.x - a.x, b.y - a.y);
+      const dz = Math.max(1e-6, zHi - zLo);
+      return Math.atan2(lateral, dz);
+    }
+
+    const area = beadArea(lw, lh);
+    const printer = cn.printer || {};
+    const mode = printer.mode === 'filament' ? 'filament' : 'pellet';
+    const mult = printer.multiplier > 0 ? printer.multiplier : 1;
+    const fil = printer.filament || {};
+    const pel = printer.pellet || {};
+    const filDia = fil.diameter > 0 ? fil.diameter : 1.75;
+    const eFactor = mult / (mode === 'filament' ? Math.PI * (filDia / 2) * (filDia / 2) : 1);
+    const includeStartEnd = !!printer.includeStartEnd;
+    const fanPct = mode === 'filament' ? fil.fan || 0 : pel.fan || 0;
+    const fanPWM = Math.round(Math.max(0, Math.min(100, fanPct)) * 2.55);
+
+    lines.push('; EasyGCode — container base (vase mode)');
+    lines.push('; ' + new Date().toISOString());
+    lines.push(
+      '; radius=' + cn.radius + ' wallHeight=' + profileWallH.toFixed(2) + 'mm (' + profileWallN + ' rev) collar=' +
+        collarH.toFixed(2) + 'mm (' + collarN + ' rev, matches the lid’s own straight height so it has a full-height grip)'
+    );
+    lines.push('; fillet=' + (cn.bottomFillet || 0) + 'mm rounded transition, continuous into the wall — stays open at the top for the lid');
+    lines.push(
+      '; layerHeight=' + lh + ' lineWidth=' + lw + ' tolerance=' + tol + 'mm printDirection=' +
+        (dirSign < 0 ? 'CW' : 'CCW')
+    );
+    lines.push('; printFeed=' + cn.printFeed + ' travelFeed=' + cn.travelFeed + ' (mm/min)');
+    lines.push(
+      '; printer=' + mode + ' multiplier=' + mult +
+        (mode === 'filament' ? ' filamentDiameter=' + filDia + ' (E in mm of filament)' : ' (E in mm^3, volumetric)')
+    );
+
+    if (includeStartEnd) {
+      (mode === 'filament' ? marlinStart(fil) : klipperStart(pel)).forEach((l) => lines.push(l));
+    }
+    lines.push('G90 ; absolute positioning');
+    lines.push('M83 ; relative extrusion');
+
+    let prev = null;
+    let lastFeed = null;
+    let firstExtrude = true;
+    let maxZEver = 0;
+    function noteZ(z) {
+      if (z > maxZEver) maxZEver = z;
+    }
+    function travelAbs(cur) {
+      lines.push('G0 X' + f3(cur.x) + ' Y' + f3(cur.y) + ' Z' + f3(cur.z) + ' F' + Math.round(cn.travelFeed));
+      lastFeed = cn.travelFeed;
+      path.push({ x: cur.x, y: cur.y, z: cur.z, travel: true, feed: cn.travelFeed });
+      prev = cur;
+      moveCount++;
+    }
+    function emitSeg(cur, feed, ramp, areaOvr) {
+      const segLen = dist3(prev, cur);
+      if (segLen < 1e-7) {
+        prev = cur;
+        return;
+      }
+      const dVol = (areaOvr || area) * segLen * (ramp == null ? 1 : ramp);
+      totalVolume += dVol;
+      pathLength += segLen;
+      let line = 'G1 X' + f3(cur.x) + ' Y' + f3(cur.y) + ' Z' + f3(cur.z) + ' E' + f5(dVol * eFactor);
+      if (feed !== lastFeed || firstExtrude) {
+        line += ' F' + Math.round(feed);
+        lastFeed = feed;
+      }
+      lines.push(line);
+      path.push({ x: cur.x, y: cur.y, z: cur.z, travel: false, feed: feed });
+      firstExtrude = false;
+      moveCount++;
+      prev = cur;
+      noteZ(cur.z);
+    }
+
+    // ---- Base u-samples ----
+    let uSet = [];
+    for (let i = 0; i < base.length; i++) uSet.push(sampler.uOf(i));
+    uSet = Array.from(new Set(uSet.map((u) => +u.toFixed(9)))).sort((a, b) => a - b);
+    if (uSet.length === 0 || uSet[0] > 1e-9) uSet.unshift(0);
+
+    // ---- Flat bottom disc, sized to leave room for the fillet ----
+    let ctx0 = 0;
+    let cty0 = 0;
+    base.forEach((p) => {
+      ctx0 += p.x;
+      cty0 += p.y;
+    });
+    ctx0 /= base.length;
+    cty0 /= base.length;
+    let Rchar0 = 0;
+    base.forEach((p) => {
+      Rchar0 = Math.max(Rchar0, Geo.dist(p, { x: ctx0, y: cty0 }));
+    });
+    const Rchar = Rchar0 * s0;
+    let F = Math.max(0, cn.bottomFillet || 0);
+    const Fmax = Math.max(0, (wallH - lh) * 0.95);
+    if (F > Fmax) {
+      F = Fmax;
+      warnings.push('Fillet height is too large for the wall height — clamped to ' + F.toFixed(1) + 'mm.');
+    }
+    const Fscale = Rchar > 1e-6 ? F / Rchar : 0;
+    const flatScale = Math.max(0, s0 - Fscale);
+    const flatBase = base.map((p) => ({ x: p.x * flatScale, y: p.y * flatScale }));
+    let flatPoly = null;
+    if (flatScale > 1e-6) {
+      const innerFlat = Geo.offsetClosed(flatBase, -lw, dirSign);
+      const fillFlat = Geo.ringFill(innerFlat, lw, tol, 'spiral', cn.seamSide || 'back', flatBase, true);
+      flatPoly = fillFlat.loops[0] || null;
+    }
+    if (!flatPoly) {
+      warnings.push('Fillet height leaves no flat bottom to fill — starting the rounded transition directly from the center.');
+    } else {
+      travelAbs({ x: flatPoly[0].x + cx, y: flatPoly[0].y + cy, z: lh });
+      for (let q = 1; q < flatPoly.length; q++) {
+        const p = flatPoly[q];
+        emitSeg({ x: p.x + cx, y: p.y + cy, z: lh }, cn.printFeed, p.e != null ? p.e : 1);
+      }
+    }
+    if (includeStartEnd && fanPWM > 0) lines.push('M106 S' + fanPWM + ' ; part cooling fan on');
+
+    // ---- Fillet climb: same natural-step-then-rescale technique as the
+    // wall below (and the vessel's own fillet), so the last turn is always
+    // a fair share, never an arbitrarily tiny leftover ----
+    let vZOffset = lh;
+    if (F > 1e-6) {
+      const zWallStart = lh + F;
+      const fSampler = Geo.vesselFilletSampler(F, seamAngle(zWallStart));
+      const scaleEnd = scaleAt(zWallStart);
+      const filletPt = (z0, z1, u) => {
+        const zc = z0 + (z1 - z0) * u;
+        const frac = fSampler.at(zc).frac;
+        const s = flatScale + (scaleEnd - flatScale) * frac;
+        const sp = sampler.at(u).pos;
+        return { x: sp.x * s + cx, y: sp.y * s + cy, z: lh + zc };
+      };
+      if (!flatPoly) travelAbs(filletPt(0, 0, 0));
+      const naturalFilletDz = [];
+      {
+        let zc0 = 0;
+        let guard0 = 0;
+        while (zc0 < F - 1e-6 && guard0++ < 100000) {
+          const guessDz = Math.max(0.05, Math.cos(fSampler.at(zc0).angle)) * lh;
+          const aMid = fSampler.at(Math.min(F, zc0 + guessDz / 2)).angle;
+          const dz = Math.max(0.05, Math.cos(aMid)) * lh;
+          naturalFilletDz.push(dz);
+          zc0 += dz;
+        }
+      }
+      let filletSum = 0;
+      for (let k = 0; k < naturalFilletDz.length; k++) filletSum += naturalFilletDz[k];
+      const filletScale = filletSum > 1e-9 ? F / filletSum : 1;
+      let zc = 0;
+      for (let k = 0; k < naturalFilletDz.length; k++) {
+        const zNext = k === naturalFilletDz.length - 1 ? F : zc + naturalFilletDz[k] * filletScale;
+        for (let i = 0; i < uSet.length; i++) {
+          const u = uSet[i];
+          if (u <= 1e-9) continue;
+          emitSeg(filletPt(zc, zNext, u), cn.printFeed, 1);
+        }
+        emitSeg(filletPt(zc, zNext, 1), cn.printFeed, 1);
+        zc = zNext;
+      }
+      vZOffset = lh + F;
+    }
+
+    // ---- Wall (profile + straight collar), overhang-paced ----
+    const wallPt = (z0, z1, u) => {
+      const zNom = Math.min(z0 + (z1 - z0) * u, wallH);
+      const sp = sampler.at(u).pos;
+      const s = scaleAt(zNom);
+      return { x: sp.x * s + cx, y: sp.y * s + cy, z: zNom };
+    };
+    const naturalWallDz = [];
+    {
+      let zc0 = vZOffset;
+      let guard0 = 0;
+      while (zc0 < wallH - 1e-6 && guard0++ < 100000) {
+        const guessDz = Math.max(0.05, Math.cos(seamAngle(zc0))) * lh;
+        const aMid = seamAngle(Math.min(wallH, zc0 + guessDz / 2));
+        const dz = Math.max(0.05, Math.cos(aMid)) * lh;
+        naturalWallDz.push(dz);
+        zc0 += dz;
+      }
+    }
+    let wallSum = 0;
+    for (let k = 0; k < naturalWallDz.length; k++) wallSum += naturalWallDz[k];
+    const wallScale = wallSum > 1e-9 ? (wallH - vZOffset) / wallSum : 1;
+    let zCursor = vZOffset;
+    for (let k = 0; k < naturalWallDz.length; k++) {
+      const z0 = zCursor;
+      const z1 = k === naturalWallDz.length - 1 ? wallH : zCursor + naturalWallDz[k] * wallScale;
+      for (let i = 0; i < uSet.length; i++) {
+        const u = uSet[i];
+        if (u <= 1e-9) continue;
+        emitSeg(wallPt(z0, z1, u), cn.printFeed, 1);
+      }
+      emitSeg(wallPt(z0, z1, 1), cn.printFeed, 1);
+      zCursor = z1;
+    }
+    lines.push('; open top (stays open for the lid) — wall ends at full flow, no cap loop');
+
+    if (includeStartEnd) {
+      const endLift = maxZEver + Math.max(0, printer.endLift != null ? printer.endLift : 50);
+      (mode === 'filament' ? marlinEnd(endLift) : klipperEnd(endLift)).forEach((l) => lines.push(l));
+    }
+
+    let timeMin = 0;
+    for (let i = 1; i < path.length; i++) {
+      const d = dist3(path[i - 1], path[i]);
+      if (path[i].feed > 0) timeMin += d / path[i].feed;
+    }
+    const stats = {
+      volume: totalVolume,
+      pathLength: pathLength,
+      moves: moveCount,
+      loops: profileWallN + collarN,
+      timeMin: timeMin,
+      materialVolume: totalVolume,
+      actualTimeMin: timeMin,
+    };
+    return { gcode: lines.join('\n') + '\n', warnings, stats, path };
+  }
+
+  // Lid: no radius profile (always a plain straight wall — per instruction,
+  // the lid never needs the drag-editable profile the base has), radius
+  // derived from the base (+ line width + a fit tolerance), its own fillet
+  // and straight height. Unlike the base's own "wall height is the total,
+  // fillet carved out of it" convention, the lid's straight-height input is
+  // ADDITIONAL to the fillet, per instruction: "the height will always be
+  // the height plus the fillet."
+  function generateContainerLid(cfg) {
+    const warnings = [];
+    const lines = [];
+    const path = [];
+    let totalVolume = 0;
+    let pathLength = 0;
+    let moveCount = 0;
+
+    function bail(msg) {
+      return {
+        gcode: '; ERROR: ' + msg,
+        warnings: [msg],
+        stats: { volume: 0, pathLength: 0, moves: 0, loops: 0, timeMin: 0, materialVolume: 0, actualTimeMin: 0 },
+        path: [],
+      };
+    }
+
+    const cn = cfg.container || {};
+    const lid = cfg.lid || {};
+    const cx = lid.centerX;
+    const cy = lid.centerY;
+    const lh = lid.layerHeight;
+    const lw = lid.lineWidth;
+    const tol = lid.tolerance > 0 ? lid.tolerance : 0.05;
+    if (!(lh > 0) || !(lw > 0)) return bail('Enter a valid layer height and line width.');
+    if (!(cn.radius > 0) || !(cn.lineWidth > 0)) return bail('The container base needs a valid radius and line width first.');
+    if (!(lid.straightHeight > 0)) return bail('Enter a valid lid height.');
+
+    const radius = cn.radius + cn.lineWidth + (lid.fitTolerance || 0);
+    if (!(radius > 0)) return bail('Lid radius came out to zero or less — increase the base radius or the fit tolerance.');
+
+    const dirSign = (lid.printDirection || cn.printDirection) === 'cw' ? -1 : 1;
+    let base = Geo.adaptiveShape('circle', { radius: radius }, tol);
+    if (dirSign < 0) base = Geo.reverseWinding(base);
+    base = Geo.rotateToSeam(base, lid.seamSide || 'back');
+    const sampler = Geo.makeSampler(base);
+    const perim = sampler.perimeter;
+    if (!(perim > 1e-6)) return bail('Shape has zero size — check the radius.');
+
+    const straightN = Math.max(1, Math.round(lid.straightHeight / lh));
+    const straightH = straightN * lh;
+    let F = Math.max(0, lid.fillet || 0);
+    const wallH = lh + F + straightH;
+
+    function seamXY(zAbs) {
+      // Always a plain straight wall (no drag-editable profile on the lid),
+      // so the only non-vertical stretch is the fillet itself.
+      return { x: base[0].x, y: base[0].y };
+    }
+    function seamAngle(zAbs) {
+      if (zAbs > lh + F + 1e-6) return 0; // straight section: dead vertical
+      const eps = Math.max(1e-3, lh * 0.02);
+      const zLo = Math.max(0, zAbs - eps);
+      const zHi = Math.min(wallH, zAbs + eps);
+      const a = seamXY(zLo);
+      const b = seamXY(zHi);
+      const lateral = Math.hypot(b.x - a.x, b.y - a.y);
+      const dz = Math.max(1e-6, zHi - zLo);
+      return Math.atan2(lateral, dz);
+    }
+
+    const area = beadArea(lw, lh);
+    const printer = lid.printer || {};
+    const mode = printer.mode === 'filament' ? 'filament' : 'pellet';
+    const mult = printer.multiplier > 0 ? printer.multiplier : 1;
+    const fil = printer.filament || {};
+    const pel = printer.pellet || {};
+    const filDia = fil.diameter > 0 ? fil.diameter : 1.75;
+    const eFactor = mult / (mode === 'filament' ? Math.PI * (filDia / 2) * (filDia / 2) : 1);
+    const includeStartEnd = !!printer.includeStartEnd;
+    const fanPct = mode === 'filament' ? fil.fan || 0 : pel.fan || 0;
+    const fanPWM = Math.round(Math.max(0, Math.min(100, fanPct)) * 2.55);
+
+    lines.push('; EasyGCode — container lid (vase mode)');
+    lines.push('; ' + new Date().toISOString());
+    lines.push(
+      '; radius=' + radius.toFixed(2) + 'mm (base ' + cn.radius + ' + lineWidth ' + cn.lineWidth +
+        ' + fit tolerance ' + (lid.fitTolerance || 0) + ') straightHeight=' + straightH.toFixed(2) +
+        'mm (' + straightN + ' rev) fillet=' + F.toFixed(2) + 'mm'
+    );
+    lines.push(
+      '; printDirection=' + (dirSign < 0 ? 'CW' : 'CCW') +
+        ' (matches the base so the vase-mode spiral seam threads together when flipped on)'
+    );
+    lines.push('; layerHeight=' + lh + ' lineWidth=' + lw + ' tolerance=' + tol + 'mm');
+    lines.push('; printFeed=' + lid.printFeed + ' travelFeed=' + lid.travelFeed + ' (mm/min)');
+    lines.push(
+      '; printer=' + mode + ' multiplier=' + mult +
+        (mode === 'filament' ? ' filamentDiameter=' + filDia + ' (E in mm of filament)' : ' (E in mm^3, volumetric)')
+    );
+
+    if (includeStartEnd) {
+      (mode === 'filament' ? marlinStart(fil) : klipperStart(pel)).forEach((l) => lines.push(l));
+    }
+    lines.push('G90 ; absolute positioning');
+    lines.push('M83 ; relative extrusion');
+
+    let prev = null;
+    let lastFeed = null;
+    let firstExtrude = true;
+    let maxZEver = 0;
+    function noteZ(z) {
+      if (z > maxZEver) maxZEver = z;
+    }
+    function travelAbs(cur) {
+      lines.push('G0 X' + f3(cur.x) + ' Y' + f3(cur.y) + ' Z' + f3(cur.z) + ' F' + Math.round(lid.travelFeed));
+      lastFeed = lid.travelFeed;
+      path.push({ x: cur.x, y: cur.y, z: cur.z, travel: true, feed: lid.travelFeed });
+      prev = cur;
+      moveCount++;
+    }
+    function emitSeg(cur, feed, ramp, areaOvr) {
+      const segLen = dist3(prev, cur);
+      if (segLen < 1e-7) {
+        prev = cur;
+        return;
+      }
+      const dVol = (areaOvr || area) * segLen * (ramp == null ? 1 : ramp);
+      totalVolume += dVol;
+      pathLength += segLen;
+      let line = 'G1 X' + f3(cur.x) + ' Y' + f3(cur.y) + ' Z' + f3(cur.z) + ' E' + f5(dVol * eFactor);
+      if (feed !== lastFeed || firstExtrude) {
+        line += ' F' + Math.round(feed);
+        lastFeed = feed;
+      }
+      lines.push(line);
+      path.push({ x: cur.x, y: cur.y, z: cur.z, travel: false, feed: feed });
+      firstExtrude = false;
+      moveCount++;
+      prev = cur;
+      noteZ(cur.z);
+    }
+
+    let uSet = [];
+    for (let i = 0; i < base.length; i++) uSet.push(sampler.uOf(i));
+    uSet = Array.from(new Set(uSet.map((u) => +u.toFixed(9)))).sort((a, b) => a - b);
+    if (uSet.length === 0 || uSet[0] > 1e-9) uSet.unshift(0);
+
+    // ---- Flat top-facing disc (becomes the lid's outer top once flipped) ----
+    let ctx0 = 0;
+    let cty0 = 0;
+    base.forEach((p) => {
+      ctx0 += p.x;
+      cty0 += p.y;
+    });
+    ctx0 /= base.length;
+    cty0 /= base.length;
+    let Rchar0 = 0;
+    base.forEach((p) => {
+      Rchar0 = Math.max(Rchar0, Geo.dist(p, { x: ctx0, y: cty0 }));
+    });
+    const Rchar = Rchar0;
+    const Fscale = Rchar > 1e-6 ? F / Rchar : 0;
+    const flatScale = Math.max(0, 1 - Fscale);
+    const flatBase = base.map((p) => ({ x: p.x * flatScale, y: p.y * flatScale }));
+    let flatPoly = null;
+    if (flatScale > 1e-6) {
+      const innerFlat = Geo.offsetClosed(flatBase, -lw, dirSign);
+      const fillFlat = Geo.ringFill(innerFlat, lw, tol, 'spiral', lid.seamSide || 'back', flatBase, true);
+      flatPoly = fillFlat.loops[0] || null;
+    }
+    if (!flatPoly) {
+      warnings.push('Fillet height leaves no flat top to fill — starting the rounded transition directly from the center.');
+    } else {
+      travelAbs({ x: flatPoly[0].x + cx, y: flatPoly[0].y + cy, z: lh });
+      for (let q = 1; q < flatPoly.length; q++) {
+        const p = flatPoly[q];
+        emitSeg({ x: p.x + cx, y: p.y + cy, z: lh }, lid.printFeed, p.e != null ? p.e : 1);
+      }
+    }
+    if (includeStartEnd && fanPWM > 0) lines.push('M106 S' + fanPWM + ' ; part cooling fan on');
+
+    let vZOffset = lh;
+    if (F > 1e-6) {
+      const fSampler = Geo.vesselFilletSampler(F, 0); // arrives dead vertical — plain straight wall above it
+      const filletPt = (z0, z1, u) => {
+        const zc = z0 + (z1 - z0) * u;
+        const frac = fSampler.at(zc).frac;
+        const s = flatScale + (1 - flatScale) * frac;
+        const sp = sampler.at(u).pos;
+        return { x: sp.x * s + cx, y: sp.y * s + cy, z: lh + zc };
+      };
+      if (!flatPoly) travelAbs(filletPt(0, 0, 0));
+      const naturalFilletDz = [];
+      {
+        let zc0 = 0;
+        let guard0 = 0;
+        while (zc0 < F - 1e-6 && guard0++ < 100000) {
+          const guessDz = Math.max(0.05, Math.cos(fSampler.at(zc0).angle)) * lh;
+          const aMid = fSampler.at(Math.min(F, zc0 + guessDz / 2)).angle;
+          const dz = Math.max(0.05, Math.cos(aMid)) * lh;
+          naturalFilletDz.push(dz);
+          zc0 += dz;
+        }
+      }
+      let filletSum = 0;
+      for (let k = 0; k < naturalFilletDz.length; k++) filletSum += naturalFilletDz[k];
+      const filletScale = filletSum > 1e-9 ? F / filletSum : 1;
+      let zc = 0;
+      for (let k = 0; k < naturalFilletDz.length; k++) {
+        const zNext = k === naturalFilletDz.length - 1 ? F : zc + naturalFilletDz[k] * filletScale;
+        for (let i = 0; i < uSet.length; i++) {
+          const u = uSet[i];
+          if (u <= 1e-9) continue;
+          emitSeg(filletPt(zc, zNext, u), lid.printFeed, 1);
+        }
+        emitSeg(filletPt(zc, zNext, 1), lid.printFeed, 1);
+        zc = zNext;
+      }
+      vZOffset = lh + F;
+    }
+
+    // ---- Straight wall: dead vertical, so a flat lh per revolution exactly
+    // (no overhang to compensate for) ----
+    for (let L = 0; L < straightN; L++) {
+      const z0 = vZOffset + L * lh;
+      const z1 = Math.min(wallH, z0 + lh);
+      for (let i = 0; i < uSet.length; i++) {
+        const u = uSet[i];
+        if (u <= 1e-9) continue;
+        const sp = sampler.at(u).pos;
+        emitSeg({ x: sp.x + cx, y: sp.y + cy, z: z0 + (z1 - z0) * u }, lid.printFeed, 1);
+      }
+      const spEnd = sampler.at(1).pos;
+      emitSeg({ x: spEnd.x + cx, y: spEnd.y + cy, z: z1 }, lid.printFeed, 1);
+    }
+    lines.push('; open rim (slides over the base) — wall ends at full flow, no cap loop');
+
+    if (includeStartEnd) {
+      const endLift = maxZEver + Math.max(0, printer.endLift != null ? printer.endLift : 50);
+      (mode === 'filament' ? marlinEnd(endLift) : klipperEnd(endLift)).forEach((l) => lines.push(l));
+    }
+
+    let timeMin = 0;
+    for (let i = 1; i < path.length; i++) {
+      const d = dist3(path[i - 1], path[i]);
+      if (path[i].feed > 0) timeMin += d / path[i].feed;
+    }
+    const stats = {
+      volume: totalVolume,
+      pathLength: pathLength,
+      moves: moveCount,
+      loops: straightN,
+      timeMin: timeMin,
+      materialVolume: totalVolume,
+      actualTimeMin: timeMin,
+    };
+    return { gcode: lines.join('\n') + '\n', warnings, stats, path };
+  }
+
   function generate(cfg) {
     if (cfg.project === 'spoon') return generateSpoon(cfg);
     if (cfg.project === 'lamp') return generateLamp(cfg);
+    if (cfg.project === 'container') {
+      return { base: generateContainer(cfg), lid: generateContainerLid(cfg) };
+    }
 
     const warnings = [];
     const lines = [];

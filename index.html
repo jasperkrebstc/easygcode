@@ -27,6 +27,7 @@
       <button type="button" id="tabVessel" class="tab">Vessel</button>
       <button type="button" id="tabSpoon" class="tab">Spoon</button>
       <button type="button" id="tabLamp" class="tab">Lampshade</button>
+      <button type="button" id="tabContainer" class="tab">Container</button>
     </nav>
     <input type="hidden" id="activeProject" value="cordhanger" />
 
@@ -1129,6 +1130,226 @@
         </div>
         <p class="hint">Outer rings only — printed outermost first, working inward and leaving one line
           width of gap for the wall itself.</p>
+      </section>
+
+      <section class="card" data-project="container" hidden>
+        <h2>Container</h2>
+        <p class="hint">A circle-only vase-mode container with a separate screw-on lid — two
+          G-codes from one set of linked settings. Switch below to edit and preview each part.</p>
+        <div class="buttons">
+          <button type="button" id="cnPartBaseBtn" class="tab active">Base</button>
+          <button type="button" id="cnPartLidBtn" class="tab">Lid</button>
+        </div>
+      </section>
+
+      <section class="card" data-project="container" data-container-part="base" hidden>
+        <h2>
+          Printer &amp; material (base)
+          <label class="toggle"><input type="checkbox" id="cn_startEndEnabled" checked /> start/end G-code</label>
+        </h2>
+        <div class="grid">
+          <div class="field">
+            <label>Printer</label>
+            <select id="cn_printerMode">
+              <option value="pellet">Pellet (Klipper)</option>
+              <option value="filament">Filament (Marlin)</option>
+            </select>
+          </div>
+          <div class="field"><label>Extrusion multiplier</label><input type="number" id="cn_extrusionMultiplier" value="1.0" min="0.01" step="0.01" /></div>
+          <div class="field"><label>End lift above print (mm)</label><input type="number" id="cn_endLift" value="50" min="0" step="5" /></div>
+        </div>
+        <div class="printer-params-cn grid" data-mode="pellet">
+          <div class="field"><label>Zone up temp (°C)</label><input type="number" id="cn_pelUpTemp" value="210" min="0" step="5" /></div>
+          <div class="field"><label>Zone mid temp (°C)</label><input type="number" id="cn_pelMidTemp" value="210" min="0" step="5" /></div>
+          <div class="field"><label>Zone down temp (°C)</label><input type="number" id="cn_pelDownTemp" value="210" min="0" step="5" /></div>
+          <div class="field"><label>Bed temp (°C)</label><input type="number" id="cn_pelBedTemp" value="50" min="0" step="5" /></div>
+          <div class="field"><label>Pressure advance</label><input type="number" id="cn_pelPA" value="0.3" min="0" step="0.05" /></div>
+          <div class="field"><label>Purge quantity</label><input type="number" id="cn_pelPurge" value="5000" min="0" step="100" /></div>
+          <div class="field"><label>Fan (%)</label><input type="number" id="cn_pelFan" value="0" min="0" max="100" step="5" /></div>
+        </div>
+        <div class="printer-params-cn grid" data-mode="filament" hidden>
+          <div class="field"><label>Filament diameter (mm)</label><input type="number" id="cn_filDiameter" value="1.75" min="0.1" step="0.05" /></div>
+          <div class="field"><label>Nozzle temp (°C)</label><input type="number" id="cn_filNozzleTemp" value="205" min="0" step="5" /></div>
+          <div class="field"><label>Bed temp (°C)</label><input type="number" id="cn_filBedTemp" value="60" min="0" step="5" /></div>
+          <div class="field"><label>Fan (%)</label><input type="number" id="cn_filFan" value="100" min="0" max="100" step="5" /></div>
+        </div>
+        <p class="hint" id="cn_printerHint"></p>
+      </section>
+
+      <section class="card" data-project="container" data-container-part="base" hidden>
+        <h2>Shape &amp; profile (base)</h2>
+        <div class="grid">
+          <div class="field"><label>Radius (mm)</label><input type="number" id="cn_radius" value="35" min="0.1" step="0.5" /></div>
+          <div class="field"><label>Wall height (mm)</label><input type="number" id="cn_height" value="60" min="1" step="1" /></div>
+          <div class="field"><label>Bottom fillet height (mm)</label><input type="number" id="cn_bottomFillet" value="8" min="0" step="1" /></div>
+        </div>
+        <p class="hint">Wall height is the total, of which the fillet is the bottom part —
+          same convention as the vessel project. A straight collar exactly as tall as the
+          lid's own straight height is added automatically on top, so the lid has a
+          full-height grip; it isn't part of the profile below.</p>
+        <h3 class="subhead">Radius profile</h3>
+        <p class="hint">× base radius, lofted bottom → top. Tap or drag a point on the curve
+          below to adjust it — bottom and top only move sideways (scale); middle points move
+          both up/down (height) and sideways, and can never cross past their own neighbor.
+          Defaults to a plain straight wall.</p>
+        <canvas id="cn_profile" width="600" height="360"></canvas>
+        <div class="grid">
+          <div class="field"><label>Bottom scale (×)</label><input type="number" id="cn_profBottom" value="1.0" min="0.05" step="0.05" /></div>
+          <div class="field"><label>Top scale (×)</label><input type="number" id="cn_profTop" value="1.0" min="0.05" step="0.05" /></div>
+        </div>
+        <div class="grid">
+          <div class="field"><label>Middle points (0–8)</label><input type="number" id="cn_profMidCount" value="0" min="0" max="8" step="1" /></div>
+        </div>
+        <div id="cn_profMidFields" hidden>
+          <p class="hint" id="cn_profMidSelHint">Middle point 1 of 1</p>
+          <div class="buttons">
+            <button type="button" id="cn_profMidPrevBtn">◀ Prev point</button>
+            <button type="button" id="cn_profMidNextBtn">Next point ▶</button>
+          </div>
+        <div class="cn-prof-mid grid" data-mid="1">
+          <div class="field"><label>Height (0–1)</label><input type="number" id="cn_profMidH1" value="0.5" min="0" max="1" step="0.01" /></div>
+          <div class="field"><label>Scale (×)</label><input type="number" id="cn_profMid1" value="1.0" min="0.05" step="0.05" /></div>
+        </div>
+        <div class="cn-prof-mid grid" data-mid="2" hidden>
+          <div class="field"><label>Height (0–1)</label><input type="number" id="cn_profMidH2" value="0.65" min="0" max="1" step="0.01" /></div>
+          <div class="field"><label>Scale (×)</label><input type="number" id="cn_profMid2" value="1.0" min="0.05" step="0.05" /></div>
+        </div>
+        <div class="cn-prof-mid grid" data-mid="3" hidden>
+          <div class="field"><label>Height (0–1)</label><input type="number" id="cn_profMidH3" value="0.8" min="0" max="1" step="0.01" /></div>
+          <div class="field"><label>Scale (×)</label><input type="number" id="cn_profMid3" value="1.0" min="0.05" step="0.05" /></div>
+        </div>
+        <div class="cn-prof-mid grid" data-mid="4" hidden>
+          <div class="field"><label>Height (0–1)</label><input type="number" id="cn_profMidH4" value="0.55" min="0" max="1" step="0.01" /></div>
+          <div class="field"><label>Scale (×)</label><input type="number" id="cn_profMid4" value="1.0" min="0.05" step="0.05" /></div>
+        </div>
+        <div class="cn-prof-mid grid" data-mid="5" hidden>
+          <div class="field"><label>Height (0–1)</label><input type="number" id="cn_profMidH5" value="0.65" min="0" max="1" step="0.01" /></div>
+          <div class="field"><label>Scale (×)</label><input type="number" id="cn_profMid5" value="1.0" min="0.05" step="0.05" /></div>
+        </div>
+        <div class="cn-prof-mid grid" data-mid="6" hidden>
+          <div class="field"><label>Height (0–1)</label><input type="number" id="cn_profMidH6" value="0.75" min="0" max="1" step="0.01" /></div>
+          <div class="field"><label>Scale (×)</label><input type="number" id="cn_profMid6" value="1.0" min="0.05" step="0.05" /></div>
+        </div>
+        <div class="cn-prof-mid grid" data-mid="7" hidden>
+          <div class="field"><label>Height (0–1)</label><input type="number" id="cn_profMidH7" value="0.85" min="0" max="1" step="0.01" /></div>
+          <div class="field"><label>Scale (×)</label><input type="number" id="cn_profMid7" value="1.0" min="0.05" step="0.05" /></div>
+        </div>
+        <div class="cn-prof-mid grid" data-mid="8" hidden>
+          <div class="field"><label>Height (0–1)</label><input type="number" id="cn_profMidH8" value="0.95" min="0" max="1" step="0.01" /></div>
+          <div class="field"><label>Scale (×)</label><input type="number" id="cn_profMid8" value="1.0" min="0.05" step="0.05" /></div>
+        </div>
+        </div>
+      </section>
+
+      <section class="card" data-project="container" data-container-part="base" hidden>
+        <h2>Print settings (base)</h2>
+        <div class="grid">
+          <div class="field"><label>Layer height (mm)</label><input type="number" id="cn_layerHeight" value="0.6" min="0.05" step="0.05" /></div>
+          <div class="field"><label>Line width (mm)</label><input type="number" id="cn_lineWidth" value="2.0" min="0.1" step="0.1" /></div>
+          <div class="field"><label>Print feed (mm/min)</label><input type="number" id="cn_printFeed" value="1800" min="1" step="50" /></div>
+          <div class="field"><label>Travel feed (mm/min)</label><input type="number" id="cn_travelFeed" value="6000" min="1" step="100" /></div>
+          <div class="field"><label>Chord tolerance (mm)</label><input type="number" id="cn_tolerance" value="0.05" min="0.001" step="0.01" /></div>
+          <div class="field">
+            <label>Print direction</label>
+            <select id="cn_printDirection">
+              <option value="ccw">Counter-clockwise</option>
+              <option value="cw">Clockwise</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Seam position</label>
+            <select id="cn_seamSide">
+              <option value="back">Back (+Y)</option>
+              <option value="front">Front (−Y)</option>
+              <option value="right">Right (+X)</option>
+              <option value="left">Left (−X)</option>
+            </select>
+          </div>
+          <div class="field"><label>Bed center X (mm)</label><input type="number" id="cn_centerX" value="125" step="1" /></div>
+          <div class="field"><label>Bed center Y (mm)</label><input type="number" id="cn_centerY" value="125" step="1" /></div>
+        </div>
+      </section>
+
+      <section class="card" data-project="container" data-container-part="lid" hidden>
+        <h2>
+          Printer &amp; material (lid)
+          <label class="toggle"><input type="checkbox" id="cnl_startEndEnabled" checked /> start/end G-code</label>
+        </h2>
+        <div class="grid">
+          <div class="field">
+            <label>Printer</label>
+            <select id="cnl_printerMode">
+              <option value="pellet">Pellet (Klipper)</option>
+              <option value="filament">Filament (Marlin)</option>
+            </select>
+          </div>
+          <div class="field"><label>Extrusion multiplier</label><input type="number" id="cnl_extrusionMultiplier" value="1.0" min="0.01" step="0.01" /></div>
+          <div class="field"><label>End lift above print (mm)</label><input type="number" id="cnl_endLift" value="50" min="0" step="5" /></div>
+        </div>
+        <div class="printer-params-cnl grid" data-mode="pellet">
+          <div class="field"><label>Zone up temp (°C)</label><input type="number" id="cnl_pelUpTemp" value="210" min="0" step="5" /></div>
+          <div class="field"><label>Zone mid temp (°C)</label><input type="number" id="cnl_pelMidTemp" value="210" min="0" step="5" /></div>
+          <div class="field"><label>Zone down temp (°C)</label><input type="number" id="cnl_pelDownTemp" value="210" min="0" step="5" /></div>
+          <div class="field"><label>Bed temp (°C)</label><input type="number" id="cnl_pelBedTemp" value="50" min="0" step="5" /></div>
+          <div class="field"><label>Pressure advance</label><input type="number" id="cnl_pelPA" value="0.3" min="0" step="0.05" /></div>
+          <div class="field"><label>Purge quantity</label><input type="number" id="cnl_pelPurge" value="5000" min="0" step="100" /></div>
+          <div class="field"><label>Fan (%)</label><input type="number" id="cnl_pelFan" value="0" min="0" max="100" step="5" /></div>
+        </div>
+        <div class="printer-params-cnl grid" data-mode="filament" hidden>
+          <div class="field"><label>Filament diameter (mm)</label><input type="number" id="cnl_filDiameter" value="1.75" min="0.1" step="0.05" /></div>
+          <div class="field"><label>Nozzle temp (°C)</label><input type="number" id="cnl_filNozzleTemp" value="205" min="0" step="5" /></div>
+          <div class="field"><label>Bed temp (°C)</label><input type="number" id="cnl_filBedTemp" value="60" min="0" step="5" /></div>
+          <div class="field"><label>Fan (%)</label><input type="number" id="cnl_filFan" value="100" min="0" max="100" step="5" /></div>
+        </div>
+        <p class="hint" id="cnl_printerHint"></p>
+      </section>
+
+      <section class="card" data-project="container" data-container-part="lid" hidden>
+        <h2>Lid shape</h2>
+        <div class="grid">
+          <div class="field"><label>Straight height (mm, above the fillet)</label><input type="number" id="cnl_straightHeight" value="20" min="0.5" step="1" /></div>
+          <div class="field"><label>Fillet height (mm)</label><input type="number" id="cnl_fillet" value="6" min="0" step="1" /></div>
+          <div class="field"><label>Fit tolerance (mm, ± from base radius + line width)</label><input type="number" id="cnl_fitTolerance" value="0" step="0.1" /></div>
+          <div class="field">
+            <label>Print direction</label>
+            <select id="cnl_printDirection">
+              <option value="ccw">Counter-clockwise</option>
+              <option value="cw">Clockwise</option>
+            </select>
+          </div>
+        </div>
+        <p class="hint">Radius = base radius + base line width + fit tolerance. Always a
+          plain straight wall (no drag-editable profile) — the straight-height input is
+          IN ADDITION to the fillet, not including it, unlike the base's own "wall height is
+          the total" convention. Defaults to the same print direction as the base — both
+          print vase-mode, so their walls are naturally a shallow single-start helix; matching
+          print direction is what lets the lid thread down over the base's collar once
+          flipped into place. If a test print doesn't seat right, try flipping just this one
+          setting before anything else.</p>
+      </section>
+
+      <section class="card" data-project="container" data-container-part="lid" hidden>
+        <h2>Print settings (lid)</h2>
+        <div class="grid">
+          <div class="field"><label>Layer height (mm)</label><input type="number" id="cnl_layerHeight" value="0.6" min="0.05" step="0.05" /></div>
+          <div class="field"><label>Line width (mm)</label><input type="number" id="cnl_lineWidth" value="2.0" min="0.1" step="0.1" /></div>
+          <div class="field"><label>Print feed (mm/min)</label><input type="number" id="cnl_printFeed" value="1800" min="1" step="50" /></div>
+          <div class="field"><label>Travel feed (mm/min)</label><input type="number" id="cnl_travelFeed" value="6000" min="1" step="100" /></div>
+          <div class="field"><label>Chord tolerance (mm)</label><input type="number" id="cnl_tolerance" value="0.05" min="0.001" step="0.01" /></div>
+          <div class="field">
+            <label>Seam position</label>
+            <select id="cnl_seamSide">
+              <option value="back">Back (+Y)</option>
+              <option value="front">Front (−Y)</option>
+              <option value="right">Right (+X)</option>
+              <option value="left">Left (−X)</option>
+            </select>
+          </div>
+          <div class="field"><label>Bed center X (mm)</label><input type="number" id="cnl_centerX" value="125" step="1" /></div>
+          <div class="field"><label>Bed center Y (mm)</label><input type="number" id="cnl_centerY" value="125" step="1" /></div>
+        </div>
+        <p class="hint">Layer height should match the base's own — mismatched pitch would
+          keep the two vase-mode "threads" from engaging smoothly.</p>
       </section>
 
       <section class="card">
