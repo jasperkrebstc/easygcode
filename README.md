@@ -645,26 +645,30 @@ the middle of the long sides — close to the centroid — far less per fillet-t
 points near the short ends, bunching lines together on the long sides and spreading them
 apart on the short ones instead of keeping one line width everywhere. A true offset
 reads each edge's own local direction instead of distance from a shared center, so it
-keeps that spacing constant regardless of the shape's proportions. This app's offset
-function is a simple per-vertex approximation rather than a real polygon boolean,
-though, so it folds in on itself once asked to inset past roughly the shape's own
-narrowest half-width (or a rounded corner's own radius, whichever comes first) — the
-fillet height is clamped to whatever the shape's own geometry can genuinely support as a
-true offset, with its own warning distinct from the wall-height clamp above. The disc's
-own internal spiral fill runs into the same limit on its way down to its own center —
-rather than switching to a scale-based ladder for the remaining, unreachable core (which
-on a long shape is itself even MORE elongated than the original, relatively, and would
-just reproduce the same bunching bug in miniature — a small but clearly wrong knot near
-the middle instead of one clean spiral), it stops offsetting once the last ring is still
-a genuine, non-self-crossing shape and lets the spiral's own opening revolution — the
-same mechanism an ordinary circular disc already uses to grow from a single starting
-point out to its first ring — cover the rest in one lap instead of several. In practice
-this means a modest fillet on a long shape now spaces evenly nearly the whole way
-around; only that single opening lap, right at the very center, still shows the
-scale-like unevenness (bunched on the long sides, spread on the short ones) rather than
-a small rectangle of wrongly-spaced turns — an inherent limit of the simple offset this
-app uses rather than a full polygon-clipping library, now confined to as little of the
-print as the shape allows.
+keeps that spacing constant regardless of the shape's proportions — including all the
+way down a long shape's own middle, where a scale-based fill would otherwise bunch a
+cluster of wrongly-spaced turns into a small, clearly-wrong knot instead of the one
+continuous line moving outward that the rest of the fill already looks like.
+
+Offsetting an entire closed shape inward is easy right up until a corner (or, for a very
+elongated shape, the whole narrow direction) runs out of room to give — the naive
+per-vertex approach used everywhere else in this app (a single averaged normal per
+point) folds in on itself there, well before the shape's own true limit. The bottom
+fillet's own offsetting instead works edge by edge: each edge gets its own offset line,
+and where two neighboring edges' offset lines would cross "behind" one of them — meaning
+that edge has run out of room — the edge is dropped outright and its two surviving
+neighbors are joined directly, exactly the same handling whether it's one edge of a
+rounded corner disappearing or a whole side of the shape closing up entirely. That one
+rule reaches almost all the way to the shape's actual geometric limit (half its own
+narrowest width) rather than stopping early at whichever corner happens to be tightest,
+so a fillet height is now rejected only once it's genuinely too large for the shape
+itself (its own warning, distinct from the wall-height clamp above) instead of far
+sooner. The very last sliver — thinner than this app's offsetting can still resolve
+exactly — is covered by one final lap from a single point out to the innermost ring,
+the same mechanism an ordinary circular disc already uses to grow from its own center;
+that one lap is the only place a very long shape can still show any unevenness, and it's
+now confined to as little of the print as the shape allows rather than a whole
+noticeably-wrong region.
 
 ### Adaptive resolution
 
