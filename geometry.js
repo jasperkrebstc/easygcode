@@ -1147,25 +1147,19 @@
       const dMax = maxValidInset(outer, sign, Rmax);
       const kMax = Math.ceil((Rmax - lw * 0.5) / lw);
       const kTrue = Math.max(0, Math.min(Math.floor(dMax / lw), kMax));
+      // No scale-based fallback rings for the residual: on an elongated
+      // shape, the residual left once true offsetting runs out is itself
+      // MORE elongated (relatively) than the original — scaling it toward
+      // its own centroid for several more rings reproduces the exact
+      // "bunched on the long sides" problem this mode exists to avoid, now
+      // compressed into a small but still clearly wrong knot near the
+      // middle instead of spread across the whole shape. Stopping the
+      // ladder here instead and letting the spiral's own opening
+      // revolution (below) blend directly from the centroid out to this
+      // last true-offset ring keeps that same unevenness confined to
+      // exactly one revolution, same as how a normal (non-elongated)
+      // shape's own innermost opening turn already works.
       for (let k = 0; k <= kTrue; k++) rings.push(offsetClosed(outer, -(k * lw), sign));
-      const seed = rings[rings.length - 1];
-      let scx = 0;
-      let scy = 0;
-      seed.forEach((p) => {
-        scx += p.x;
-        scy += p.y;
-      });
-      scx /= seed.length;
-      scy /= seed.length;
-      let Rseed = 0;
-      seed.forEach((p) => {
-        Rseed = Math.max(Rseed, Math.hypot(p.x - scx, p.y - scy));
-      });
-      for (let k = kTrue + 1; k <= kMax; k++) {
-        const extra = (k - kTrue) * lw;
-        const f = Math.max(0, Rseed - extra) / (Rseed || 1e-9);
-        rings.push(seed.map((p) => ({ x: scx + (p.x - scx) * f, y: scy + (p.y - scy) * f })));
-      }
     } else {
       for (let k = 0; k * lw <= Rmax - lw * 0.5 && k < 4000; k++) {
         if (radialInset) {

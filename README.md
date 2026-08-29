@@ -650,14 +650,21 @@ function is a simple per-vertex approximation rather than a real polygon boolean
 though, so it folds in on itself once asked to inset past roughly the shape's own
 narrowest half-width (or a rounded corner's own radius, whichever comes first) — the
 fillet height is clamped to whatever the shape's own geometry can genuinely support as a
-true offset, with its own warning distinct from the wall-height clamp above, and the
-disc's own spiral fill falls back to scaling for the small residual area past that point
-(the same graceful "innermost turn" tapering the vessel's own non-filleted bottom styles
-already rely on). In practice this means a modest fillet on a long shape now spaces
-evenly the whole way around; a fillet pushed right up against its geometric limit can
-still show a very small (sub-line-width) tight spot exactly at a rounded corner, an
-inherent limit of the simple offset this app uses rather than a full polygon-clipping
-library.
+true offset, with its own warning distinct from the wall-height clamp above. The disc's
+own internal spiral fill runs into the same limit on its way down to its own center —
+rather than switching to a scale-based ladder for the remaining, unreachable core (which
+on a long shape is itself even MORE elongated than the original, relatively, and would
+just reproduce the same bunching bug in miniature — a small but clearly wrong knot near
+the middle instead of one clean spiral), it stops offsetting once the last ring is still
+a genuine, non-self-crossing shape and lets the spiral's own opening revolution — the
+same mechanism an ordinary circular disc already uses to grow from a single starting
+point out to its first ring — cover the rest in one lap instead of several. In practice
+this means a modest fillet on a long shape now spaces evenly nearly the whole way
+around; only that single opening lap, right at the very center, still shows the
+scale-like unevenness (bunched on the long sides, spread on the short ones) rather than
+a small rectangle of wrongly-spaced turns — an inherent limit of the simple offset this
+app uses rather than a full polygon-clipping library, now confined to as little of the
+print as the shape allows.
 
 ### Adaptive resolution
 
