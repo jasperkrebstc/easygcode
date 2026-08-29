@@ -390,6 +390,7 @@
       layerHeight: num('layerHeight'),
       lineWidth: num('lineWidth'),
       totalHeight: num('totalHeight'),
+      bottomFillet: Math.max(0, num('bottomFillet')),
       printFeed: num('printFeed'),
       travelFeed: num('travelFeed'),
       tolerance: num('tolerance'),
@@ -732,6 +733,7 @@
     }
     if (!Number.isFinite(cfg.centerX) || !Number.isFinite(cfg.centerY))
       return 'Enter valid bed center X/Y.';
+    if (!(cfg.bottomFillet >= 0)) return 'Bottom fillet height must be 0 or more.';
     if (!Number.isFinite(cfg.materialDensity) || cfg.materialDensity < 0)
       return 'Material density must be 0 (skip cost) or more.';
     if (!Number.isFinite(cfg.materialPrice) || cfg.materialPrice < 0)
