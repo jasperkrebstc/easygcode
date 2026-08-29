@@ -329,6 +329,44 @@
     return out;
   }
 
+  // Binary-search the largest inward offset (mm) of a closed polyline that
+  // stays a valid simple region — same winding sign as the original, a
+  // non-negligible area, and no self-crossings. A uniform SCALE toward the
+  // centroid never degenerates (any factor in [0,1] keeps a simple polygon
+  // simple), which is why it's used everywhere a shape has to shrink all
+  // the way to a point, but it's only distance-preserving for a circle: on
+  // an elongated shape it moves points near the centroid far less than
+  // points near the outline's own extremes, bunching or spreading lines
+  // that should be evenly spaced. A TRUE offset (offsetClosed) keeps that
+  // spacing constant everywhere — straight sides and corners alike — but
+  // this app's offsetClosed is only a per-vertex miter-normal
+  // approximation, not a real polygon boolean, so a ROUNDED CORNER
+  // specifically inverts (a local bowtie, self-crossing right at that one
+  // corner) once asked to inset past that corner's own radius, well before
+  // the shape's overall area collapses — checking area alone would miss
+  // that and hand back an inset that still prints a tiny doubled-up loop
+  // at every such corner. This finds exactly where the first crossing
+  // appears, so a caller can use true offsetting up to that point and fall
+  // back to scaling only for the small residual beyond it.
+  function maxValidInset(outer, dirSign, hi) {
+    const sign0 = signedArea(outer) >= 0 ? 1 : -1;
+    const valid = (d) => {
+      const ring = offsetClosed(outer, -d, dirSign);
+      const a = signedArea(ring);
+      return (a >= 0 ? 1 : -1) === sign0 && Math.abs(a) > 1e-6 && !polylineSelfIntersects(ring);
+    };
+    if (!valid(0)) return 0;
+    if (valid(hi)) return hi;
+    let lo = 0;
+    let hiB = hi;
+    for (let i = 0; i < 30; i++) {
+      const mid = (lo + hiB) / 2;
+      if (valid(mid)) lo = mid;
+      else hiB = mid;
+    }
+    return lo;
+  }
+
   // Even-odd (crossing number) point-in-polygon test for a closed CCW/CW
   // polyline (no duplicated closing point).
   function pointInPolygon(pt, poly) {
@@ -1044,15 +1082,28 @@
   // curve, ...) a shared ratio moves far vertices by more absolute distance
   // than near ones per ring, so the gap between consecutive rings is wider
   // wherever the outline bulges out and narrower wherever it pulls in.
-  // Insetting each vertex by the SAME fixed amount instead keeps every
-  // ring exactly `lw` from the last everywhere the shape still has `lw` of
-  // width left to give (verified: exactly `lw`, not just close, once
-  // clamping is excluded) — the only place it can't is a genuinely narrow
-  // neck/dip that has already run out of width, which needs to taper no
-  // matter how the rings are built, and reuses the ladder's existing
-  // less-than-lw extrusion coverage handling below the same as it always
-  // has for a shape's innermost opening ring.
-  function ringFill(outer, lw, tol, style, seamSide, wallCurve, noTaper, radialInset) {
+  // Insetting each vertex toward the centroid by the same fixed amount
+  // helps somewhat, but is still centroid-distance-based, not
+  // edge-direction-based — it only truly recovers a constant `lw` gap where
+  // a vertex's own radial line happens to be perpendicular to its local
+  // edge (near a long straight edge's own midpoint), and a heavily
+  // simplified outline (a rounded rectangle's straight side collapsed by
+  // RDP to just its two corner-adjacent points) may not even have a vertex
+  // there — the corner points it does have are nowhere near perpendicular,
+  // so the whole edge between them still comes out uneven.
+  // trueOffset (opt-in, default off; needs dirSign to know which way is
+  // inward): builds each ring via offsetClosed instead — a genuine
+  // per-edge-normal offset, exactly `lw` from the last everywhere
+  // (straight sides and corners alike), since it reads the LOCAL edge
+  // directions rather than distance from a single shared centroid. This
+  // app's offsetClosed is a per-vertex miter-normal approximation, not a
+  // real polygon boolean, so it folds in on itself once asked to inset
+  // past roughly the shape's own narrowest half-width (see
+  // maxValidInset); the ladder uses true offsetting up to exactly that
+  // point, then falls back to scaling the last valid ring toward its own
+  // centroid for the small residual beyond it, same taper behavior as the
+  // plain scale path for a shape's innermost opening ring.
+  function ringFill(outer, lw, tol, style, seamSide, wallCurve, noTaper, radialInset, trueOffset, dirSign) {
     const alt = style === true || style === 'alternating';
     const spiral = style === 'spiral';
     const n = outer.length;
@@ -1091,20 +1142,46 @@
     }
     if (Rmax < lw * 0.5) return { loops: [], outline: outer.slice() };
     const rings = []; // outer -> inner
-    for (let k = 0; k * lw <= Rmax - lw * 0.5 && k < 4000; k++) {
-      if (radialInset) {
-        rings.push(
-          outer.map((p, i) => {
-            const dx = p.x - cx;
-            const dy = p.y - cy;
-            const r = radii[i] || 1e-9;
-            const s = Math.max(0, r - k * lw) / r;
-            return { x: cx + dx * s, y: cy + dy * s };
-          })
-        );
-      } else {
-        const f = (Rmax - k * lw) / Rmax;
-        rings.push(outer.map((p) => ({ x: cx + (p.x - cx) * f, y: cy + (p.y - cy) * f })));
+    if (trueOffset) {
+      const sign = dirSign || 1;
+      const dMax = maxValidInset(outer, sign, Rmax);
+      const kMax = Math.ceil((Rmax - lw * 0.5) / lw);
+      const kTrue = Math.max(0, Math.min(Math.floor(dMax / lw), kMax));
+      for (let k = 0; k <= kTrue; k++) rings.push(offsetClosed(outer, -(k * lw), sign));
+      const seed = rings[rings.length - 1];
+      let scx = 0;
+      let scy = 0;
+      seed.forEach((p) => {
+        scx += p.x;
+        scy += p.y;
+      });
+      scx /= seed.length;
+      scy /= seed.length;
+      let Rseed = 0;
+      seed.forEach((p) => {
+        Rseed = Math.max(Rseed, Math.hypot(p.x - scx, p.y - scy));
+      });
+      for (let k = kTrue + 1; k <= kMax; k++) {
+        const extra = (k - kTrue) * lw;
+        const f = Math.max(0, Rseed - extra) / (Rseed || 1e-9);
+        rings.push(seed.map((p) => ({ x: scx + (p.x - scx) * f, y: scy + (p.y - scy) * f })));
+      }
+    } else {
+      for (let k = 0; k * lw <= Rmax - lw * 0.5 && k < 4000; k++) {
+        if (radialInset) {
+          rings.push(
+            outer.map((p, i) => {
+              const dx = p.x - cx;
+              const dy = p.y - cy;
+              const r = radii[i] || 1e-9;
+              const s = Math.max(0, r - k * lw) / r;
+              return { x: cx + dx * s, y: cy + dy * s };
+            })
+          );
+        } else {
+          const f = (Rmax - k * lw) / Rmax;
+          rings.push(outer.map((p) => ({ x: cx + (p.x - cx) * f, y: cy + (p.y - cy) * f })));
+        }
       }
     }
     const outline = rings[0].slice();
@@ -1610,6 +1687,7 @@
     perimeter,
     resampleClosed,
     offsetClosed,
+    maxValidInset,
     dist,
     roundedRectFillets,
     pointInPolygon,
