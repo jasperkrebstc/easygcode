@@ -668,7 +668,15 @@ exactly — is covered by one final lap from a single point out to the innermost
 the same mechanism an ordinary circular disc already uses to grow from its own center;
 that one lap is the only place a very long shape can still show any unevenness, and it's
 now confined to as little of the print as the shape allows rather than a whole
-noticeably-wrong region.
+noticeably-wrong region. Each ring's own validity there is checked directly (same
+winding sign, real area, no self-crossing) rather than by comparing its size to the
+previous ring — an early version instead expected every ring to shrink by about one
+line width per step, which happens to be true for a rectangle or a circle but false for
+anything with a sharp convex point (a star's own tips pull back much faster than that
+per step, correctly, not a bug) or two very different axis lengths (an ellipse); that
+assumption rejected perfectly good rings on exactly those shapes, forcing far more of
+the disc through the single final lap than necessary and showing up as an
+out-of-place-looking loop well before the shape's own middle.
 
 ### Adaptive resolution
 
@@ -954,7 +962,15 @@ the socket's thread pitch.
 
 The **3D preview** orbits with a drag (Z-up), pinch/wheel zooms, two fingers pan, and a
 double-tap resets. The toolpath is colored by feedrate — blue = fastest, red = slowest —
-so brim / wall / bump feed differences are visible at a glance.
+so brim / wall / bump feed differences are visible at a glance. It draws the exact same
+`path` the G-code itself is built from — no separate reconstruction — so what it shows
+is never a second opinion about the toolpath, only about how that one path is projected
+to the screen. The projection's own vertical axis has to flip world +Y toward the *top*
+of the screen as the camera tilts down (the same convention any slicer's top view uses),
+not the bottom — getting that one sign backwards doesn't move anything to the wrong
+side, it mirrors the whole toolpath's apparent rotation on screen (clockwise reading as
+counter-clockwise and back) while leaving the underlying G-code, and every other tool
+that reads it, completely correct.
 
 ## Files
 

@@ -2819,7 +2819,14 @@
       const y1 = X * sa + Y * ca; // depth toward camera
       const ce = Math.cos(el), se = Math.sin(el);
       const sxp = x1;
-      const syp = Z * ce - y1 * se; // +Z up; tilt mixes in depth
+      // +Z up; tilt mixes in depth. +y1 (not -y1): world +Y has to move
+      // toward the top of the screen as the camera tilts down, the same
+      // way a top view in any slicer/CAD viewer draws it -- getting the
+      // sign backwards here doesn't move anything to the wrong SIDE, it
+      // mirrors the apparent rotation direction of the whole toolpath
+      // (a CCW print reading as CW on screen and vice versa) without
+      // changing a single number in the actual G-code.
+      const syp = Z * ce + y1 * se;
       return {
         x: canvas.width / 2 + panX + sxp * scale,
         y: canvas.height / 2 + panY - syp * scale,
