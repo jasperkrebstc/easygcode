@@ -619,6 +619,26 @@ reaches the full height at full flow on its own, leaving a one-layer helical ste
 seam (an even bead all the way, good for open rims like a cup or sleeve rather than a
 closed vase).
 
+### Bottom fillet
+
+An optional **bottom fillet height (mm)** (default 0 = off, matching every print from
+before this setting existed) replaces the plain ramp-up start with the same
+flat-disc-then-fillet construction the vessel's and container's own "filleted" bottom
+style already use: one flat layer fills the footprint at full flow from its very first
+point, then a **fillet** — a quarter-circle rounding, worked out in scale space the same
+way — carries that same spiral straight on up into the wall as one continuous line, no
+seam or handoff. Since the coat hanger's cross-section never tapers, the fillet always
+arrives dead vertical and the wall above it never re-scales — simpler than the vessel's
+own version, which has to track a full radius profile through the handoff. The overhang
+right off the flat floor and the turn-by-turn `cos(angle)` compensated Z steps (rescaled
+to sum to exactly the configured height, so there's never a runt final turn) are the
+same mechanism described in the vessel's own bottom-fillet section above. An oversized
+value is clamped to leave at least one full wall layer, with a warning; the wall's own
+loop count and the ramp-up/first-turn special-casing (fan-on timing, extrusion ramp) all
+shift to account for however much height the fillet actually used, so the total height
+still comes out exact and hanger cutouts / weave / spike patterns all work unchanged on
+top of it — they only ever see loop numbers, never the underlying Z offset.
+
 ### Adaptive resolution
 
 The base curve is built to a **chord tolerance** (mm): the shape is densely sampled then

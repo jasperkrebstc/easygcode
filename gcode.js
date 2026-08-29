@@ -2186,12 +2186,36 @@
     const area = beadArea(cfg.lineWidth, lh);
     // Vase: loops = height/layerHeight (may be fractional). Disc/vessel: whole
     // stacked layers / revolutions.
-    const T = isBS
+    let T = isBS
       ? Math.max(1, Math.round((cfg.disc && cfg.disc.layers) || 1))
       : isVessel
       ? vWallN
       : cfg.totalHeight / lh;
-    const Lmax = Math.ceil(T - 1e-9);
+    let Lmax = Math.ceil(T - 1e-9);
+
+    // Coat hanger filleted bottom: a flat disc (one layer height) rounds
+    // into the wall through a fillet, exactly like the vessel's/container's
+    // own filleted-bottom style, but grafted onto a constant cross-section
+    // (no radius profile) instead. chZOffset is the Z the wall spiral's own
+    // L=0 turn actually starts from once the fillet has been climbed; T/Lmax
+    // are shrunk by the same amount here, up front, so every downstream
+    // consumer (the main loop's own uEnd, the flat-top finish, spike density
+    // and placement) sees the reduced post-fillet revolution budget without
+    // needing its own special case.
+    let chZOffset = 0;
+    let chBottomFillet = Math.max(0, cfg.bottomFillet || 0);
+    if (!isBS && !isVessel) {
+      const chFmax = Math.max(0, (cfg.totalHeight - lh) * 0.95);
+      if (chBottomFillet > chFmax) {
+        chBottomFillet = chFmax;
+        warnings.push('Bottom fillet height is too large for the total height — clamped to ' + chBottomFillet.toFixed(1) + 'mm.');
+      }
+      if (chBottomFillet > 1e-6) {
+        chZOffset = lh + chBottomFillet;
+        T = Math.max(0, T - chZOffset / lh);
+        Lmax = Math.max(1, Math.ceil(T - 1e-9));
+      }
+    }
 
     // ---- Disc setup (bend stool) ----
     // Ring centerlines: lw/2 + i*lw from the center, so beads meet half-half in
@@ -2575,6 +2599,9 @@
         '; layerHeight=' + lh + ' lineWidth=' + cfg.lineWidth + ' totalHeight=' + cfg.totalHeight +
           ' direction=' + (cfg.printDirection === 'cw' ? 'CW' : 'CCW')
       );
+      if (chZOffset > 1e-9) {
+        lines.push('; bottom=filleted disc (1 layer) + ' + chBottomFillet.toFixed(2) + 'mm fillet into the wall');
+      }
     }
     if (patternOn) {
       let ln = '; pattern=' + type + ' amplitude=' + pat.amplitude + ' zAngle=' + (pat.zAngle || 0) +
@@ -2818,7 +2845,7 @@
     // Wall point (no displacement) at loop L, fraction u.
     function wallPoint(L, u) {
       const sp = sampler.at(u);
-      const baseZ = Math.min(lh * (L + u), cfg.totalHeight);
+      const baseZ = Math.min(chZOffset + lh * (L + u), cfg.totalHeight);
       return { x: sp.pos.x + cx, y: sp.pos.y + cy, z: baseZ };
     }
 
@@ -3147,7 +3174,7 @@
       const nx = dirSign * sp.tan.y;
       const ny = dirSign * -sp.tan.x;
       const m = weaveMag(L, u);
-      const baseZ = Math.min(lh * (L + u), cfg.totalHeight);
+      const baseZ = Math.min(chZOffset + lh * (L + u), cfg.totalHeight);
       const a = angleAt(baseZ);
       const lat = m * a.cosA;
       const z = floorZ(baseZ + m * a.sinA);
@@ -3155,13 +3182,14 @@
     }
 
     function weaveLoop(L, uEnd) {
+      const isStart = L === 0 && chZOffset <= 1e-9;
       const step = (u) => {
         const w = wpoint(L, u);
-        const ramp = L === 0 ? Math.max(0, Math.min(1, (prevU + u) / 2)) : 1;
+        const ramp = isStart ? Math.max(0, Math.min(1, (prevU + u) / 2)) : 1;
         emit(w.p, w.bump, ramp, L);
         prevU = u;
       };
-      const set = L === 0 ? uSetRamp : uSet;
+      const set = isStart ? uSetRamp : uSet;
       for (let i = 0; i < set.length; i++) {
         const u = set[i];
         if (L > 0 && u <= 1e-9) continue;
@@ -3172,8 +3200,9 @@
     }
 
     function spikesLoop(L, uEnd) {
+      const isStart = L === 0 && chZOffset <= 1e-9;
       let events = [];
-      const set = L === 0 ? uSetRamp : uSet;
+      const set = isStart ? uSetRamp : uSet;
       for (let i = 0; i < set.length; i++) {
         const u = set[i];
         if (L > 0 && u <= 1e-9) continue;
@@ -3217,7 +3246,7 @@
         if (e.tip) {
           const sp = sampler.at(e.u);
           const amp = e.amp != null ? e.amp : pat.amplitude;
-          const baseZ = Math.min(lh * (L + e.u), cfg.totalHeight);
+          const baseZ = Math.min(chZOffset + lh * (L + e.u), cfg.totalHeight);
           const a = angleAt(baseZ);
           const lat = amp * a.cosA;
           cur = {
@@ -3228,7 +3257,7 @@
         } else {
           cur = wallPoint(L, e.u);
         }
-        const ramp = L === 0 ? Math.max(0, Math.min(1, (prevU + e.u) / 2)) : 1;
+        const ramp = isStart ? Math.max(0, Math.min(1, (prevU + e.u) / 2)) : 1;
         // The initial 90° push OUT, the flat pushed-out stretch itself, and
         // the move back IN each get their own dedicated feed — no hysteresis
         // carrying one into further segments, unlike the shared emit()
@@ -3371,7 +3400,7 @@
           m = pat.amplitude * Math.cos(Math.PI * (L + e.f) * pat.bumps);
         }
         const amp = e.tip ? (e.amp != null ? e.amp : pat.amplitude) : m;
-        const baseZ = Math.min(lh * (L + e.f), cfg.totalHeight);
+        const baseZ = Math.min(chZOffset + lh * (L + e.f), cfg.totalHeight);
         const aAng = angleAt(baseZ);
         const lat = amp * aAng.cosA;
         const z = floorZ(baseZ + amp * aAng.sinA);
@@ -3815,14 +3844,99 @@
         '; --- vase spiral' + (patternOn ? ' + ' + type : '') + (hangOn ? ' + hanger' : '') + ' ---'
       );
 
-      const start = spikesMode ? wallPoint(0, 0) : wpoint(0, 0).p;
-      travelClear({ x: start.x, y: start.y, z: 0 });
+      if (chZOffset <= 1e-9) {
+        const start = spikesMode ? wallPoint(0, 0) : wpoint(0, 0).p;
+        travelClear({ x: start.x, y: start.y, z: 0 });
+      } else {
+        // Filleted bottom: a flat disc (always exactly one layer height)
+        // rounds into the wall through chBottomFillet mm of fillet, the
+        // same construction as the vessel's/container's own filleted-bottom
+        // style — just against a constant cross-section (no radius
+        // profile) instead of a tapered one, so the fillet always arrives
+        // dead vertical and the post-fillet wall never re-scales.
+        const chTol = cfg.tolerance > 0 ? cfg.tolerance : 0.05;
+        let ctx0 = 0;
+        let cty0 = 0;
+        base.forEach((p) => {
+          ctx0 += p.x;
+          cty0 += p.y;
+        });
+        ctx0 /= base.length;
+        cty0 /= base.length;
+        let Rchar = 0;
+        base.forEach((p) => {
+          Rchar = Math.max(Rchar, Geo.dist(p, { x: ctx0, y: cty0 }));
+        });
+        const Fscale = Rchar > 1e-6 ? chBottomFillet / Rchar : 0;
+        const flatScale = Math.max(0, 1 - Fscale);
+        const flatBase = base.map((p) => ({ x: p.x * flatScale, y: p.y * flatScale }));
+        let flatPoly = null;
+        if (flatScale > 1e-6) {
+          const innerFlat = Geo.offsetClosed(flatBase, -cfg.lineWidth, dirSign);
+          const fillFlat = Geo.ringFill(innerFlat, cfg.lineWidth, chTol, 'spiral', cfg.seamSide || 'back', flatBase, true);
+          flatPoly = fillFlat.loops[0] || null;
+        }
+        if (!flatPoly) {
+          warnings.push('Bottom fillet height leaves no flat bottom to fill — starting the rounded transition directly from the center.');
+        } else {
+          travelClear({ x: flatPoly[0].x + cx, y: flatPoly[0].y + cy, z: lh });
+          for (let q = 1; q < flatPoly.length; q++) {
+            const p = flatPoly[q];
+            emitSeg({ x: p.x + cx, y: p.y + cy, z: lh }, cfg.printFeed, p.e != null ? p.e : 1);
+          }
+        }
+        if (includeStartEnd && fanPWM > 0) {
+          lines.push('M106 S' + fanPWM + ' ; part cooling fan on');
+        }
+
+        const fSampler = Geo.vesselFilletSampler(chBottomFillet, 0); // dead vertical: constant cross-section
+        const filletPt = (z0, z1, u) => {
+          const zc = z0 + (z1 - z0) * u;
+          const frac = fSampler.at(zc).frac;
+          const s = flatScale + (1 - flatScale) * frac;
+          const sp = sampler.at(u).pos;
+          return { x: sp.x * s + cx, y: sp.y * s + cy, z: lh + zc };
+        };
+        if (!flatPoly) travelClear(filletPt(0, 0, 0));
+
+        // Same natural-dz-then-rescale technique as the vessel's/lid's own
+        // fillet climb: grow squeeze-compensated steps until they reach/
+        // overshoot chBottomFillet, then rescale the whole sequence so it
+        // sums to EXACTLY chBottomFillet — same turn count, no runt turn.
+        const naturalDz = [];
+        {
+          let zc0 = 0;
+          let guard0 = 0;
+          while (zc0 < chBottomFillet - 1e-6 && guard0++ < 100000) {
+            const guessDz = Math.max(0.05, Math.cos(fSampler.at(zc0).angle)) * lh;
+            const aMid = fSampler.at(Math.min(chBottomFillet, zc0 + guessDz / 2)).angle;
+            const dz = Math.max(0.05, Math.cos(aMid)) * lh;
+            naturalDz.push(dz);
+            zc0 += dz;
+          }
+        }
+        let naturalSum = 0;
+        for (let k = 0; k < naturalDz.length; k++) naturalSum += naturalDz[k];
+        const filletScale = naturalSum > 1e-9 ? chBottomFillet / naturalSum : 1;
+
+        let zc = 0;
+        for (let k = 0; k < naturalDz.length; k++) {
+          const zNext = k === naturalDz.length - 1 ? chBottomFillet : zc + naturalDz[k] * filletScale;
+          for (let i = 0; i < uSet.length; i++) {
+            const u = uSet[i];
+            if (u <= 1e-9) continue;
+            emitSeg(filletPt(zc, zNext, u), cfg.printFeed, 1);
+          }
+          emitSeg(filletPt(zc, zNext, 1), cfg.printFeed, 1);
+          zc = zNext;
+        }
+      }
       prevBump = false;
       prevU = 0;
 
       for (let L = 0; L < Lmax; L++) {
         const uEnd = Math.min(1, T - L);
-        if (L === 1 && includeStartEnd && fanPWM > 0 && !fanBumpsOnly) {
+        if (L === 1 && chZOffset <= 1e-9 && includeStartEnd && fanPWM > 0 && !fanBumpsOnly) {
           lines.push('M106 S' + fanPWM + ' ; part cooling fan on after ramp loop');
         }
         if (inBand(L)) {
