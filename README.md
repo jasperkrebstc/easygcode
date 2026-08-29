@@ -622,22 +622,42 @@ closed vase).
 ### Bottom fillet
 
 An optional **bottom fillet height (mm)** (default 0 = off, matching every print from
-before this setting existed) replaces the plain ramp-up start with the same
-flat-disc-then-fillet construction the vessel's and container's own "filleted" bottom
-style already use: one flat layer fills the footprint at full flow from its very first
-point, then a **fillet** — a quarter-circle rounding, worked out in scale space the same
-way — carries that same spiral straight on up into the wall as one continuous line, no
-seam or handoff. Since the coat hanger's cross-section never tapers, the fillet always
-arrives dead vertical and the wall above it never re-scales — simpler than the vessel's
-own version, which has to track a full radius profile through the handoff. The overhang
-right off the flat floor and the turn-by-turn `cos(angle)` compensated Z steps (rescaled
-to sum to exactly the configured height, so there's never a runt final turn) are the
-same mechanism described in the vessel's own bottom-fillet section above. An oversized
-value is clamped to leave at least one full wall layer, with a warning; the wall's own
-loop count and the ramp-up/first-turn special-casing (fan-on timing, extrusion ramp) all
-shift to account for however much height the fillet actually used, so the total height
-still comes out exact and hanger cutouts / weave / spike patterns all work unchanged on
-top of it — they only ever see loop numbers, never the underlying Z offset.
+before this setting existed) replaces the plain ramp-up start with the same overall idea
+as the vessel's and container's own "filleted" bottom style: one flat layer fills the
+footprint at full flow from its very first point, then a **fillet** carries that same
+spiral straight on up into the wall as one continuous line, no seam or handoff. Since the
+coat hanger's cross-section never tapers, the fillet always arrives dead vertical and the
+wall above it never re-scales — simpler than the vessel's own version, which has to track
+a full radius profile through the handoff. The overhang right off the flat floor and the
+turn-by-turn `cos(angle)` compensated Z steps (rescaled to sum to exactly the configured
+height, so there's never a runt final turn) are the same mechanism described in the
+vessel's own bottom-fillet section above. The wall's own loop count and the
+ramp-up/first-turn special-casing (fan-on timing, extrusion ramp) all shift to account
+for however much height the fillet actually used, so the total height still comes out
+exact and hanger cutouts / weave / spike patterns all work unchanged on top of it — they
+only ever see loop numbers, never the underlying Z offset.
+
+Unlike the vessel's and container's own version, the flat disc and the fillet's own
+climb are built from **true (per-edge) offsets** of the wall outline rather than a
+uniform scale toward the center. A shared scale is an exact constant-width offset only
+for a circle: on an elongated shape (a long rounded rectangle, say) it moves points near
+the middle of the long sides — close to the centroid — far less per fillet-turn than
+points near the short ends, bunching lines together on the long sides and spreading them
+apart on the short ones instead of keeping one line width everywhere. A true offset
+reads each edge's own local direction instead of distance from a shared center, so it
+keeps that spacing constant regardless of the shape's proportions. This app's offset
+function is a simple per-vertex approximation rather than a real polygon boolean,
+though, so it folds in on itself once asked to inset past roughly the shape's own
+narrowest half-width (or a rounded corner's own radius, whichever comes first) — the
+fillet height is clamped to whatever the shape's own geometry can genuinely support as a
+true offset, with its own warning distinct from the wall-height clamp above, and the
+disc's own spiral fill falls back to scaling for the small residual area past that point
+(the same graceful "innermost turn" tapering the vessel's own non-filleted bottom styles
+already rely on). In practice this means a modest fillet on a long shape now spaces
+evenly the whole way around; a fillet pushed right up against its geometric limit can
+still show a very small (sub-line-width) tight spot exactly at a rounded corner, an
+inherent limit of the simple offset this app uses rather than a full polygon-clipping
+library.
 
 ### Adaptive resolution
 

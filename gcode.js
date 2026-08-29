@@ -2204,11 +2204,59 @@
     // needing its own special case.
     let chZOffset = 0;
     let chBottomFillet = Math.max(0, cfg.bottomFillet || 0);
+    // rotateToSeam (above) inserts the exact seam-crossing point at index 0;
+    // whenever the shape's own natural sampling already lands a vertex
+    // almost exactly there too (every default circle does, at 720-point
+    // resolution), that makes the closing edge from the last point back to
+    // this one a near-zero-length segment. offsetClosed's per-vertex normal
+    // is an average of its two adjacent edges, so a near-zero edge there
+    // gives that one vertex an ill-defined normal and, offset, a visible
+    // sub-mm fold right at the seam — harmless for the plain scale-based
+    // rings used everywhere else, but exactly what trips a true offset's
+    // own self-intersection check below. Dropping the redundant last point
+    // (not the first, so every remaining index i still lines up with the
+    // wall's own sampler.uOf(i)) removes the zero-length edge outright.
+    let chBase = base;
+    if (!isBS && !isVessel && base.length > 3) {
+      const bFirst = base[0];
+      const bLast = base[base.length - 1];
+      if (Math.hypot(bFirst.x - bLast.x, bFirst.y - bLast.y) < 1e-6) chBase = base.slice(0, -1);
+    }
     if (!isBS && !isVessel) {
       const chFmax = Math.max(0, (cfg.totalHeight - lh) * 0.95);
       if (chBottomFillet > chFmax) {
         chBottomFillet = chFmax;
         warnings.push('Bottom fillet height is too large for the total height — clamped to ' + chBottomFillet.toFixed(1) + 'mm.');
+      }
+      // The flat disc and the fillet's own climb are built from true
+      // (per-edge) offsets of the wall outline, not a uniform scale toward
+      // the center — the only way to keep the fillet's own "radius" an
+      // honest, constant mm distance from the wall everywhere, straight
+      // sides and corners alike, instead of proportional to each point's
+      // own distance from the centroid (which for a long shape bunches
+      // lines near the middle of the long sides and spreads them near the
+      // short ends). That true offset degrades once asked to inset past
+      // roughly the shape's own narrowest half-width, so the fillet height
+      // is additionally capped there too, same idea as the height-based
+      // clamp above.
+      if (chBottomFillet > 1e-6) {
+        let chOffCx = 0;
+        let chOffCy = 0;
+        chBase.forEach((p) => {
+          chOffCx += p.x;
+          chOffCy += p.y;
+        });
+        chOffCx /= chBase.length;
+        chOffCy /= chBase.length;
+        let chRmax = 0;
+        chBase.forEach((p) => {
+          chRmax = Math.max(chRmax, Geo.dist(p, { x: chOffCx, y: chOffCy }));
+        });
+        const chOffsetCap = Geo.maxValidInset(chBase, dirSign, chRmax);
+        if (chBottomFillet > chOffsetCap) {
+          chBottomFillet = chOffsetCap;
+          warnings.push('Bottom fillet height is too large for this shape — clamped to ' + chBottomFillet.toFixed(1) + 'mm.');
+        }
       }
       if (chBottomFillet > 1e-6) {
         chZOffset = lh + chBottomFillet;
@@ -3850,30 +3898,25 @@
       } else {
         // Filleted bottom: a flat disc (always exactly one layer height)
         // rounds into the wall through chBottomFillet mm of fillet, the
-        // same construction as the vessel's/container's own filleted-bottom
-        // style — just against a constant cross-section (no radius
-        // profile) instead of a tapered one, so the fillet always arrives
-        // dead vertical and the post-fillet wall never re-scales.
+        // same overall idea as the vessel's/container's own filleted-bottom
+        // style — but built from true (per-edge) offsets of the wall
+        // outline rather than a uniform scale toward the center, since a
+        // shared scale is only an honest constant-mm fillet "radius" for a
+        // circle: on a long shape it moves points near the middle of the
+        // long sides (close to the centroid) far less than points near the
+        // short ends (far from it), bunching lines on one and spreading
+        // them on the other instead of keeping a steady line width
+        // everywhere. chBottomFillet is already capped (above) to what
+        // this shape's own geometry can genuinely support as a true
+        // offset, so every offset built below is guaranteed valid.
         const chTol = cfg.tolerance > 0 ? cfg.tolerance : 0.05;
-        let ctx0 = 0;
-        let cty0 = 0;
-        base.forEach((p) => {
-          ctx0 += p.x;
-          cty0 += p.y;
-        });
-        ctx0 /= base.length;
-        cty0 /= base.length;
-        let Rchar = 0;
-        base.forEach((p) => {
-          Rchar = Math.max(Rchar, Geo.dist(p, { x: ctx0, y: cty0 }));
-        });
-        const Fscale = Rchar > 1e-6 ? chBottomFillet / Rchar : 0;
-        const flatScale = Math.max(0, 1 - Fscale);
-        const flatBase = base.map((p) => ({ x: p.x * flatScale, y: p.y * flatScale }));
+        const flatBase = chBottomFillet > 1e-6 ? Geo.offsetClosed(chBase, -chBottomFillet, dirSign) : chBase;
         let flatPoly = null;
-        if (flatScale > 1e-6) {
+        {
           const innerFlat = Geo.offsetClosed(flatBase, -cfg.lineWidth, dirSign);
-          const fillFlat = Geo.ringFill(innerFlat, cfg.lineWidth, chTol, 'spiral', cfg.seamSide || 'back', flatBase, true);
+          const fillFlat = Geo.ringFill(
+            innerFlat, cfg.lineWidth, chTol, 'spiral', cfg.seamSide || 'back', flatBase, true, false, true, dirSign
+          );
           flatPoly = fillFlat.loops[0] || null;
         }
         if (!flatPoly) {
@@ -3890,14 +3933,6 @@
         }
 
         const fSampler = Geo.vesselFilletSampler(chBottomFillet, 0); // dead vertical: constant cross-section
-        const filletPt = (z0, z1, u) => {
-          const zc = z0 + (z1 - z0) * u;
-          const frac = fSampler.at(zc).frac;
-          const s = flatScale + (1 - flatScale) * frac;
-          const sp = sampler.at(u).pos;
-          return { x: sp.x * s + cx, y: sp.y * s + cy, z: lh + zc };
-        };
-        if (!flatPoly) travelClear(filletPt(0, 0, 0));
 
         // Same natural-dz-then-rescale technique as the vessel's/lid's own
         // fillet climb: grow squeeze-compensated steps until they reach/
@@ -3919,16 +3954,51 @@
         for (let k = 0; k < naturalDz.length; k++) naturalSum += naturalDz[k];
         const filletScale = naturalSum > 1e-9 ? chBottomFillet / naturalSum : 1;
 
-        let zc = 0;
-        for (let k = 0; k < naturalDz.length; k++) {
-          const zNext = k === naturalDz.length - 1 ? chBottomFillet : zc + naturalDz[k] * filletScale;
+        // One true-offset ring per TURN BOUNDARY (not per point): each
+        // ring is tagged with the SAME u every other part of the wall
+        // spiral already uses for that base-shape vertex (sampler.uOf),
+        // rather than that ring's own arc-length fraction, so consecutive
+        // rings of very different size (near the wall vs. deep in the
+        // fillet) still line up point-for-point instead of subtly
+        // twisting relative to each other near corners.
+        const zBoundaries = [0];
+        {
+          let zc = 0;
+          for (let k = 0; k < naturalDz.length; k++) {
+            zc = k === naturalDz.length - 1 ? chBottomFillet : zc + naturalDz[k] * filletScale;
+            zBoundaries.push(zc);
+          }
+        }
+        const boundaryRings = zBoundaries.map((zb) => {
+          const inset = Math.max(0, chBottomFillet * (1 - fSampler.at(zb).frac));
+          const ring = inset > 1e-6 ? Geo.offsetClosed(chBase, -inset, dirSign) : chBase;
+          return ring.map((p, i) => ({ x: p.x, y: p.y, u: sampler.uOf(i) }));
+        });
+        if (!flatPoly) {
+          const p0 = Geo.makeUSampler(boundaryRings[0]).at(0);
+          travelClear({ x: p0.x + cx, y: p0.y + cy, z: lh });
+        }
+
+        for (let k = 0; k < zBoundaries.length - 1; k++) {
+          const sA = Geo.makeUSampler(boundaryRings[k]);
+          const sB = Geo.makeUSampler(boundaryRings[k + 1]);
+          const z0 = zBoundaries[k];
+          const z1 = zBoundaries[k + 1];
+          const step = (u) => {
+            const a = sA.at(u);
+            const b = sB.at(u);
+            emitSeg(
+              { x: a.x + (b.x - a.x) * u + cx, y: a.y + (b.y - a.y) * u + cy, z: lh + z0 + (z1 - z0) * u },
+              cfg.printFeed,
+              1
+            );
+          };
           for (let i = 0; i < uSet.length; i++) {
             const u = uSet[i];
             if (u <= 1e-9) continue;
-            emitSeg(filletPt(zc, zNext, u), cfg.printFeed, 1);
+            step(u);
           }
-          emitSeg(filletPt(zc, zNext, 1), cfg.printFeed, 1);
-          zc = zNext;
+          step(1);
         }
       }
       prevBump = false;
