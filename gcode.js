@@ -3910,10 +3910,12 @@
         // this shape's own geometry can genuinely support as a true
         // offset, so every offset built below is guaranteed valid.
         const chTol = cfg.tolerance > 0 ? cfg.tolerance : 0.05;
-        const flatBase = chBottomFillet > 1e-6 ? Geo.offsetClosed(chBase, -chBottomFillet, dirSign) : chBase;
+        const flatBaseT = chBottomFillet > 1e-6 ? Geo.trueOffset(chBase, -chBottomFillet, dirSign) : chBase;
+        const flatBase = flatBaseT.length >= 3 ? flatBaseT : chBase;
         let flatPoly = null;
         {
-          const innerFlat = Geo.offsetClosed(flatBase, -cfg.lineWidth, dirSign);
+          const innerFlatT = Geo.trueOffset(flatBase, -cfg.lineWidth, dirSign);
+          const innerFlat = innerFlatT.length >= 3 ? innerFlatT : Geo.offsetClosed(flatBase, -cfg.lineWidth, dirSign);
           const fillFlat = Geo.ringFill(
             innerFlat, cfg.lineWidth, chTol, 'spiral', cfg.seamSide || 'back', flatBase, true, false, true, dirSign
           );
@@ -3971,8 +3973,15 @@
         }
         const boundaryRings = zBoundaries.map((zb) => {
           const inset = Math.max(0, chBottomFillet * (1 - fSampler.at(zb).frac));
-          const ring = inset > 1e-6 ? Geo.offsetClosed(chBase, -inset, dirSign) : chBase;
-          return ring.map((p, i) => ({ x: p.x, y: p.y, u: sampler.uOf(i) }));
+          if (inset <= 1e-6) return chBase.map((p, i) => ({ x: p.x, y: p.y, u: sampler.uOf(i) }));
+          const ringT = Geo.trueOffset(chBase, -inset, dirSign);
+          const ring = ringT.length >= 3 ? ringT : chBase.map((p, i) => ({ x: p.x, y: p.y, idx: i }));
+          // idx tracks which ORIGINAL chBase vertex each surviving point
+          // came from (trueOffset can drop vertices near a collapsing
+          // corner), so the wall's own u parameterization is looked up by
+          // that original vertex, not by this ring's own, possibly
+          // shorter, position in the array.
+          return ring.map((p) => ({ x: p.x, y: p.y, u: sampler.uOf(p.idx) }));
         });
         if (!flatPoly) {
           const p0 = Geo.makeUSampler(boundaryRings[0]).at(0);

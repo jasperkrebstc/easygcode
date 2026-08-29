@@ -329,37 +329,115 @@
     return out;
   }
 
-  // Binary-search the largest inward offset (mm) of a closed polyline that
-  // stays a valid simple region — same winding sign as the original, a
-  // non-negligible area, and no self-crossings. A uniform SCALE toward the
-  // centroid never degenerates (any factor in [0,1] keeps a simple polygon
-  // simple), which is why it's used everywhere a shape has to shrink all
-  // the way to a point, but it's only distance-preserving for a circle: on
-  // an elongated shape it moves points near the centroid far less than
-  // points near the outline's own extremes, bunching or spreading lines
-  // that should be evenly spaced. A TRUE offset (offsetClosed) keeps that
-  // spacing constant everywhere — straight sides and corners alike — but
-  // this app's offsetClosed is only a per-vertex miter-normal
-  // approximation, not a real polygon boolean, so a ROUNDED CORNER
-  // specifically inverts (a local bowtie, self-crossing right at that one
-  // corner) once asked to inset past that corner's own radius, well before
-  // the shape's overall area collapses — checking area alone would miss
-  // that and hand back an inset that still prints a tiny doubled-up loop
-  // at every such corner. This finds exactly where the first crossing
-  // appears, so a caller can use true offsetting up to that point and fall
-  // back to scaling only for the small residual beyond it.
+  // A real (per-EDGE, not per-vertex) inward polygon offset: intersects
+  // each edge's own offset LINE with its neighbors', and — unlike
+  // offsetClosed's cheap per-vertex miter-normal average, which folds a
+  // rounded corner in on itself (a local bowtie) once asked to inset past
+  // that corner's own radius, well before the shape's actual dimensions
+  // run out — removes an edge outright once the offset has pushed it
+  // "behind" its own neighbors, splicing the survivors on either side
+  // straight together. That's the single mechanism a real offset needs at
+  // both a corner collapsing (several short edges around a rounded corner
+  // disappearing in sequence) and a whole shape narrowing to a point or a
+  // line (opposite edges disappearing together): no separate case for
+  // either, since both are just "this edge no longer has any valid extent
+  // left". Two-pass so the doubled wraparound stabilizes before anything
+  // is recorded. d follows offsetClosed's own sign convention (negative =
+  // inward for CCW with dirSign 1). Returns [] once nothing of the shape
+  // survives the offset.
+  function trueOffset(pts, d, dirSign) {
+    const sign = dirSign || 1;
+    const n = pts.length;
+    if (n < 3) return [];
+    const edges = [];
+    for (let i = 0; i < n; i++) {
+      const a = pts[i];
+      const b = pts[(i + 1) % n];
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const len = Math.hypot(dx, dy) || 1e-9;
+      const nx = dy / len;
+      const ny = -dx / len; // outward normal for CCW
+      const sx = sign * d * nx;
+      const sy = sign * d * ny;
+      edges.push({ oax: a.x + sx, oay: a.y + sy, dx: dx, dy: dy });
+    }
+    const lineIntersect = (p, dp, q, dq) => {
+      const denom = dp.x * dq.y - dp.y * dq.x;
+      if (Math.abs(denom) < 1e-9) return null;
+      const ex = q.x - p.x;
+      const ey = q.y - p.y;
+      const t1 = (ex * dq.y - ey * dq.x) / denom;
+      const t2 = (ex * dp.y - ey * dp.x) / denom;
+      return { x: p.x + t1 * dp.x, y: p.y + t1 * dp.y, t1: t1, t2: t2 };
+    };
+    const stack = [];
+    const cornerStart = new Array(n).fill(null);
+    for (let k = 0; k < 2 * n; k++) {
+      const i = k % n;
+      const e = edges[i];
+      const p = { x: e.oax, y: e.oay };
+      const dir = { x: e.dx, y: e.dy };
+      let tStart = -Infinity;
+      while (stack.length > 0) {
+        const top = stack[stack.length - 1];
+        const ix = lineIntersect({ x: top.oax, y: top.oay }, { x: top.dx, y: top.dy }, p, dir);
+        if (!ix) {
+          stack.pop();
+          continue;
+        }
+        if (ix.t1 < top.tStart - 1e-9) {
+          stack.pop();
+          continue;
+        }
+        tStart = ix.t2;
+        if (k >= n) cornerStart[i] = { x: ix.x, y: ix.y };
+        break;
+      }
+      if (stack.length === 0 && k >= n) cornerStart[i] = { x: p.x, y: p.y };
+      stack.push({ idx: i, oax: e.oax, oay: e.oay, dx: e.dx, dy: e.dy, tStart: tStart });
+    }
+    // The final stack, restricted to entries pushed during the (stabilized)
+    // second pass and de-duplicated to each index's LAST such push, is
+    // exactly the surviving loop in order.
+    const lastPos = new Map();
+    stack.forEach((e, pos) => {
+      if (cornerStart[e.idx] !== null) lastPos.set(e.idx, pos);
+    });
+    // idx (the ORIGINAL vertex this corner starts at) rides along on each
+    // point — an edge collapsing removes it from the output entirely, so a
+    // caller that needs to keep pace with some other per-original-vertex
+    // value (the wall's own u parameterization, say) can still look it up
+    // by idx instead of assuming position i still means vertex i.
+    const ordered = [];
+    stack.forEach((e, pos) => {
+      if (lastPos.get(e.idx) === pos) ordered.push({ x: cornerStart[e.idx].x, y: cornerStart[e.idx].y, idx: e.idx });
+    });
+    return ordered.length >= 3 ? ordered : [];
+  }
+
+  // How far a closed polyline can genuinely be offset inward (mm) before
+  // trueOffset has nothing valid left to give back — same winding sign as
+  // the original and a non-negligible area (right at the true geometric
+  // limit — e.g. exactly half the narrow side of a rectangle — trueOffset's
+  // own line-intersection math can degenerate to a single point by
+  // floating-point coincidence rather than a proper zero-width sliver; a
+  // small but genuine area rules that out). Binary search rather than a
+  // closed form since there's no general formula once corners are
+  // involved.
   function maxValidInset(outer, dirSign, hi) {
     const sign0 = signedArea(outer) >= 0 ? 1 : -1;
     const valid = (d) => {
-      const ring = offsetClosed(outer, -d, dirSign);
+      const ring = trueOffset(outer, -d, dirSign);
+      if (ring.length < 3) return false;
       const a = signedArea(ring);
-      return (a >= 0 ? 1 : -1) === sign0 && Math.abs(a) > 1e-6 && !polylineSelfIntersects(ring);
+      return (a >= 0 ? 1 : -1) === sign0 && Math.abs(a) > 1e-4;
     };
     if (!valid(0)) return 0;
     if (valid(hi)) return hi;
     let lo = 0;
     let hiB = hi;
-    for (let i = 0; i < 30; i++) {
+    for (let i = 0; i < 40; i++) {
       const mid = (lo + hiB) / 2;
       if (valid(mid)) lo = mid;
       else hiB = mid;
@@ -1091,19 +1169,17 @@
   // RDP to just its two corner-adjacent points) may not even have a vertex
   // there — the corner points it does have are nowhere near perpendicular,
   // so the whole edge between them still comes out uneven.
-  // trueOffset (opt-in, default off; needs dirSign to know which way is
-  // inward): builds each ring via offsetClosed instead — a genuine
-  // per-edge-normal offset, exactly `lw` from the last everywhere
-  // (straight sides and corners alike), since it reads the LOCAL edge
-  // directions rather than distance from a single shared centroid. This
-  // app's offsetClosed is a per-vertex miter-normal approximation, not a
-  // real polygon boolean, so it folds in on itself once asked to inset
-  // past roughly the shape's own narrowest half-width (see
-  // maxValidInset); the ladder uses true offsetting up to exactly that
-  // point, then falls back to scaling the last valid ring toward its own
-  // centroid for the small residual beyond it, same taper behavior as the
-  // plain scale path for a shape's innermost opening ring.
-  function ringFill(outer, lw, tol, style, seamSide, wallCurve, noTaper, radialInset, trueOffset, dirSign) {
+  // useTrueOffset (opt-in, default off; needs dirSign to know which way is
+  // inward): builds each ring via trueOffset instead — exactly `lw` from
+  // the last everywhere, straight sides and corners alike, since it reads
+  // each edge's own local direction rather than distance from a single
+  // shared centroid. trueOffset keeps that up almost all the way to the
+  // shape's actual geometric limit (removing a collapsing corner's own
+  // edges outright rather than letting them fold in on themselves), so the
+  // ladder only ever needs one final opening revolution — same as a plain
+  // disc's own single center-point start — to cover whatever thin residual
+  // is left once nothing more can be safely offset.
+  function ringFill(outer, lw, tol, style, seamSide, wallCurve, noTaper, radialInset, useTrueOffset, dirSign) {
     const alt = style === true || style === 'alternating';
     const spiral = style === 'spiral';
     const n = outer.length;
@@ -1142,11 +1218,25 @@
     }
     if (Rmax < lw * 0.5) return { loops: [], outline: outer.slice() };
     const rings = []; // outer -> inner
-    if (trueOffset) {
+    if (useTrueOffset) {
       const sign = dirSign || 1;
-      const dMax = maxValidInset(outer, sign, Rmax);
       const kMax = Math.ceil((Rmax - lw * 0.5) / lw);
-      const kTrue = Math.max(0, Math.min(Math.floor(dMax / lw), kMax));
+      const sign0 = signedArea(outer) >= 0 ? 1 : -1;
+      const bboxOf = (pts) => {
+        let minX = Infinity;
+        let maxX = -Infinity;
+        let minY = Infinity;
+        let maxY = -Infinity;
+        pts.forEach((p) => {
+          if (p.x < minX) minX = p.x;
+          if (p.x > maxX) maxX = p.x;
+          if (p.y < minY) minY = p.y;
+          if (p.y > maxY) maxY = p.y;
+        });
+        return { w: maxX - minX, h: maxY - minY };
+      };
+      let prevBox = bboxOf(outer);
+      rings.push(outer);
       // No scale-based fallback rings for the residual: on an elongated
       // shape, the residual left once true offsetting runs out is itself
       // MORE elongated (relatively) than the original — scaling it toward
@@ -1159,7 +1249,25 @@
       // last true-offset ring keeps that same unevenness confined to
       // exactly one revolution, same as how a normal (non-elongated)
       // shape's own innermost opening turn already works.
-      for (let k = 0; k <= kTrue; k++) rings.push(offsetClosed(outer, -(k * lw), sign));
+      for (let k = 1; k <= kMax; k++) {
+        const ring = trueOffset(outer, -(k * lw), sign);
+        if (ring.length < 3) break;
+        const a = signedArea(ring);
+        if ((a >= 0 ? 1 : -1) !== sign0 || Math.abs(a) < 1e-4) break;
+        // Each step should shrink both dimensions by roughly 2*lw (one lw
+        // off each side) — trueOffset's own line-intersection math can
+        // occasionally degenerate right at (or numerically just past) the
+        // shape's true limit, collapsing everything to a single point
+        // instead of the proper thin sliver a slightly smaller inset still
+        // gives. A jump much bigger than one step's worth in either
+        // dimension is exactly that failure, not a legitimate ring.
+        const box = bboxOf(ring);
+        const tol = lw * 0.6;
+        if (box.w > prevBox.w + 1e-6 || box.h > prevBox.h + 1e-6) break;
+        if (prevBox.w - box.w > 2 * lw + tol || prevBox.h - box.h > 2 * lw + tol) break;
+        rings.push(ring);
+        prevBox = box;
+      }
     } else {
       for (let k = 0; k * lw <= Rmax - lw * 0.5 && k < 4000; k++) {
         if (radialInset) {
@@ -1681,6 +1789,7 @@
     perimeter,
     resampleClosed,
     offsetClosed,
+    trueOffset,
     maxValidInset,
     dist,
     roundedRectFillets,
