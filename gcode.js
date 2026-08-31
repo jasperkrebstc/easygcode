@@ -3453,13 +3453,31 @@
         // Manually paced acceleration back up to the wall's own feed,
         // right after rejoining it (isPushIn is the segment that just
         // landed AT spikeFeedIn) — capped at whichever comes first: the
-        // full ramp distance, this loop's own end, or the very next event
-        // (another spike's own approach, most likely), so it can never
-        // eat into geometry that isn't plain wall.
+        // full ramp distance, this loop's own end, or the next spike's
+        // own approach, so it can never eat into geometry that isn't
+        // plain wall. That cap has to be found by scanning past any
+        // plain wall events in between (order is only ever set on a
+        // spike's own four boundary events, never on an ordinary uSet
+        // point) rather than just looking at whichever event happens to
+        // be immediately next — otherwise a low acceleration reaching
+        // past several of those gets capped at the first one regardless
+        // of how much further the ramp could legitimately go. The
+        // skip-ahead below has the same reasoning in reverse: a spike's
+        // own "before"/tip-arrival pair (or tip-departure/"after" pair)
+        // share the exact same u, so if the ramp's own endpoint lands
+        // exactly on one, an unqualified "skip everything at or before
+        // this u" would consume BOTH — silently erasing that spike's own
+        // push-out corner and leaving a pointy spike instead of a flat
+        // tip. Only ever skipping the plain (unmarked) events keeps every
+        // marked boundary for normal processing, however the u values
+        // happen to line up.
         if (isPushIn && spikeInAccel > 0) {
           const dTotal = rampDistance(feed, printFeedEff);
           const duTotal = perim > 1e-6 ? dTotal / perim : 0;
-          const cap = Math.min(prevU + duTotal, uEnd, i < events.length ? events[i].u : uEnd);
+          let capIdx = i;
+          while (capIdx < events.length && events[capIdx].order === undefined) capIdx++;
+          const boundaryU = capIdx < events.length ? events[capIdx].u : uEnd;
+          const cap = Math.min(prevU + duTotal, uEnd, boundaryU);
           const actualDu = cap - prevU;
           if (actualDu > 1e-9) {
             const steps = 8;
@@ -3470,7 +3488,7 @@
             }
             prevU = prevU + actualDu;
             prevPos = wallPoint(L, prevU);
-            while (i < events.length && events[i].u <= prevU + 1e-9) i++;
+            while (i < events.length && events[i].order === undefined && events[i].u <= prevU + 1e-9) i++;
           }
         }
       }
@@ -3655,16 +3673,29 @@
         i++;
         if (endCut) break;
         // Same manually-paced acceleration back up to the wall's own feed
-        // as spikesLoop — see there for why. Distance here is a fraction
-        // of THIS loop's own (possibly hanger-lengthened) total length,
-        // not the base shape's perimeter; capped the same way, at
-        // whichever comes first of the full ramp, this loop's own end, or
-        // the very next event.
+        // as spikesLoop — see there for why, and for why the cap has to
+        // be found by scanning past plain (unmarked) events rather than
+        // just looking at whichever is immediately next: this loop's own
+        // events array carries one entry per DENSE underlying polyline
+        // vertex (hundreds, on a long hanger/tween detour), not the
+        // relatively sparse per-revolution samples spikesLoop works from,
+        // so "the very next event" is almost always just the neighboring
+        // vertex a fraction of a mm away — capping a slow ramp there no
+        // matter how much further it could legitimately reach. Distance
+        // here is a fraction of THIS loop's own (possibly
+        // hanger-lengthened) total length, not the base shape's
+        // perimeter. The skip-ahead has the same "never skip a marked
+        // boundary" reasoning as spikesLoop, for the same reason: a
+        // spike's own paired boundary events share the exact same f, and
+        // skipping both instead of leaving the second for normal
+        // processing silently erases that spike's own push-out corner.
         if (isPushIn && spikeInAccel > 0) {
           const dTotal = rampDistance(feed, printFeedEff);
           const dfTotal = total > 1e-6 ? dTotal / total : 0;
-          const nextF = i < events.length ? events[i].f : uEnd;
-          const cap = Math.min(prevF + dfTotal, uEnd, nextF);
+          let capIdx = i;
+          while (capIdx < events.length && events[capIdx].order === undefined) capIdx++;
+          const boundaryF = capIdx < events.length ? events[capIdx].f : uEnd;
+          const cap = Math.min(prevF + dfTotal, uEnd, boundaryF);
           const actualDf = cap - prevF;
           if (actualDf > 1e-9) {
             const steps = 8;
@@ -3679,7 +3710,7 @@
             const qEnd = atF(prevF);
             const baseZEnd = Math.min(chZOffset + lh * (L + prevF), cfg.totalHeight);
             prevPos = { x: qEnd.x + cx, y: qEnd.y + cy, z: floorZ(baseZEnd) };
-            while (i < events.length && events[i].f <= prevF + 1e-9) i++;
+            while (i < events.length && events[i].order === undefined && events[i].f <= prevF + 1e-9) i++;
           }
         }
       }
