@@ -424,6 +424,7 @@
         bridgeFeed: num('hangBridgeFeed'),
         overhangAngle: num('hangOverhangAngle'),
         overhangFeed: num('hangOverhangFeed'),
+        flowMode: $('hangFlowMode').checked,
       },
       pattern: {
         enabled: $('patternEnabled').checked,
@@ -434,7 +435,7 @@
         zAngleLow: num('patZAngleLow'),
         coverage: num('patCoverage'),
         bumpFeed: num('patBumpFeed'),
-        bottomFeed: num('patBottomFeed'),
+        flowMode: $('patFlowMode').checked,
         plBottom: Math.max(0, Math.round(num('patPlBottom'))),
         plTop: Math.max(0, Math.round(num('patPlTop'))),
         bumps: Math.max(1, Math.round(num('patBumps'))),
@@ -787,8 +788,6 @@
       if (!Number.isFinite(cfg.pattern.coverage)) return 'Enter a valid pattern coverage %.';
       if (!(cfg.pattern.plBottom >= 0) || !(cfg.pattern.plTop >= 0))
         return 'Enter valid patternless layer counts.';
-      if (!Number.isFinite(cfg.pattern.bottomFeed) || cfg.pattern.bottomFeed < 0)
-        return 'Enter a valid bottom feedrate (0 to use the normal print feed).';
       if (cfg.pattern.type === 'weave') {
         if (!isPos(cfg.pattern.bumpFeed)) return 'Enter a valid bump feedrate.';
         if (!(cfg.pattern.bumps >= 1)) return 'Weave needs at least 1 bump per revolution.';
@@ -2929,6 +2928,8 @@
       syncFanFields();
       $('flowFeedFields').hidden = !cfg.flowFeed.enabled;
       syncCordhangerFlowFeedHint(cfg);
+      syncPatFlowLabels(cfg);
+      syncHangFlowLabels(cfg);
     } else if (cfg.project === 'vessel') {
       showShapeParams(cfg.shape, 've-shape-params');
       showProfMidCount(cfg.vessel.midCount);
@@ -3006,6 +3007,90 @@
     } else {
       $('bs_flowFeedHint').textContent = '';
     }
+  }
+
+  // Bump/spike and hanger bridge/overhang feed overrides can each be
+  // expressed as a feed rate OR a volumetric flow (one shared toggle per
+  // card, since they're independent settings by design — a spike's own
+  // asymmetric out/in/tip speeds stay fully independent either way, just
+  // all read in whichever unit the toggle picks). 0 still means "inherit
+  // the wall's own feed" regardless of which unit mode is active.
+  function feedFlowConvert(value, area, toFeed) {
+    if (!isPos(value) || !isPos(area)) return null;
+    return toFeed ? (value * 60) / area : (value * area) / 60;
+  }
+
+  function syncPatFlowLabels(cfg) {
+    const unit = cfg.pattern.flowMode ? 'mm³/s' : 'mm/min';
+    const relabel = (id, base) => {
+      const el = $(id);
+      if (el) el.textContent = base + ' (' + unit + ')';
+    };
+    relabel('patBumpFeedLabel', 'Bump feedrate');
+    relabel('patSpikeFeedOutLabel', 'Feedrate out');
+    relabel('patSpikeFeedTipLabel', 'Feedrate tip');
+    relabel('patSpikeFeedInLabel', 'Feedrate in');
+    const hint = $('patFlowHint');
+    if (!hint) return;
+    if (!isPos(cfg.lineWidth) || !isPos(cfg.layerHeight)) {
+      hint.textContent = '';
+      return;
+    }
+    const on = cfg.pattern.flowMode;
+    const area = window.GcodeGen.beadArea(cfg.lineWidth, cfg.layerHeight);
+    const hasSpikeOverride = cfg.pattern.spikeLineWidth > 0 || cfg.pattern.spikeLayerHeight > 0;
+    const spikeArea = hasSpikeOverride
+      ? window.GcodeGen.beadArea(
+          cfg.pattern.spikeLineWidth > 0 ? cfg.pattern.spikeLineWidth : cfg.lineWidth,
+          cfg.pattern.spikeLayerHeight > 0 ? cfg.pattern.spikeLayerHeight : cfg.layerHeight
+        )
+      : area;
+    const parts = [];
+    const add = (label, value, a) => {
+      const other = feedFlowConvert(value, a, on);
+      if (other == null) return;
+      parts.push(
+        label + ' ' + value + (on ? ' mm³/s' : ' mm/min') + ' → ' + other.toFixed(on ? 0 : 2) +
+          (on ? ' mm/min' : ' mm³/s')
+      );
+    };
+    if (cfg.pattern.type === 'weave') add('Bump', cfg.pattern.bumpFeed, area);
+    if (cfg.pattern.type === 'spikes') {
+      add('Spike out', cfg.pattern.spikeFeedOut, spikeArea);
+      add('Spike tip', cfg.pattern.spikeFeedTip, spikeArea);
+      add('Spike in', cfg.pattern.spikeFeedIn, spikeArea);
+    }
+    hint.textContent = parts.join(' · ');
+  }
+
+  function syncHangFlowLabels(cfg) {
+    const unit = cfg.hanger.flowMode ? 'mm³/s' : 'mm/min';
+    const relabel = (id, base) => {
+      const el = $(id);
+      if (el) el.textContent = base + ' (' + unit + ')';
+    };
+    relabel('hangBridgeFeedLabel', 'Bridge feedrate');
+    relabel('hangOverhangFeedLabel', 'Overhang feedrate');
+    const hint = $('hangFlowHint');
+    if (!hint) return;
+    if (!isPos(cfg.lineWidth) || !isPos(cfg.layerHeight)) {
+      hint.textContent = '';
+      return;
+    }
+    const on = cfg.hanger.flowMode;
+    const area = window.GcodeGen.beadArea(cfg.lineWidth, cfg.layerHeight);
+    const parts = [];
+    const add = (label, value) => {
+      const other = feedFlowConvert(value, area, on);
+      if (other == null) return;
+      parts.push(
+        label + ' ' + value + (on ? ' mm³/s' : ' mm/min') + ' → ' + other.toFixed(on ? 0 : 2) +
+          (on ? ' mm/min' : ' mm³/s')
+      );
+    };
+    add('Bridge', cfg.hanger.bridgeFeed);
+    add('Overhang', cfg.hanger.overhangFeed);
+    hint.textContent = parts.join(' · ');
   }
 
   // Coat hanger only: the cross-section never varies (no dome, no radius
@@ -3404,6 +3489,7 @@
     $('patternFields').hidden = !$('patternEnabled').checked;
     $('hangFields').hidden = !$('hangEnabled').checked;
     $('hangFields2').hidden = !$('hangEnabled').checked;
+    $('hangFields2b').hidden = !$('hangEnabled').checked;
     showHangerParams($('hangMode').value === 'double' ? 'double' : 'single');
     $('bs_brimFields').hidden = !$('bs_brimEnabled').checked;
     $('bs_legFields').hidden = !$('bs_legsEnabled').checked;
@@ -3650,6 +3736,7 @@
   $('hangEnabled').addEventListener('change', () => {
     $('hangFields').hidden = !$('hangEnabled').checked;
     $('hangFields2').hidden = !$('hangEnabled').checked;
+    $('hangFields2b').hidden = !$('hangEnabled').checked;
     updateShapeUI();
   });
   $('hangMode').addEventListener('change', () => {
