@@ -2497,6 +2497,42 @@
     // before heading back in at normal feed (P is milliseconds — supported by
     // both Marlin and Klipper, unlike Marlin's S-in-seconds extension).
     const spikeDwellMs = type === 'spikes' && pat.spikeDwell > 0 ? Math.round(pat.spikeDwell * 1000) : 0;
+    // Optional way-out motion, toggled independently of everything else
+    // about a spike: instead of one straight line from the wall to the
+    // tip, lift off vertically first, then arc over to arrive level
+    // (perpendicular to Z) exactly at the tip — meant as a gentler launch
+    // than a single sharp direction change straight into a steep climb,
+    // to see whether it needs less of a feed slowdown to keep an upward
+    // spike from drooping. Only meaningful where a spike actually climbs;
+    // arcOutPoints itself falls back to a single point (the old straight
+    // line) whenever the climb isn't positive, so this flag alone decides
+    // whether to even ask.
+    const spikeOutArc = type === 'spikes' && pat.spikeOutMotion === 'arc';
+    // p0 -> p1 as a quarter ellipse in the vertical/lateral plane the two
+    // points actually span: tangent at p0 is straight up (matching a
+    // spike's own base, flush against the wall), tangent at p1 is level
+    // (matching the flat tip run that follows). Reduces to a true quarter
+    // CIRCLE exactly when the climb and the lateral reach are equal (a
+    // 45-degree launch); any other ratio stretches it into an ellipse.
+    // Falls back to the single endpoint (i.e. the plain straight line
+    // this replaces) whenever there's no real climb or no real lateral
+    // reach to arc through.
+    function arcOutPoints(p0, p1, steps) {
+      const dz = p1.z - p0.z;
+      const dx = p1.x - p0.x;
+      const dy = p1.y - p0.y;
+      const dxy = Math.hypot(dx, dy);
+      if (dz <= 1e-6 || dxy <= 1e-6) return [p1];
+      const ux = dx / dxy;
+      const uy = dy / dxy;
+      const pts = [];
+      for (let i = 1; i <= steps; i++) {
+        const theta = ((Math.PI / 2) * i) / steps;
+        const lat = dxy * (1 - Math.cos(theta));
+        pts.push({ x: p0.x + lat * ux, y: p0.y + lat * uy, z: p0.z + dz * Math.sin(theta) });
+      }
+      return pts;
+    }
 
     // ---- Fan mode ----
     // 'always' (default): a single M106 after the first revolution, fan stays
@@ -3344,6 +3380,7 @@
       events.sort((a, b) => a.u - b.u || (a.order || 0) - (b.order || 0));
       events.push({ u: uEnd, tip: false });
       let prevTipFan = false;
+      let prevPos = null;
       for (let i = 0; i < events.length; i++) {
         const e = events[i];
         let cur;
@@ -3372,12 +3409,20 @@
         // through the whole excursion (out, along, dwell, AND back in) — it
         // only turns off once fully back at the wall — so it needs its own,
         // separately-tracked hysteresis.
+        const isPushOut = e.tip && !prevTipFan;
         syncFan(e.tip || prevTipFan);
         const feed = e.tip ? (prevTipFan ? spikeFeedTip : spikeFeedOut) : prevTipFan ? spikeFeedIn : printFeedEff;
-        emitSeg(cur, feed, ramp, e.tip || prevTipFan ? spikeArea : null);
+        const segArea = e.tip || prevTipFan ? spikeArea : null;
+        if (isPushOut && spikeOutArc && prevPos) {
+          const arcPts = arcOutPoints(prevPos, cur, 8);
+          for (let k = 0; k < arcPts.length; k++) emitSeg(arcPts[k], feed, ramp, segArea);
+        } else {
+          emitSeg(cur, feed, ramp, segArea);
+        }
         if (e.dwellAfter && spikeDwellMs > 0) lines.push('G4 P' + spikeDwellMs + ' ; spike tip dwell');
         prevTipFan = !!e.tip;
         prevU = e.u;
+        prevPos = cur;
       }
     }
 
@@ -3495,6 +3540,7 @@
       let prevWeaveSpecial = false;
       let prevHot = false;
       let prevTipFan = false;
+      let prevPos = null;
       for (let i = 0; i <= events.length; i++) {
         const endCut = i === events.length || events[i].f >= uEnd - 1e-12;
         const e = endCut ? { f: uEnd, u: uEnd } : events[i];
@@ -3520,15 +3566,17 @@
         // fully supported by the layer underneath.
         const bridgeNow = bridge && q.isNew;
         const overhangNow = hOverhangOn && (q.hot || prevHot);
-        let feed = printFeedEff;
-        if (bridgeNow) feed = hBridgeFeed;
-        else if (overhangNow) feed = hOverhangFeed;
         // Spike out/tip/in each get their own dedicated feed — no hysteresis
         // carrying one into further segments, unlike weave's smooth
         // (both-directions) bump zone below. Which of the three a tip
         // segment is comes down to whether the previous event was also a tip
         // (the flat stretch) or not (the initial push out) — see spikesLoop.
-        else if (e.tip) feed = prevTipFan ? spikeFeedTip : spikeFeedOut;
+        const isPushOut = e.tip && !prevTipFan;
+        let feed = printFeedEff;
+        if (bridgeNow) feed = hBridgeFeed;
+        else if (overhangNow) feed = hOverhangFeed;
+        else if (isPushOut) feed = spikeFeedOut;
+        else if (e.tip) feed = spikeFeedTip;
         else if (prevTipFan) feed = spikeFeedIn;
         else if (weaveSpecial || prevWeaveSpecial) feed = bumpFeed;
         // Fan (bumps-only mode) covers every slow/unsupported zone here —
@@ -3537,16 +3585,19 @@
         // unlike its feed, which is deliberately asymmetric above.
         syncFan(bridgeNow || overhangNow || weaveSpecial || prevWeaveSpecial || e.tip || prevTipFan);
         const nrm = e.tip ? e.tan : q;
-        emitSeg(
-          { x: q.x + dirSign * nrm.ty * lat + cx, y: q.y - dirSign * nrm.tx * lat + cy, z: z },
-          feed,
-          1,
-          e.tip || prevTipFan ? spikeArea : null
-        );
+        const cur = { x: q.x + dirSign * nrm.ty * lat + cx, y: q.y - dirSign * nrm.tx * lat + cy, z: z };
+        const segArea = e.tip || prevTipFan ? spikeArea : null;
+        if (isPushOut && spikeOutArc && prevPos) {
+          const arcPts = arcOutPoints(prevPos, cur, 8);
+          for (let k = 0; k < arcPts.length; k++) emitSeg(arcPts[k], feed, 1, segArea);
+        } else {
+          emitSeg(cur, feed, 1, segArea);
+        }
         if (e.dwellAfter && spikeDwellMs > 0) lines.push('G4 P' + spikeDwellMs + ' ; spike tip dwell');
         prevWeaveSpecial = weaveSpecial;
         prevHot = q.hot;
         prevTipFan = !!e.tip;
+        prevPos = cur;
         if (endCut) break;
       }
     }
