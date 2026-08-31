@@ -448,6 +448,7 @@
         spikeFeedOut: num('patSpikeFeedOut'),
         spikeFeedTip: num('patSpikeFeedTip'),
         spikeFeedIn: num('patSpikeFeedIn'),
+        spikeInAccel: Math.max(0, num('patSpikeInAccel')),
         spikeLineWidth: Math.max(0, num('patSpikeLineWidth')),
         spikeLayerHeight: Math.max(0, num('patSpikeLayerHeight')),
       },
@@ -2932,6 +2933,7 @@
       syncPatFlowLabels(cfg);
       syncHangFlowLabels(cfg);
       syncSpikeOutMotionHint(cfg);
+      syncSpikeInAccelHint(cfg);
     } else if (cfg.project === 'vessel') {
       showShapeParams(cfg.shape, 've-shape-params');
       showProfMidCount(cfg.vessel.midCount);
@@ -3049,6 +3051,38 @@
         'The way out lifts straight up off the wall, then arcs over to arrive level at the tip — ' +
         'a true quarter circle only where the climb and reach happen to match; otherwise a stretched arc.';
     }
+  }
+
+  // The way-in acceleration ramp only has something to do once the spike's
+  // own "feedrate in" is actually slower than the wall it's rejoining —
+  // otherwise there's no speed jump to smooth over in the first place.
+  // Shows the same distance/feed numbers the generator itself computes, so
+  // there's no guessing before hitting Regenerate and looking at the
+  // color-coded 3D preview.
+  function syncSpikeInAccelHint(cfg) {
+    const hint = $('patSpikeInAccelHint');
+    if (!hint) return;
+    if (cfg.pattern.type !== 'spikes' || !(cfg.pattern.spikeInAccel > 0)) {
+      hint.textContent = '';
+      return;
+    }
+    let wallFeed = cfg.printFeed;
+    if (cfg.flowFeed.enabled && isPos(cfg.flowFeed.rate) && isPos(cfg.lineWidth) && isPos(cfg.layerHeight)) {
+      wallFeed = (cfg.flowFeed.rate * 60) / window.GcodeGen.beadArea(cfg.lineWidth, cfg.layerHeight);
+    }
+    const v0 = cfg.pattern.spikeFeedIn;
+    if (!isPos(v0) || wallFeed <= v0) {
+      hint.textContent = 'No effect yet: feedrate in (' + v0 + ' mm/min) is already at or above the wall feed (' +
+        wallFeed.toFixed(0) + ' mm/min) — nothing to ramp up to.';
+      return;
+    }
+    const v0mmps = v0 / 60;
+    const v1mmps = wallFeed / 60;
+    const dist = (v1mmps * v1mmps - v0mmps * v0mmps) / (2 * cfg.pattern.spikeInAccel);
+    hint.textContent =
+      'Ramps from ' + v0 + ' mm/min up to the wall\'s ' + wallFeed.toFixed(0) + ' mm/min over about ' +
+      dist.toFixed(1) + 'mm of wall after each spike — shortened if another spike or the loop\'s own end ' +
+      'is closer than that.';
   }
 
   function syncPatFlowLabels(cfg) {

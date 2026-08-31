@@ -236,10 +236,12 @@
             <div class="field"><label id="patSpikeFeedOutLabel">Feedrate out (mm/min)</label><input type="number" id="patSpikeFeedOut" value="300" min="1" step="50" /></div>
             <div class="field"><label id="patSpikeFeedTipLabel">Feedrate tip (mm/min)</label><input type="number" id="patSpikeFeedTip" value="300" min="1" step="50" /></div>
             <div class="field"><label id="patSpikeFeedInLabel">Feedrate in (mm/min)</label><input type="number" id="patSpikeFeedIn" value="1200" min="1" step="50" /></div>
+            <div class="field"><label>Way-in acceleration to wall feed (mm/s², 0 = off)</label><input type="number" id="patSpikeInAccel" value="0" min="0" step="50" /></div>
             <div class="field"><label>Spike line width (mm, 0 = same as wall)</label><input type="number" id="patSpikeLineWidth" value="0" min="0" step="0.1" /></div>
             <div class="field"><label>Spike layer height (mm, 0 = same as wall)</label><input type="number" id="patSpikeLayerHeight" value="0" min="0" step="0.05" /></div>
           </div>
           <p class="hint" id="patSpikeOutMotionHint"></p>
+          <p class="hint" id="patSpikeInAccelHint"></p>
           <p class="hint" id="patFlowHint"></p>
         </div>
         <p class="hint" id="patternHint"></p>
