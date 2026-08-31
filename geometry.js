@@ -1222,20 +1222,6 @@
       const sign = dirSign || 1;
       const kMax = Math.ceil((Rmax - lw * 0.5) / lw);
       const sign0 = signedArea(outer) >= 0 ? 1 : -1;
-      const bboxOf = (pts) => {
-        let minX = Infinity;
-        let maxX = -Infinity;
-        let minY = Infinity;
-        let maxY = -Infinity;
-        pts.forEach((p) => {
-          if (p.x < minX) minX = p.x;
-          if (p.x > maxX) maxX = p.x;
-          if (p.y < minY) minY = p.y;
-          if (p.y > maxY) maxY = p.y;
-        });
-        return { w: maxX - minX, h: maxY - minY };
-      };
-      let prevBox = bboxOf(outer);
       rings.push(outer);
       // No scale-based fallback rings for the residual: on an elongated
       // shape, the residual left once true offsetting runs out is itself
@@ -1249,24 +1235,27 @@
       // last true-offset ring keeps that same unevenness confined to
       // exactly one revolution, same as how a normal (non-elongated)
       // shape's own innermost opening turn already works.
+      //
+      // Validity here is exactly maxValidInset's own check (area sign +
+      // magnitude), plus a direct self-intersection check — trueOffset's
+      // own output stays simple throughout its whole valid range (verified
+      // against a rectangle AND a star, corners and concave notches alike),
+      // so this never rejects a legitimate ring the way it would for the
+      // old per-vertex offsetClosed. An earlier version of this loop
+      // instead compared each ring's bounding box to the previous one,
+      // expecting roughly a 2*lw shrink per step — that assumption breaks
+      // for anything with a sharp convex point (a star's own tips retreat
+      // much faster than 2*lw per step of true offset, which is correct
+      // geometry, not a bug), rejecting perfectly good rings and forcing
+      // far more of the shape than necessary through the single opening
+      // revolution below.
       for (let k = 1; k <= kMax; k++) {
         const ring = trueOffset(outer, -(k * lw), sign);
         if (ring.length < 3) break;
         const a = signedArea(ring);
         if ((a >= 0 ? 1 : -1) !== sign0 || Math.abs(a) < 1e-4) break;
-        // Each step should shrink both dimensions by roughly 2*lw (one lw
-        // off each side) — trueOffset's own line-intersection math can
-        // occasionally degenerate right at (or numerically just past) the
-        // shape's true limit, collapsing everything to a single point
-        // instead of the proper thin sliver a slightly smaller inset still
-        // gives. A jump much bigger than one step's worth in either
-        // dimension is exactly that failure, not a legitimate ring.
-        const box = bboxOf(ring);
-        const tol = lw * 0.6;
-        if (box.w > prevBox.w + 1e-6 || box.h > prevBox.h + 1e-6) break;
-        if (prevBox.w - box.w > 2 * lw + tol || prevBox.h - box.h > 2 * lw + tol) break;
+        if (polylineSelfIntersects(ring)) break;
         rings.push(ring);
-        prevBox = box;
       }
     } else {
       for (let k = 0; k * lw <= Rmax - lw * 0.5 && k < 4000; k++) {

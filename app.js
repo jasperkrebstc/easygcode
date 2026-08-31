@@ -131,6 +131,11 @@
         nozzle: num(pre + 'filNozzleTemp'),
         bed: num(pre + 'filBedTemp'),
         fan: Math.max(0, Math.min(100, num(pre + 'filFan'))),
+        // Only the coat hanger's "bumps only" fan mode has these — every
+        // other project's printer card has no such fields, so read them
+        // defensively (0 when absent) rather than assuming they exist.
+        fanWall: $(pre + 'filFanWall') ? Math.max(0, Math.min(100, num(pre + 'filFanWall'))) : 0,
+        fanBump: $(pre + 'filFanBump') ? Math.max(0, Math.min(100, num(pre + 'filFanBump'))) : 0,
       },
       pellet: {
         up: num(pre + 'pelUpTemp'),
@@ -140,6 +145,8 @@
         pa: num(pre + 'pelPA'),
         purge: num(pre + 'pelPurge'),
         fan: Math.max(0, Math.min(100, num(pre + 'pelFan'))),
+        fanWall: $(pre + 'pelFanWall') ? Math.max(0, Math.min(100, num(pre + 'pelFanWall'))) : 0,
+        fanBump: $(pre + 'pelFanBump') ? Math.max(0, Math.min(100, num(pre + 'pelFanBump'))) : 0,
       },
     };
   }
@@ -392,6 +399,10 @@
       totalHeight: num('totalHeight'),
       bottomFillet: Math.max(0, num('bottomFillet')),
       printFeed: num('printFeed'),
+      flowFeed: {
+        enabled: $('flowFeedEnabled').checked,
+        rate: num('flowFeedRate'),
+      },
       travelFeed: num('travelFeed'),
       tolerance: num('tolerance'),
       seamSide: $('seamSide').value,
@@ -734,6 +745,9 @@
     if (!Number.isFinite(cfg.centerX) || !Number.isFinite(cfg.centerY))
       return 'Enter valid bed center X/Y.';
     if (!(cfg.bottomFillet >= 0)) return 'Bottom fillet height must be 0 or more.';
+    if (cfg.flowFeed.enabled && !isPos(cfg.flowFeed.rate)) {
+      return 'Enter a valid target volumetric flow (mm³/s).';
+    }
     if (!Number.isFinite(cfg.materialDensity) || cfg.materialDensity < 0)
       return 'Material density must be 0 (skip cost) or more.';
     if (!Number.isFinite(cfg.materialPrice) || cfg.materialPrice < 0)
@@ -823,6 +837,23 @@
         mode === 'filament'
           ? 'E = mm of filament (volume ÷ filament cross-section) · Marlin start/end for the P1P'
           : 'E = pure volume in mm³ · Klipper start/end with the GINGER pellet macros';
+    });
+  }
+
+  // Coat hanger only: "always on" shows the plain Fan (%) field; "bumps
+  // only" swaps it for independent wall/bump percentages instead, since a
+  // single shared level can't express "quieter on the wall, stronger right
+  // at a bump" — the whole reason for adding it.
+  function syncFanFields() {
+    const sel = $('fanMode');
+    const bumps = !!sel && sel.value === 'bumps';
+    ['pel', 'fil'].forEach((pre) => {
+      const always = $(pre + 'FanAlwaysField');
+      const wall = $(pre + 'FanWallField');
+      const bump = $(pre + 'FanBumpField');
+      if (always) always.hidden = bumps;
+      if (wall) wall.hidden = !bumps;
+      if (bump) bump.hidden = !bumps;
     });
   }
 
@@ -2819,7 +2850,14 @@
       const y1 = X * sa + Y * ca; // depth toward camera
       const ce = Math.cos(el), se = Math.sin(el);
       const sxp = x1;
-      const syp = Z * ce - y1 * se; // +Z up; tilt mixes in depth
+      // +Z up; tilt mixes in depth. +y1 (not -y1): world +Y has to move
+      // toward the top of the screen as the camera tilts down, the same
+      // way a top view in any slicer/CAD viewer draws it -- getting the
+      // sign backwards here doesn't move anything to the wrong SIDE, it
+      // mirrors the apparent rotation direction of the whole toolpath
+      // (a CCW print reading as CW on screen and vice versa) without
+      // changing a single number in the actual G-code.
+      const syp = Z * ce + y1 * se;
       return {
         x: canvas.width / 2 + panX + sxp * scale,
         y: canvas.height / 2 + panY - syp * scale,
@@ -2888,6 +2926,9 @@
       showShapeParams(cfg.shape);
       showPatternParams(cfg.pattern.type);
       showHangerParams(cfg.hanger.mode === 'double' ? 'double' : 'single');
+      syncFanFields();
+      $('flowFeedFields').hidden = !cfg.flowFeed.enabled;
+      syncCordhangerFlowFeedHint(cfg);
     } else if (cfg.project === 'vessel') {
       showShapeParams(cfg.shape, 've-shape-params');
       showProfMidCount(cfg.vessel.midCount);
@@ -2964,6 +3005,33 @@
           ' mm³/s (undomed — bead area is uniform, so flow is too).';
     } else {
       $('bs_flowFeedHint').textContent = '';
+    }
+  }
+
+  // Coat hanger only: the cross-section never varies (no dome, no radius
+  // profile), so — unlike the bend stool's own version above — this is one
+  // constant feed for one constant flow, not a range.
+  function syncCordhangerFlowFeedHint(cfg) {
+    const hint = $('flowFeedHint');
+    if (!hint) return;
+    if (!isPos(cfg.lineWidth) || !isPos(cfg.layerHeight)) {
+      hint.textContent = '';
+      return;
+    }
+    const area = window.GcodeGen.beadArea(cfg.lineWidth, cfg.layerHeight);
+    if (cfg.flowFeed.enabled && isPos(cfg.flowFeed.rate)) {
+      const feed = (cfg.flowFeed.rate * 60) / area;
+      hint.textContent =
+        'Wall print feed: ' + feed.toFixed(0) + ' mm/min (bead area ' + area.toFixed(2) +
+        ' mm²) to hold ' + cfg.flowFeed.rate + ' mm³/s. A bump, spike, or hanger-bridge feed ' +
+        'override still applies exactly as set, on top of this.';
+    } else if (isPos(cfg.printFeed)) {
+      const flow = (cfg.printFeed * area) / 60;
+      hint.textContent =
+        'At a constant ' + cfg.printFeed + ' mm/min: ' + flow.toFixed(2) + ' mm³/s (bead area ' +
+        area.toFixed(2) + ' mm²).';
+    } else {
+      hint.textContent = '';
     }
   }
 
@@ -3331,6 +3399,8 @@
     });
     // Sync groups whose checkboxes were set programmatically (no change event).
     $('brimFields').hidden = !$('brimEnabled').checked;
+    $('flowFeedFields').hidden = !$('flowFeedEnabled').checked;
+    syncFanFields();
     $('patternFields').hidden = !$('patternEnabled').checked;
     $('hangFields').hidden = !$('hangEnabled').checked;
     $('hangFields2').hidden = !$('hangEnabled').checked;

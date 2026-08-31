@@ -594,16 +594,40 @@ the part by hand (trim drooping filament/oozing, etc.) once it's done, rather th
 head parking just a few mm above the print. Floored at the old fixed value (10 mm
 pellet / 5 mm filament) so a trivial near-zero-height job still lifts.
 
-The part-cooling fan turns on **after the first (ramp) loop** so it bonds unfanned
-(filament default 100%, pellet default 0%) — this is the coat hanger's default **fan
-mode**. The alternative, **fan only during bumps / bridging**, keeps the fan off
-otherwise and switches it on/off around exactly the segments that need cooling to hold
-their shape: a spike's full out+dwell+in sequence (not just the slow move out — the fan
-stays on through the move back in too, only turning off once fully back at the wall),
-weave's own bump zones, and the wall hanger's slow bridging (bezier/pocket) and
-overhang-triggered segments. Useful when the fan has to stay off elsewhere to avoid
-warping the base (long thin shapes especially) but the bumps still need to solidify
-rigid enough to hold their shape.
+The part-cooling fan turns on **after the first (ramp) loop** at the **Fan (%)** field's
+own level (filament default 100%, pellet default 0%) — this is the coat hanger's default
+**fan mode**. The alternative, **fan only during bumps / bridging**, replaces that one
+field with two independent ones — **Wall fan (%)** and **Bump fan (%)** — since a single
+shared level can't express "quieter on the wall, stronger right at a bump": the wall
+level turns on right after the same ramp loop (not just whenever the fan happens to be
+off), and the print switches to the bump level for exactly the segments that need extra
+cooling to hold their shape — a spike's full out+dwell+in sequence (not just the slow
+move out — the fan stays on through the move back in too, only switching back once fully
+at the wall), weave's own bump zones, and the wall hanger's slow bridging (bezier/pocket)
+and overhang-triggered segments — then back to the wall level afterward. Either field can
+be 0 (a plain M107, not just "unset"), so this covers "fan off everywhere except bumps"
+(the original behavior, wall=0) just as well as "quieter on the wall, stronger at a bump"
+or any other combination — useful when the base needs a gentler airflow to avoid warping
+(long thin shapes especially) while the bumps still need to solidify rigid enough to hold
+their shape.
+
+### Volumetric flow
+
+An optional toggle — **constant volumetric flow (instead of constant feed rate)** — lets
+the wall's own print feed be specified as a target flow rate (mm³/s) instead of a feed
+rate (mm/min) directly, the same idea the bend stool, spoon, and lampshade projects
+already offer for their own main extrusion. The coat hanger's cross-section never varies
+(no dome, no radius profile), so this is simpler than those: one constant bead area
+means one constant feed for one constant flow, computed once rather than per segment. A
+live hint under the toggle shows the resulting feed (or, with the toggle off, what the
+current feed rate already works out to in mm³/s) so switching between the two views
+never requires doing the conversion by hand. Only the wall's own **normal** feed is
+affected — a bump, spike, or hanger-bridge feed override (set independently, in the
+Pattern / Wall hanger cards) still means exactly what it says regardless of this toggle,
+since those are deliberate departures from the wall's own speed, not the wall speed
+itself; when such an override is left at its own default (0 = "same as the wall"), it
+inherits whichever of the two — plain feed or volumetric-derived — the wall is currently
+using.
 
 ### Vase spiral + ramp-up
 
@@ -668,7 +692,15 @@ exactly — is covered by one final lap from a single point out to the innermost
 the same mechanism an ordinary circular disc already uses to grow from its own center;
 that one lap is the only place a very long shape can still show any unevenness, and it's
 now confined to as little of the print as the shape allows rather than a whole
-noticeably-wrong region.
+noticeably-wrong region. Each ring's own validity there is checked directly (same
+winding sign, real area, no self-crossing) rather than by comparing its size to the
+previous ring — an early version instead expected every ring to shrink by about one
+line width per step, which happens to be true for a rectangle or a circle but false for
+anything with a sharp convex point (a star's own tips pull back much faster than that
+per step, correctly, not a bug) or two very different axis lengths (an ellipse); that
+assumption rejected perfectly good rings on exactly those shapes, forcing far more of
+the disc through the single final lap than necessary and showing up as an
+out-of-place-looking loop well before the shape's own middle.
 
 ### Adaptive resolution
 
@@ -954,7 +986,15 @@ the socket's thread pitch.
 
 The **3D preview** orbits with a drag (Z-up), pinch/wheel zooms, two fingers pan, and a
 double-tap resets. The toolpath is colored by feedrate — blue = fastest, red = slowest —
-so brim / wall / bump feed differences are visible at a glance.
+so brim / wall / bump feed differences are visible at a glance. It draws the exact same
+`path` the G-code itself is built from — no separate reconstruction — so what it shows
+is never a second opinion about the toolpath, only about how that one path is projected
+to the screen. The projection's own vertical axis has to flip world +Y toward the *top*
+of the screen as the camera tilts down (the same convention any slicer's top view uses),
+not the bottom — getting that one sign backwards doesn't move anything to the wrong
+side, it mirrors the whole toolpath's apparent rotation on screen (clockwise reading as
+counter-clockwise and back) while leaving the underlying G-code, and every other tool
+that reads it, completely correct.
 
 ## Files
 
