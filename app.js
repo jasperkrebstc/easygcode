@@ -3098,6 +3098,15 @@
           : 'ramps from the hanger\'s bridge feed (' + cfg.hanger.bridgeFeed + ' mm/min) over about ' + d +
             'mm right after its one bridging loop'
       );
+      if (isPos(cfg.hanger.overhangFeed)) {
+        const dO = rampDistStr(cfg.hanger.overhangFeed);
+        parts.push(
+          dO == null
+            ? 'hanger overhang feed (' + cfg.hanger.overhangFeed + ' mm/min) is already at or above the wall feed — no effect there'
+            : 'ramps from the hanger\'s overhang feed (' + cfg.hanger.overhangFeed + ' mm/min) over about ' + dO +
+              'mm right after each overhang stretch'
+        );
+      }
     }
     if (parts.length === 0) {
       hint.textContent = 'No effect yet — enable the pattern\'s spikes or the wall hanger for this to have anything to ramp.';
@@ -3105,7 +3114,8 @@
     }
     hint.textContent =
       'Up to the wall\'s ' + wallFeed.toFixed(0) + ' mm/min: ' + parts.join('; ') +
-      ' — shortened if another spike or the loop\'s own end is closer than that.';
+      ' — shortened if another spike, zone, or the loop\'s own end is closer than that. Applies to any' +
+      ' feed-rate increase, not just these, e.g. a slower bump feed handing back to the wall too.';
   }
 
   function syncPatFlowLabels(cfg) {

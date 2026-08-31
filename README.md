@@ -831,38 +831,43 @@ tip and the way back in are untouched either way — only the way out changes sh
 its own feed rate, dwell, or anything else about the spike.
 
 An optional **acceleration to wall feed (mm/s², 0 = off)**, in the **Print settings**
-card (shared, not duplicated per feature, since it addresses the exact same underlying
-problem wherever it shows up) addresses two spots where a slow segment hands straight
-back to the wall's own faster feed in a single `G1`: a spike's own feedrate in, and —
-right where the wall hanger's one bridging loop's new geometry ends — its bridge
-feedrate. Both are often much slower than the wall's own feed (to keep a climbing spike
-from drooping, or because bridging over air needs it), and jumping straight from one to
-the other over whatever short stretch of wall happens to follow, often just one segment,
-can ask the firmware to accelerate harder right there than the motor can actually
-deliver, even though the same feed change is no problem out on the open wall. Set above
-0, the segment right after either transition is replaced by 8 shorter ones, each a step
-further along standard constant-acceleration kinematics (`v² = v0² + 2·a·d`) up to the
-wall's own feed (whichever it currently resolves to — plain or volumetric) — reaching it
-exactly at the end of the computed ramp distance rather than snapping to it. Capped at
-whichever comes first: the full ramp distance, the next spike's own approach, or this
-revolution's own end — found by scanning past plain wall points to the next spike's own
-boundary rather than just looking at whichever point happens to be immediately next (a
-wall hanger's own detour is tessellated far more densely than a plain revolution, so
-"immediately next" there is often a fraction of a mm away regardless of how much further
-a low acceleration could legitimately reach — capping there instead of at the real next
-spike cut the ramp far shorter than intended). That same boundary is also never itself
-skipped, even when the ramp's own endpoint lands exactly on it — a spike's four boundary
-points come in two pairs that share the exact same position (arriving at the tip, and
-leaving it), and treating "at or before this point" as one open-ended skip could consume
-both members of the NEXT spike's own pair instead of stopping at the one actually being
-capped against, silently erasing that spike's own push-out corner and leaving a pointy
-spike instead of a flat tip. The hanger-bridge ramp works the other way around — since
-there's no naturally-slow segment of its own to climb forward from once the bridge zone
-ends, it's caught and inserted right where the transition would otherwise happen, rather
-than after — but is capped and skip-protected the same way. Neither ramp ever eats into
-another spike's geometry, the plain wall beyond the hanger's own bridge zone, or carries
-over into the next layer. A live hint (naming whichever of spikes/hanger are actually
-enabled) shows the resulting ramp distance in mm, and the color-coded 3D preview (blue =
+card (shared, not duplicated per feature, since it's the exact same underlying problem
+wherever it shows up), addresses ANY spot where a slower feed hands straight to a faster
+one in a single `G1` — a spike's own feedrate in, the wall hanger's bridge feed once its
+one bridging loop's new geometry ends, its overhang feed once a steep transition-loop
+stretch ends, a weave bump's own feed handing back to the wall, or any other feed change
+a config happens to produce, present or future, since the mechanism itself doesn't special-
+case any of them. These are often much slower than the wall's own feed on purpose (to
+keep a climbing spike from drooping, because bridging over air needs it, because a steep
+overhang needs it, or because a bump needs a controlled dwell), and jumping straight from
+one to the other over whatever short stretch of wall happens to follow, often just one
+segment, can ask the firmware to accelerate harder right there than the motor can
+actually deliver, even though the same feed change is no problem out on the open wall.
+Set above 0, the segment right after any such transition is replaced by 8 shorter ones,
+each a step further along standard constant-acceleration kinematics (`v² = v0² + 2·a·d`)
+up to whatever the next feed target is (whichever it currently resolves to — plain or
+volumetric) — reaching it exactly at the end of the computed ramp distance rather than
+snapping to it. Capped at whichever comes first: the full ramp distance, this
+revolution's own end, or the next real zone boundary (a spike's own approach, the next
+overhang/bridge/bump stretch starting) — found by scanning past plain wall points rather
+than just looking at whichever point happens to be immediately next (a wall hanger's own
+detour is tessellated far more densely than a plain revolution, so "immediately next"
+there is often a fraction of a mm away regardless of how much further a low acceleration
+could legitimately reach — capping there instead of at the real next boundary would cut
+the ramp far shorter than intended). That same boundary is also never itself skipped,
+even when the ramp's own endpoint lands exactly on it — a spike's four boundary points
+come in two pairs that share the exact same position (arriving at the tip, and leaving
+it), and treating "at or before this point" as one open-ended skip could consume both
+members of the NEXT spike's own pair instead of stopping at the one actually being capped
+against, silently erasing that spike's own push-out corner and leaving a pointy spike
+instead of a flat tip. Re-evaluated fresh after each inserted stretch rather than computed
+once for the whole distance, so a config with several back-to-back slow zones (say, an
+overhang feed slower than the wall but faster than the bridge feed right before it) ramps
+up in the same stepped fashion a real accelerating move would, capping at each zone's own
+feed on the way past it rather than one stretch overshooting straight to the wall's. Never
+eats into another zone's geometry, the plain wall beyond it, or carries over into the next
+layer. A live hint (naming whichever of spikes/hanger are actually enabled and slower than
+the wall) shows the resulting ramp distance in mm, and the color-coded 3D preview (blue =
 fast, red = slow) shows the actual result directly, since this is very much a "watch it
 and fine-tune the number" setting rather than one with an obviously correct value. Off by
 default (0), same as the arc motion above — both are opt-in experiments, not a change to
