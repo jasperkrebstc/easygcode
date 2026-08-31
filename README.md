@@ -621,13 +621,27 @@ already offer for their own main extrusion. The coat hanger's cross-section neve
 means one constant feed for one constant flow, computed once rather than per segment. A
 live hint under the toggle shows the resulting feed (or, with the toggle off, what the
 current feed rate already works out to in mm³/s) so switching between the two views
-never requires doing the conversion by hand. Only the wall's own **normal** feed is
-affected — a bump, spike, or hanger-bridge feed override (set independently, in the
-Pattern / Wall hanger cards) still means exactly what it says regardless of this toggle,
-since those are deliberate departures from the wall's own speed, not the wall speed
-itself; when such an override is left at its own default (0 = "same as the wall"), it
-inherits whichever of the two — plain feed or volumetric-derived — the wall is currently
-using.
+never requires doing the conversion by hand. This is the **normal** wall feed — every
+other zone's own feed override (below) is independent, and inherits whichever of the two
+— plain feed or volumetric-derived — the wall is currently using whenever that override
+is left at its own default (0 = "same as the wall").
+
+The **bump/spike feed overrides** (Pattern card) and the **hanger bridge/overhang feed
+overrides** (Wall hanger card) each get their own equivalent toggle, one shared switch
+per card rather than one per field — a weave bump, a spike's own asymmetric out/in/tip
+speeds, a hanger's bridge, and its overhang compensation are still fully independent
+settings either way, just all read in whichever unit the card's toggle picks. Spike
+feeds convert through the spike's own bead area when it has its own line width/layer
+height override (matching the wall's area otherwise); bridge/overhang always use the
+wall's own area, since neither changes the cross-section being extruded. Every field's
+label switches units live, and a hint under each card shows the other unit's equivalent
+for every override actually in use — so flipping either toggle never leaves you guessing
+what a value that was tuned in the other unit now means. There used to be a separate
+**bottom feedrate** setting for the patternless layers below where a pattern starts —
+it's gone — the wall's own feed (plain or volumetric) is constant for the whole print,
+top to bottom, so a distinct speed for that zone specifically no longer exists as a
+concept. The **patternless layer counts** themselves (how many layers stay bump-free at
+the bottom and top) are unaffected — only the separate speed for that zone is gone.
 
 ### Vase spiral + ramp-up
 

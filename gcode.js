@@ -2438,22 +2438,43 @@
       if (z < 0) zFloorHit = true;
       return Math.max(0, z);
     }
-    const bumpFeed = pat.bumpFeed > 0 ? pat.bumpFeed : printFeedEff;
+    // Spikes can extrude as if printed with a different line width/layer
+    // height than the wall — 0 (either field) means "same as wall", the
+    // ordinary bead area. This ONLY changes the bead cross-section used to
+    // compute E on spike segments (the push-out, flat tip, and push-back-in
+    // moves); the spike's actual XYZ geometry is still governed entirely by
+    // the wall's own lineWidth/layerHeight, same as before this setting
+    // existed — under- or over-extruding the same physical path, not
+    // reshaping it. Computed up front (moved ahead of the spike feeds
+    // below) since a volumetric spike feed needs the SAME area to convert
+    // through.
+    const spikeLineWidth = pat.spikeLineWidth > 0 ? pat.spikeLineWidth : cfg.lineWidth;
+    const spikeLayerHeightForArea = pat.spikeLayerHeight > 0 ? pat.spikeLayerHeight : lh;
+    const spikeArea =
+      type === 'spikes' && (pat.spikeLineWidth > 0 || pat.spikeLayerHeight > 0)
+        ? beadArea(spikeLineWidth, spikeLayerHeightForArea)
+        : null;
+    // Bump/spike feed overrides can be entered either as a feed rate
+    // (mm/min, the default) or — with the pattern's own flow-mode toggle —
+    // as a target volumetric flow (mm³/s), converted through the SAME bead
+    // area the segment itself actually extrudes at (the spike's own area
+    // when overridden, the wall's otherwise). 0 still means "inherit the
+    // wall's own feed" either way.
+    function patFeed(value, a) {
+      if (!(value > 0)) return null;
+      return pat.flowMode ? (value * 60) / Math.max(a, 1e-6) : value;
+    }
+    const bumpFeed = patFeed(pat.bumpFeed, area) || printFeedEff;
     // Spikes get their own dedicated out/in feeds instead of sharing bumpFeed
     // with weave — independent, so e.g. slow out + fast back in, or slow
     // both ways (leave the dwell at 0 for a plain back-and-forth), are both
     // just a matter of what's typed in, not a fixed asymmetric rule.
-    const spikeFeedOut = pat.spikeFeedOut > 0 ? pat.spikeFeedOut : printFeedEff;
-    const spikeFeedIn = pat.spikeFeedIn > 0 ? pat.spikeFeedIn : printFeedEff;
+    const spikeFeedOut = patFeed(pat.spikeFeedOut, spikeArea || area) || printFeedEff;
+    const spikeFeedIn = patFeed(pat.spikeFeedIn, spikeArea || area) || printFeedEff;
     // The flat top itself (the pushed-out stretch between the two 90° turns)
     // gets its own feed too, independent of the out/in moves on either side
     // of it — defaults to feedOut if left unset.
-    const spikeFeedTip = pat.spikeFeedTip > 0 ? pat.spikeFeedTip : spikeFeedOut;
-    // Separate, slower feed for the plain (bumpless) revolutions below where
-    // the pattern starts — independent of the main print feed used from the
-    // pattern's own bottom layer upward, e.g. for extra first-layers-out
-    // adhesion time without slowing the whole print.
-    const bottomFeed = pat.bottomFeed > 0 ? pat.bottomFeed : printFeedEff;
+    const spikeFeedTip = patFeed(pat.spikeFeedTip, spikeArea || area) || spikeFeedOut;
     const plBottom = patternOn ? pat.plBottom : 0;
     const plTop = patternOn ? pat.plTop : 0;
     // Spikes are placed by density (spikes per cm^2) rather than a fixed
@@ -2476,23 +2497,6 @@
     // before heading back in at normal feed (P is milliseconds — supported by
     // both Marlin and Klipper, unlike Marlin's S-in-seconds extension).
     const spikeDwellMs = type === 'spikes' && pat.spikeDwell > 0 ? Math.round(pat.spikeDwell * 1000) : 0;
-    // Spikes can extrude as if printed with a different line width/layer
-    // height than the wall — 0 (either field) means "same as wall", the
-    // ordinary bead area. This ONLY changes the bead cross-section used to
-    // compute E on spike segments (the push-out, flat tip, and push-back-in
-    // moves); the spike's actual XYZ geometry is still governed entirely by
-    // the wall's own lineWidth/layerHeight, same as before this setting
-    // existed — under- or over-extruding the same physical path, not
-    // reshaping it.
-    const spikeLineWidth = pat.spikeLineWidth > 0 ? pat.spikeLineWidth : cfg.lineWidth;
-    const spikeLayerHeightForArea = pat.spikeLayerHeight > 0 ? pat.spikeLayerHeight : lh;
-    const spikeArea =
-      type === 'spikes' && (pat.spikeLineWidth > 0 || pat.spikeLayerHeight > 0)
-        ? beadArea(spikeLineWidth, spikeLayerHeightForArea)
-        : null;
-    function baseFeedAt(L) {
-      return patternOn && L < plBottom ? bottomFeed : printFeedEff;
-    }
 
     // ---- Fan mode ----
     // 'always' (default): a single M106 after the first revolution, fan stays
@@ -2542,7 +2546,16 @@
       (hangDouble ? hang.gapWidthMM > 0 && hang.pocketWidthMM > 0 : pocketFrac > 0.005);
     const hStart = Math.max(1, Math.round(hang.bottom || 1));
     const hTween = Math.max(1, Math.round(hang.transition || 1));
-    const hBridgeFeed = hang.bridgeFeed > 0 ? hang.bridgeFeed : printFeedEff;
+    // Bridge/overhang feed overrides, same feed-rate-or-volumetric-flow
+    // choice as the pattern's own bump/spike feeds above (hang.flowMode is
+    // the hanger card's own toggle) — always through the wall's own bead
+    // area, since neither bridging nor overhang compensation change the
+    // cross-section being extruded.
+    function hangFeed(value) {
+      if (!(value > 0)) return null;
+      return hang.flowMode ? (value * 60) / Math.max(area, 1e-6) : value;
+    }
+    const hBridgeFeed = hangFeed(hang.bridgeFeed) || printFeedEff;
     // Overhang compensation for the tween zone: layers there aren't stacked
     // directly on top of each other — each vertex slides sideways toward the
     // plain profile as the hanger shape washes out — so a steep tween (few
@@ -2552,7 +2565,7 @@
     // shift from the layer below exceeds what the overhang angle allows for
     // this layer height prints at the overhang feedrate instead.
     const hOverhangOn = hangOn && hang.overhangFeed > 0;
-    const hOverhangFeed = hang.overhangFeed > 0 ? hang.overhangFeed : printFeedEff;
+    const hOverhangFeed = hangFeed(hang.overhangFeed) || printFeedEff;
     const hOverhangMaxHoriz = lh * Math.tan(((hang.overhangAngle > 0 ? hang.overhangAngle : 15) * Math.PI) / 180);
     if (hangOn && hStart >= Lmax) {
       warnings.push('Hanger disabled: not enough loops below the top (bottom loops >= total loops).');
@@ -2688,7 +2701,8 @@
     if (patternOn) {
       let ln = '; pattern=' + type + ' amplitude=' + pat.amplitude + ' zAngle=' + (pat.zAngle || 0) +
         (zAngleLowMM > 0 ? ' zAngleLow=' + (pat.zAngleLow || 0) + ' below z=' + zAngleLowMM + 'mm' : '') +
-        ' coverage=' + pat.coverage + '% plBottom=' + plBottom + ' plTop=' + plTop;
+        ' coverage=' + pat.coverage + '% plBottom=' + plBottom + ' plTop=' + plTop +
+        (pat.flowMode ? ' (feed overrides below are volumetric flow -> feed)' : '');
       ln +=
         type === 'weave'
           ? ' bumps=' + pat.bumps + ' bumpFeed=' + Math.round(bumpFeed)
@@ -2709,7 +2723,8 @@
           ? '; hanger: double, gap%=' + hang.size + ' gapWidth=' + hang.gapWidthMM + 'mm pocketWidth=' +
             hang.pocketWidthMM + 'mm'
           : '; hanger: gap=' + hang.size + '% pocket=' + Math.round(pocketFrac * 100) + '%') +
-          ' bottomLoops=' + hStart + ' transition=' + hTween + ' bridgeFeed=' + Math.round(hBridgeFeed)
+          ' bottomLoops=' + hStart + ' transition=' + hTween + ' bridgeFeed=' + Math.round(hBridgeFeed) +
+          (hang.flowMode ? ' (feed overrides above are volumetric flow -> feed)' : '')
       );
       if (hOverhangOn) {
         lines.push(
@@ -2816,7 +2831,7 @@
     function emit(cur, curBump, ramp, L) {
       const inBump = curBump || prevBump;
       syncFan(inBump);
-      emitSeg(cur, inBump ? bumpFeed : baseFeedAt(L), ramp);
+      emitSeg(cur, inBump ? bumpFeed : printFeedEff, ramp);
       prevBump = curBump;
     }
 
@@ -3358,7 +3373,7 @@
         // only turns off once fully back at the wall — so it needs its own,
         // separately-tracked hysteresis.
         syncFan(e.tip || prevTipFan);
-        const feed = e.tip ? (prevTipFan ? spikeFeedTip : spikeFeedOut) : prevTipFan ? spikeFeedIn : baseFeedAt(L);
+        const feed = e.tip ? (prevTipFan ? spikeFeedTip : spikeFeedOut) : prevTipFan ? spikeFeedIn : printFeedEff;
         emitSeg(cur, feed, ramp, e.tip || prevTipFan ? spikeArea : null);
         if (e.dwellAfter && spikeDwellMs > 0) lines.push('G4 P' + spikeDwellMs + ' ; spike tip dwell');
         prevTipFan = !!e.tip;
@@ -3505,7 +3520,7 @@
         // fully supported by the layer underneath.
         const bridgeNow = bridge && q.isNew;
         const overhangNow = hOverhangOn && (q.hot || prevHot);
-        let feed = baseFeedAt(L);
+        let feed = printFeedEff;
         if (bridgeNow) feed = hBridgeFeed;
         else if (overhangNow) feed = hOverhangFeed;
         // Spike out/tip/in each get their own dedicated feed — no hysteresis
