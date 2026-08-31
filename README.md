@@ -840,8 +840,19 @@ open wall. Set above 0, the segment right after a spike rejoins the wall is repl
 (`v² = v0² + 2·a·d`) from feedrate in up to the wall's own feed (whichever it currently
 resolves to — plain or volumetric) — reaching it exactly at the end of the computed ramp
 distance rather than snapping to it. Capped at whichever comes first: the full ramp
-distance, the next spike's own approach, or this revolution's own end — it never eats
-into another spike's geometry or carries over into the next layer. A live hint shows the
+distance, the next spike's own approach, or this revolution's own end — found by scanning
+past plain wall points to the next spike's own boundary rather than just looking at
+whichever point happens to be immediately next (a wall hanger's own detour is tessellated
+far more densely than a plain revolution, so "immediately next" there is often a fraction
+of a mm away regardless of how much further a low acceleration could legitimately reach —
+capping there instead of at the real next spike cut the ramp far shorter than intended).
+That same boundary is also never itself skipped, even when the ramp's own endpoint lands
+exactly on it — a spike's four boundary points come in two pairs that share the exact same
+position (arriving at the tip, and leaving it), and treating "at or before this point" as
+one open-ended skip could consume both members of the NEXT spike's own pair instead of
+stopping at the one actually being capped against, silently erasing that spike's own
+push-out corner and leaving a pointy spike instead of a flat tip. It never eats into
+another spike's geometry or carries over into the next layer. A live hint shows the
 resulting ramp distance in mm, and the color-coded 3D preview (blue = fast, red = slow)
 shows the actual result directly, since this is very much a "watch it and fine-tune the
 number" setting rather than one with an obviously correct value. Off by default (0),
