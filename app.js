@@ -444,6 +444,7 @@
         seed: Math.max(0, Math.round(num('patSeed'))),
         spikeBalance: $('patSpikeBalance').value === 'on',
         spikeDwell: Math.max(0, num('patSpikeDwell')),
+        spikeOutMotion: $('patSpikeOutMotion').value === 'arc' ? 'arc' : 'straight',
         spikeFeedOut: num('patSpikeFeedOut'),
         spikeFeedTip: num('patSpikeFeedTip'),
         spikeFeedIn: num('patSpikeFeedIn'),
@@ -2930,6 +2931,7 @@
       syncCordhangerFlowFeedHint(cfg);
       syncPatFlowLabels(cfg);
       syncHangFlowLabels(cfg);
+      syncSpikeOutMotionHint(cfg);
     } else if (cfg.project === 'vessel') {
       showShapeParams(cfg.shape, 've-shape-params');
       showProfMidCount(cfg.vessel.midCount);
@@ -3018,6 +3020,35 @@
   function feedFlowConvert(value, area, toFeed) {
     if (!isPos(value) || !isPos(area)) return null;
     return toFeed ? (value * 60) / area : (value * area) / 60;
+  }
+
+  // The arc way-out motion only makes sense climbing (a positive Z-angle,
+  // in whichever zone a spike actually lands in) — a level or downward
+  // spike stays a straight line regardless of this setting, since curving
+  // "up first" would mean climbing away from the tip rather than toward
+  // it. Told here rather than silently, since flipping this dropdown with
+  // a flat/downward angle set would otherwise look like it did nothing.
+  function syncSpikeOutMotionHint(cfg) {
+    const hint = $('patSpikeOutMotionHint');
+    if (!hint) return;
+    if (cfg.pattern.type !== 'spikes' || cfg.pattern.spikeOutMotion !== 'arc') {
+      hint.textContent = '';
+      return;
+    }
+    const zAngle = cfg.pattern.zAngle || 0;
+    const zAngleLow = cfg.pattern.zAngleLowMM > 0 ? cfg.pattern.zAngleLow || 0 : zAngle;
+    if (zAngle <= 0 && zAngleLow <= 0) {
+      hint.textContent =
+        'No effect yet: the way out only arcs where a spike actually climbs (Z-angle above 0°) — ' +
+        'right now it\'s flat or pointing down there, so it stays a straight line.';
+    } else if (zAngle <= 0 || zAngleLow <= 0) {
+      hint.textContent =
+        'Arcs only in whichever zone actually climbs (Z-angle above 0°) — the other zone stays a straight line.';
+    } else {
+      hint.textContent =
+        'The way out lifts straight up off the wall, then arcs over to arrive level at the tip — ' +
+        'a true quarter circle only where the climb and reach happen to match; otherwise a stretched arc.';
+    }
   }
 
   function syncPatFlowLabels(cfg) {

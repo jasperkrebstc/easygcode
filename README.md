@@ -808,7 +808,26 @@ present and future) and **type-specific**:
   out (a 90° turn away from the wall), continues at that height for exactly the width it
   cut away (the same stretch of wall, just displaced outward — flat, not tapered, since
   both ends sit at the same amplitude), then turns 90° straight back in to rejoin the
-  wall. Four 90° turns total: out, along, in, and back onto the wall's own direction. Both
+  wall. Four 90° turns total: out, along, in, and back onto the wall's own direction — or,
+with the optional **way-out motion** dropdown set to **arc** instead of the default
+straight line, the first of those turns is replaced by a smooth quarter-ellipse: lift off
+the wall moving straight up (matching the wall's own vertical direction there, no sideways
+motion yet), then curve over to arrive at the tip moving dead level (perpendicular to Z,
+matching the flat tip run that follows) — a gentler launch than one sharp direction change
+straight into a steep climb, worth trying if a climbing spike's own feed has to be slowed
+drastically to keep it from drooping and that slowdown is itself causing trouble (the fan
+parked over one spot too long, warping the wall beneath it). Built from the exact vertical
+climb and lateral reach between those same two points (however the Z-angle placed them),
+so it's a true quarter *circle* only when the two happen to match (a 45° launch); any other
+ratio stretches it into an ellipse, still tangent-vertical at the base and tangent-level at
+the tip either way. Only ever bends where a spike actually climbs — a flat or downward
+Z-angle (zero or negative, in whichever zone a given spike lands in) always keeps the old
+straight line regardless of this setting, since curving "up first" only means something
+when there's an up to go toward; a live hint says so when the dropdown's own choice would
+otherwise have no visible effect. Tessellated into a fixed number of short segments rather
+than a true arc move (this app never emits `G2`/`G3`), same as every other curve here. The
+tip and the way back in are untouched either way — only the way out changes shape, never
+its own feed rate, dwell, or anything else about the spike. Both
   push-out arms use the SAME direction — the wall's tangent at the staple's own center,
   not each corner's own local tangent — so the two arms stay parallel (and the flat top
   a straight line the same distance out as the arms) even where the underlying curve
