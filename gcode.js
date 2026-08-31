@@ -2184,6 +2184,14 @@
     }
 
     const area = beadArea(cfg.lineWidth, lh);
+    // The coat hanger's own main print feed, used everywhere a wall
+    // segment doesn't have some more specific override (a bump, a hanger
+    // bridge, ...) — defaults to cfg.printFeed unchanged, same as every
+    // other project, but the coat hanger's own volumetric-flow toggle
+    // below can replace it with a feed derived from a target mm3/s
+    // instead. Declared unconditionally so it's always safe to read here,
+    // in the header log line, and in the brim's own feed fallback.
+    let printFeedEff = cfg.printFeed;
     // Vase: loops = height/layerHeight (may be fractional). Disc/vessel: whole
     // stacked layers / revolutions.
     let T = isBS
@@ -2262,6 +2270,20 @@
         chZOffset = lh + chBottomFillet;
         T = Math.max(0, T - chZOffset / lh);
         Lmax = Math.max(1, Math.ceil(T - 1e-9));
+      }
+      // Volumetric flow mode: hold a target mm3/s instead of a fixed feed
+      // rate. The coat hanger's cross-section never varies (no dome, no
+      // radius profile), so unlike the bend stool's own per-segment
+      // version of this same idea, the feed only needs computing once —
+      // constant bead area means a constant flow target maps to one
+      // constant feed. Off by default (byte-identical to a fixed
+      // printFeed); a bump/spike/hanger-bridge override, when set, still
+      // means exactly what it says regardless of this toggle, since those
+      // are deliberate departures from the wall's own normal speed, not
+      // the wall speed itself.
+      const chFlow = cfg.flowFeed || {};
+      if (!!chFlow.enabled && chFlow.rate > 0) {
+        printFeedEff = (chFlow.rate * 60) / Math.max(area, 1e-6);
       }
     }
 
@@ -2375,6 +2397,12 @@
     const includeStartEnd = !!printer.includeStartEnd;
     const fanPct = mode === 'filament' ? fil.fan || 0 : pel.fan || 0;
     const fanPWM = Math.round(Math.max(0, Math.min(100, fanPct)) * 2.55);
+    // Coat hanger "bumps only" fan mode only: independent wall/bump levels
+    // instead of the single fanPct above (which "always on" keeps using).
+    const fanWallPct = mode === 'filament' ? fil.fanWall || 0 : pel.fanWall || 0;
+    const fanBumpPct = mode === 'filament' ? fil.fanBump || 0 : pel.fanBump || 0;
+    const fanPWMWall = Math.round(Math.max(0, Math.min(100, fanWallPct)) * 2.55);
+    const fanPWMBump = Math.round(Math.max(0, Math.min(100, fanBumpPct)) * 2.55);
 
     // ---- Pattern setup ----
     const pat = cfg.pattern || {};
@@ -2410,13 +2438,13 @@
       if (z < 0) zFloorHit = true;
       return Math.max(0, z);
     }
-    const bumpFeed = pat.bumpFeed > 0 ? pat.bumpFeed : cfg.printFeed;
+    const bumpFeed = pat.bumpFeed > 0 ? pat.bumpFeed : printFeedEff;
     // Spikes get their own dedicated out/in feeds instead of sharing bumpFeed
     // with weave — independent, so e.g. slow out + fast back in, or slow
     // both ways (leave the dwell at 0 for a plain back-and-forth), are both
     // just a matter of what's typed in, not a fixed asymmetric rule.
-    const spikeFeedOut = pat.spikeFeedOut > 0 ? pat.spikeFeedOut : cfg.printFeed;
-    const spikeFeedIn = pat.spikeFeedIn > 0 ? pat.spikeFeedIn : cfg.printFeed;
+    const spikeFeedOut = pat.spikeFeedOut > 0 ? pat.spikeFeedOut : printFeedEff;
+    const spikeFeedIn = pat.spikeFeedIn > 0 ? pat.spikeFeedIn : printFeedEff;
     // The flat top itself (the pushed-out stretch between the two 90° turns)
     // gets its own feed too, independent of the out/in moves on either side
     // of it — defaults to feedOut if left unset.
@@ -2425,7 +2453,7 @@
     // the pattern starts — independent of the main print feed used from the
     // pattern's own bottom layer upward, e.g. for extra first-layers-out
     // adhesion time without slowing the whole print.
-    const bottomFeed = pat.bottomFeed > 0 ? pat.bottomFeed : cfg.printFeed;
+    const bottomFeed = pat.bottomFeed > 0 ? pat.bottomFeed : printFeedEff;
     const plBottom = patternOn ? pat.plBottom : 0;
     const plTop = patternOn ? pat.plTop : 0;
     // Spikes are placed by density (spikes per cm^2) rather than a fixed
@@ -2463,7 +2491,7 @@
         ? beadArea(spikeLineWidth, spikeLayerHeightForArea)
         : null;
     function baseFeedAt(L) {
-      return patternOn && L < plBottom ? bottomFeed : cfg.printFeed;
+      return patternOn && L < plBottom ? bottomFeed : printFeedEff;
     }
 
     // ---- Fan mode ----
@@ -2475,12 +2503,18 @@
     // and weave's own bump zones — tracked with on/off edges rather than one
     // constant command.
     const fanBumpsOnly = !isBS && cfg.fanMode === 'bumps';
+    // want=true -> bump level, want=false -> wall level (the background
+    // level everywhere that isn't a bump, not necessarily off — a 0% level
+    // is still an M107, just spelled out for clarity at the log line).
     let fanOn = false;
+    function fanCmd(pwm, label) {
+      return pwm > 0 ? 'M106 S' + pwm + ' ; ' + label + ' fan on' : 'M107 ; ' + label + ' fan off';
+    }
     function syncFan(want) {
       want = !!want; // e.tip is undefined (not false) off-tip — normalize so the
       // fanOn comparison below never sees undefined !== false as a false toggle.
-      if (!fanBumpsOnly || !includeStartEnd || fanPWM <= 0 || want === fanOn) return;
-      lines.push(want ? 'M106 S' + fanPWM + ' ; bump/bridge fan on' : 'M107 ; bump/bridge fan off');
+      if (!fanBumpsOnly || !includeStartEnd || want === fanOn) return;
+      lines.push(fanCmd(want ? fanPWMBump : fanPWMWall, want ? 'bump/bridge' : 'wall'));
       fanOn = want;
     }
 
@@ -2508,7 +2542,7 @@
       (hangDouble ? hang.gapWidthMM > 0 && hang.pocketWidthMM > 0 : pocketFrac > 0.005);
     const hStart = Math.max(1, Math.round(hang.bottom || 1));
     const hTween = Math.max(1, Math.round(hang.transition || 1));
-    const hBridgeFeed = hang.bridgeFeed > 0 ? hang.bridgeFeed : cfg.printFeed;
+    const hBridgeFeed = hang.bridgeFeed > 0 ? hang.bridgeFeed : printFeedEff;
     // Overhang compensation for the tween zone: layers there aren't stacked
     // directly on top of each other — each vertex slides sideways toward the
     // plain profile as the hanger shape washes out — so a steep tween (few
@@ -2518,7 +2552,7 @@
     // shift from the layer below exceeds what the overhang angle allows for
     // this layer height prints at the overhang feedrate instead.
     const hOverhangOn = hangOn && hang.overhangFeed > 0;
-    const hOverhangFeed = hang.overhangFeed > 0 ? hang.overhangFeed : cfg.printFeed;
+    const hOverhangFeed = hang.overhangFeed > 0 ? hang.overhangFeed : printFeedEff;
     const hOverhangMaxHoriz = lh * Math.tan(((hang.overhangAngle > 0 ? hang.overhangAngle : 15) * Math.PI) / 180);
     if (hangOn && hStart >= Lmax) {
       warnings.push('Hanger disabled: not enough loops below the top (bottom loops >= total loops).');
@@ -2685,7 +2719,14 @@
         );
       }
     }
-    lines.push('; printFeed=' + cfg.printFeed + ' travelFeed=' + cfg.travelFeed + ' (mm/min)');
+    if (!isBS && !isVessel && cfg.flowFeed && cfg.flowFeed.enabled && cfg.flowFeed.rate > 0) {
+      lines.push(
+        '; volumetric flow mode: target ' + cfg.flowFeed.rate + ' mm3/s (bead area ' + area.toFixed(2) +
+          'mm2) -> printFeed=' + printFeedEff.toFixed(0) + ' travelFeed=' + cfg.travelFeed + ' (mm/min)'
+      );
+    } else {
+      lines.push('; printFeed=' + printFeedEff + ' travelFeed=' + cfg.travelFeed + ' (mm/min)');
+    }
     lines.push(
       '; printer=' + mode + ' multiplier=' + mult +
         (mode === 'filament'
@@ -2977,7 +3018,7 @@
       // area by the ratio nets out to the brim's own.
       const bArea =
         beadArea(brim.lineWidth, brim.layerHeight) * (brim.multiplier > 0 ? brim.multiplier / mult : 1);
-      const brimFeed = brim.feed > 0 ? brim.feed : cfg.printFeed;
+      const brimFeed = brim.feed > 0 ? brim.feed : printFeedEff;
       const centroid = brimBase.reduce((s, p) => ({ x: s.x + p.x, y: s.y + p.y }), { x: 0, y: 0 });
       centroid.x /= brimBase.length;
       centroid.y /= brimBase.length;
@@ -3927,11 +3968,16 @@
           travelClear({ x: flatPoly[0].x + cx, y: flatPoly[0].y + cy, z: lh });
           for (let q = 1; q < flatPoly.length; q++) {
             const p = flatPoly[q];
-            emitSeg({ x: p.x + cx, y: p.y + cy, z: lh }, cfg.printFeed, p.e != null ? p.e : 1);
+            emitSeg({ x: p.x + cx, y: p.y + cy, z: lh }, printFeedEff, p.e != null ? p.e : 1);
           }
         }
-        if (includeStartEnd && fanPWM > 0) {
-          lines.push('M106 S' + fanPWM + ' ; part cooling fan on');
+        if (includeStartEnd) {
+          if (fanBumpsOnly) {
+            lines.push(fanCmd(fanPWMWall, 'wall'));
+            fanOn = false;
+          } else if (fanPWM > 0) {
+            lines.push('M106 S' + fanPWM + ' ; part cooling fan on');
+          }
         }
 
         const fSampler = Geo.vesselFilletSampler(chBottomFillet, 0); // dead vertical: constant cross-section
@@ -3998,7 +4044,7 @@
             const b = sB.at(u);
             emitSeg(
               { x: a.x + (b.x - a.x) * u + cx, y: a.y + (b.y - a.y) * u + cy, z: lh + z0 + (z1 - z0) * u },
-              cfg.printFeed,
+              printFeedEff,
               1
             );
           };
@@ -4015,8 +4061,13 @@
 
       for (let L = 0; L < Lmax; L++) {
         const uEnd = Math.min(1, T - L);
-        if (L === 1 && chZOffset <= 1e-9 && includeStartEnd && fanPWM > 0 && !fanBumpsOnly) {
-          lines.push('M106 S' + fanPWM + ' ; part cooling fan on after ramp loop');
+        if (L === 1 && chZOffset <= 1e-9 && includeStartEnd) {
+          if (fanBumpsOnly) {
+            lines.push(fanCmd(fanPWMWall, 'wall'));
+            fanOn = false;
+          } else if (fanPWM > 0) {
+            lines.push('M106 S' + fanPWM + ' ; part cooling fan on after ramp loop');
+          }
         }
         if (inBand(L)) {
           if (L === hStart) {
@@ -4060,7 +4111,7 @@
           if (d <= 1e-9) d += 1; // forward-wrap the fraction
           trav = Math.min(1, trav + d);
           const sp = sampler.at(u);
-          emitSeg({ x: sp.pos.x + cx, y: sp.pos.y + cy, z: topZ }, cfg.printFeed, Math.max(0, 1 - trav));
+          emitSeg({ x: sp.pos.x + cx, y: sp.pos.y + cy, z: topZ }, printFeedEff, Math.max(0, 1 - trav));
           pf = u;
         }
       } else {

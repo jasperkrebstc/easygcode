@@ -594,16 +594,40 @@ the part by hand (trim drooping filament/oozing, etc.) once it's done, rather th
 head parking just a few mm above the print. Floored at the old fixed value (10 mm
 pellet / 5 mm filament) so a trivial near-zero-height job still lifts.
 
-The part-cooling fan turns on **after the first (ramp) loop** so it bonds unfanned
-(filament default 100%, pellet default 0%) — this is the coat hanger's default **fan
-mode**. The alternative, **fan only during bumps / bridging**, keeps the fan off
-otherwise and switches it on/off around exactly the segments that need cooling to hold
-their shape: a spike's full out+dwell+in sequence (not just the slow move out — the fan
-stays on through the move back in too, only turning off once fully back at the wall),
-weave's own bump zones, and the wall hanger's slow bridging (bezier/pocket) and
-overhang-triggered segments. Useful when the fan has to stay off elsewhere to avoid
-warping the base (long thin shapes especially) but the bumps still need to solidify
-rigid enough to hold their shape.
+The part-cooling fan turns on **after the first (ramp) loop** at the **Fan (%)** field's
+own level (filament default 100%, pellet default 0%) — this is the coat hanger's default
+**fan mode**. The alternative, **fan only during bumps / bridging**, replaces that one
+field with two independent ones — **Wall fan (%)** and **Bump fan (%)** — since a single
+shared level can't express "quieter on the wall, stronger right at a bump": the wall
+level turns on right after the same ramp loop (not just whenever the fan happens to be
+off), and the print switches to the bump level for exactly the segments that need extra
+cooling to hold their shape — a spike's full out+dwell+in sequence (not just the slow
+move out — the fan stays on through the move back in too, only switching back once fully
+at the wall), weave's own bump zones, and the wall hanger's slow bridging (bezier/pocket)
+and overhang-triggered segments — then back to the wall level afterward. Either field can
+be 0 (a plain M107, not just "unset"), so this covers "fan off everywhere except bumps"
+(the original behavior, wall=0) just as well as "quieter on the wall, stronger at a bump"
+or any other combination — useful when the base needs a gentler airflow to avoid warping
+(long thin shapes especially) while the bumps still need to solidify rigid enough to hold
+their shape.
+
+### Volumetric flow
+
+An optional toggle — **constant volumetric flow (instead of constant feed rate)** — lets
+the wall's own print feed be specified as a target flow rate (mm³/s) instead of a feed
+rate (mm/min) directly, the same idea the bend stool, spoon, and lampshade projects
+already offer for their own main extrusion. The coat hanger's cross-section never varies
+(no dome, no radius profile), so this is simpler than those: one constant bead area
+means one constant feed for one constant flow, computed once rather than per segment. A
+live hint under the toggle shows the resulting feed (or, with the toggle off, what the
+current feed rate already works out to in mm³/s) so switching between the two views
+never requires doing the conversion by hand. Only the wall's own **normal** feed is
+affected — a bump, spike, or hanger-bridge feed override (set independently, in the
+Pattern / Wall hanger cards) still means exactly what it says regardless of this toggle,
+since those are deliberate departures from the wall's own speed, not the wall speed
+itself; when such an override is left at its own default (0 = "same as the wall"), it
+inherits whichever of the two — plain feed or volumetric-derived — the wall is currently
+using.
 
 ### Vase spiral + ramp-up
 
