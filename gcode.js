@@ -2533,6 +2533,30 @@
       }
       return pts;
     }
+    // Manually paced acceleration from a spike's own (often much slower)
+    // "feedrate in" back up to the wall's normal feed, since a single G1
+    // jumping straight from one to the other over whatever short stretch
+    // of wall happens to follow can ask the firmware to accelerate harder
+    // than the motor can actually deliver right there — fine mid-wall,
+    // but this reconnection point is often a very short segment. Standard
+    // constant-acceleration kinematics (v^2 = v0^2 + 2*a*d): rampDistance
+    // is how far it takes to reach the target feed at all, rampFeedAt is
+    // the feed at any point along the way. Both work in mm/s internally
+    // (G-code feeds are mm/min) since that's the natural unit for an
+    // acceleration in mm/s^2. 0 = off, same as every other "0 disables
+    // this" input in this app.
+    const spikeInAccel = type === 'spikes' ? Math.max(0, pat.spikeInAccel || 0) : 0;
+    function rampDistance(feedFrom, feedTo) {
+      if (spikeInAccel <= 0 || !(feedTo > feedFrom)) return 0;
+      const v0 = feedFrom / 60;
+      const v1 = feedTo / 60;
+      return (v1 * v1 - v0 * v0) / (2 * spikeInAccel);
+    }
+    function rampFeedAt(feedFrom, feedTo, distMm) {
+      const v0 = feedFrom / 60;
+      const v = Math.sqrt(Math.max(0, v0 * v0 + 2 * spikeInAccel * distMm));
+      return Math.min(feedTo, v * 60);
+    }
 
     // ---- Fan mode ----
     // 'always' (default): a single M106 after the first revolution, fan stays
@@ -3381,7 +3405,8 @@
       events.push({ u: uEnd, tip: false });
       let prevTipFan = false;
       let prevPos = null;
-      for (let i = 0; i < events.length; i++) {
+      let i = 0;
+      while (i < events.length) {
         const e = events[i];
         let cur;
         if (e.tip) {
@@ -3410,6 +3435,7 @@
         // only turns off once fully back at the wall — so it needs its own,
         // separately-tracked hysteresis.
         const isPushOut = e.tip && !prevTipFan;
+        const isPushIn = !e.tip && prevTipFan;
         syncFan(e.tip || prevTipFan);
         const feed = e.tip ? (prevTipFan ? spikeFeedTip : spikeFeedOut) : prevTipFan ? spikeFeedIn : printFeedEff;
         const segArea = e.tip || prevTipFan ? spikeArea : null;
@@ -3423,6 +3449,30 @@
         prevTipFan = !!e.tip;
         prevU = e.u;
         prevPos = cur;
+        i++;
+        // Manually paced acceleration back up to the wall's own feed,
+        // right after rejoining it (isPushIn is the segment that just
+        // landed AT spikeFeedIn) — capped at whichever comes first: the
+        // full ramp distance, this loop's own end, or the very next event
+        // (another spike's own approach, most likely), so it can never
+        // eat into geometry that isn't plain wall.
+        if (isPushIn && spikeInAccel > 0) {
+          const dTotal = rampDistance(feed, printFeedEff);
+          const duTotal = perim > 1e-6 ? dTotal / perim : 0;
+          const cap = Math.min(prevU + duTotal, uEnd, i < events.length ? events[i].u : uEnd);
+          const actualDu = cap - prevU;
+          if (actualDu > 1e-9) {
+            const steps = 8;
+            for (let k = 1; k <= steps; k++) {
+              const uk = prevU + (actualDu * k) / steps;
+              const dk = ((actualDu * k) / steps) * perim;
+              emitSeg(wallPoint(L, uk), rampFeedAt(feed, printFeedEff, dk), 1, null);
+            }
+            prevU = prevU + actualDu;
+            prevPos = wallPoint(L, prevU);
+            while (i < events.length && events[i].u <= prevU + 1e-9) i++;
+          }
+        }
       }
     }
 
@@ -3541,7 +3591,9 @@
       let prevHot = false;
       let prevTipFan = false;
       let prevPos = null;
-      for (let i = 0; i <= events.length; i++) {
+      let prevF = 0;
+      let i = 0;
+      while (i <= events.length) {
         const endCut = i === events.length || events[i].f >= uEnd - 1e-12;
         const e = endCut ? { f: uEnd, u: uEnd } : events[i];
         const q = atF(e.f);
@@ -3572,6 +3624,7 @@
         // segment is comes down to whether the previous event was also a tip
         // (the flat stretch) or not (the initial push out) — see spikesLoop.
         const isPushOut = e.tip && !prevTipFan;
+        const isPushIn = !e.tip && prevTipFan;
         let feed = printFeedEff;
         if (bridgeNow) feed = hBridgeFeed;
         else if (overhangNow) feed = hOverhangFeed;
@@ -3598,7 +3651,37 @@
         prevHot = q.hot;
         prevTipFan = !!e.tip;
         prevPos = cur;
+        prevF = e.f;
+        i++;
         if (endCut) break;
+        // Same manually-paced acceleration back up to the wall's own feed
+        // as spikesLoop — see there for why. Distance here is a fraction
+        // of THIS loop's own (possibly hanger-lengthened) total length,
+        // not the base shape's perimeter; capped the same way, at
+        // whichever comes first of the full ramp, this loop's own end, or
+        // the very next event.
+        if (isPushIn && spikeInAccel > 0) {
+          const dTotal = rampDistance(feed, printFeedEff);
+          const dfTotal = total > 1e-6 ? dTotal / total : 0;
+          const nextF = i < events.length ? events[i].f : uEnd;
+          const cap = Math.min(prevF + dfTotal, uEnd, nextF);
+          const actualDf = cap - prevF;
+          if (actualDf > 1e-9) {
+            const steps = 8;
+            for (let k = 1; k <= steps; k++) {
+              const fk = prevF + (actualDf * k) / steps;
+              const dk = ((actualDf * k) / steps) * total;
+              const qk = atF(fk);
+              const baseZk = Math.min(chZOffset + lh * (L + fk), cfg.totalHeight);
+              emitSeg({ x: qk.x + cx, y: qk.y + cy, z: floorZ(baseZk) }, rampFeedAt(feed, printFeedEff, dk), 1, null);
+            }
+            prevF = prevF + actualDf;
+            const qEnd = atF(prevF);
+            const baseZEnd = Math.min(chZOffset + lh * (L + prevF), cfg.totalHeight);
+            prevPos = { x: qEnd.x + cx, y: qEnd.y + cy, z: floorZ(baseZEnd) };
+            while (i < events.length && events[i].f <= prevF + 1e-9) i++;
+          }
+        }
       }
     }
 

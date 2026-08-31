@@ -827,7 +827,26 @@ when there's an up to go toward; a live hint says so when the dropdown's own cho
 otherwise have no visible effect. Tessellated into a fixed number of short segments rather
 than a true arc move (this app never emits `G2`/`G3`), same as every other curve here. The
 tip and the way back in are untouched either way — only the way out changes shape, never
-its own feed rate, dwell, or anything else about the spike. Both
+its own feed rate, dwell, or anything else about the spike.
+
+An optional **way-in acceleration to wall feed (mm/s², 0 = off)** addresses a different
+problem with the way back in specifically: feedrate in is often much slower than the
+wall's own feed (to keep a climbing spike from drooping), and jumping straight from one
+to the other in a single `G1` — over whatever short stretch of wall happens to follow,
+often just one segment — can ask the firmware to accelerate harder right there than the
+motor can actually deliver, even though the same feed change is no problem out on the
+open wall. Set above 0, the segment right after a spike rejoins the wall is replaced by
+8 shorter ones, each a step further along standard constant-acceleration kinematics
+(`v² = v0² + 2·a·d`) from feedrate in up to the wall's own feed (whichever it currently
+resolves to — plain or volumetric) — reaching it exactly at the end of the computed ramp
+distance rather than snapping to it. Capped at whichever comes first: the full ramp
+distance, the next spike's own approach, or this revolution's own end — it never eats
+into another spike's geometry or carries over into the next layer. A live hint shows the
+resulting ramp distance in mm, and the color-coded 3D preview (blue = fast, red = slow)
+shows the actual result directly, since this is very much a "watch it and fine-tune the
+number" setting rather than one with an obviously correct value. Off by default (0),
+same as the arc motion above — both are opt-in experiments, not a change to the existing
+straight-line behavior unless asked for. Both
   push-out arms use the SAME direction — the wall's tangent at the staple's own center,
   not each corner's own local tangent — so the two arms stay parallel (and the flat top
   a straight line the same distance out as the arms) even where the underlying curve
