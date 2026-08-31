@@ -404,6 +404,7 @@
         rate: num('flowFeedRate'),
       },
       travelFeed: num('travelFeed'),
+      accelToWallFeed: Math.max(0, num('accelToWallFeed')),
       tolerance: num('tolerance'),
       seamSide: $('seamSide').value,
       printDirection: $('printDirection').value === 'cw' ? 'cw' : 'ccw',
@@ -448,7 +449,6 @@
         spikeFeedOut: num('patSpikeFeedOut'),
         spikeFeedTip: num('patSpikeFeedTip'),
         spikeFeedIn: num('patSpikeFeedIn'),
-        spikeInAccel: Math.max(0, num('patSpikeInAccel')),
         spikeLineWidth: Math.max(0, num('patSpikeLineWidth')),
         spikeLayerHeight: Math.max(0, num('patSpikeLayerHeight')),
       },
@@ -2933,7 +2933,7 @@
       syncPatFlowLabels(cfg);
       syncHangFlowLabels(cfg);
       syncSpikeOutMotionHint(cfg);
-      syncSpikeInAccelHint(cfg);
+      syncAccelToWallFeedHint(cfg);
     } else if (cfg.project === 'vessel') {
       showShapeParams(cfg.shape, 've-shape-params');
       showProfMidCount(cfg.vessel.midCount);
@@ -3053,16 +3053,20 @@
     }
   }
 
-  // The way-in acceleration ramp only has something to do once the spike's
-  // own "feedrate in" is actually slower than the wall it's rejoining —
-  // otherwise there's no speed jump to smooth over in the first place.
-  // Shows the same distance/feed numbers the generator itself computes, so
-  // there's no guessing before hitting Regenerate and looking at the
-  // color-coded 3D preview.
-  function syncSpikeInAccelHint(cfg) {
-    const hint = $('patSpikeInAccelHint');
+  // The acceleration ramp only has something to do wherever the segment
+  // it's smoothing out of is actually slower than the wall it rejoins —
+  // otherwise there's no speed jump to cover in the first place. Applies
+  // in two places that share the same underlying problem (a slow segment
+  // handing straight back to the wall's own faster feed, often over a
+  // very short stretch): a spike's own "feedrate in", and the wall
+  // hanger's own bridge feed right after its one bridging loop. Shows the
+  // same distance/feed numbers the generator itself computes for
+  // whichever of those actually apply, so there's no guessing before
+  // hitting Regenerate and looking at the color-coded 3D preview.
+  function syncAccelToWallFeedHint(cfg) {
+    const hint = $('accelToWallFeedHint');
     if (!hint) return;
-    if (cfg.pattern.type !== 'spikes' || !(cfg.pattern.spikeInAccel > 0)) {
+    if (!(cfg.accelToWallFeed > 0)) {
       hint.textContent = '';
       return;
     }
@@ -3070,19 +3074,38 @@
     if (cfg.flowFeed.enabled && isPos(cfg.flowFeed.rate) && isPos(cfg.lineWidth) && isPos(cfg.layerHeight)) {
       wallFeed = (cfg.flowFeed.rate * 60) / window.GcodeGen.beadArea(cfg.lineWidth, cfg.layerHeight);
     }
-    const v0 = cfg.pattern.spikeFeedIn;
-    if (!isPos(v0) || wallFeed <= v0) {
-      hint.textContent = 'No effect yet: feedrate in (' + v0 + ' mm/min) is already at or above the wall feed (' +
-        wallFeed.toFixed(0) + ' mm/min) — nothing to ramp up to.';
+    const rampDistStr = (v0) => {
+      if (!isPos(v0) || wallFeed <= v0) return null;
+      const v0mmps = v0 / 60;
+      const v1mmps = wallFeed / 60;
+      const dist = (v1mmps * v1mmps - v0mmps * v0mmps) / (2 * cfg.accelToWallFeed);
+      return dist.toFixed(1);
+    };
+    const parts = [];
+    if (cfg.pattern.type === 'spikes' && cfg.pattern.enabled) {
+      const d = rampDistStr(cfg.pattern.spikeFeedIn);
+      parts.push(
+        d == null
+          ? 'spike feedrate in (' + cfg.pattern.spikeFeedIn + ' mm/min) is already at or above the wall feed — no effect there'
+          : 'ramps from spike feedrate in (' + cfg.pattern.spikeFeedIn + ' mm/min) over about ' + d + 'mm after each spike'
+      );
+    }
+    if (cfg.hanger.enabled) {
+      const d = rampDistStr(cfg.hanger.bridgeFeed);
+      parts.push(
+        d == null
+          ? 'hanger bridge feed (' + cfg.hanger.bridgeFeed + ' mm/min) is already at or above the wall feed — no effect there'
+          : 'ramps from the hanger\'s bridge feed (' + cfg.hanger.bridgeFeed + ' mm/min) over about ' + d +
+            'mm right after its one bridging loop'
+      );
+    }
+    if (parts.length === 0) {
+      hint.textContent = 'No effect yet — enable the pattern\'s spikes or the wall hanger for this to have anything to ramp.';
       return;
     }
-    const v0mmps = v0 / 60;
-    const v1mmps = wallFeed / 60;
-    const dist = (v1mmps * v1mmps - v0mmps * v0mmps) / (2 * cfg.pattern.spikeInAccel);
     hint.textContent =
-      'Ramps from ' + v0 + ' mm/min up to the wall\'s ' + wallFeed.toFixed(0) + ' mm/min over about ' +
-      dist.toFixed(1) + 'mm of wall after each spike — shortened if another spike or the loop\'s own end ' +
-      'is closer than that.';
+      'Up to the wall\'s ' + wallFeed.toFixed(0) + ' mm/min: ' + parts.join('; ') +
+      ' — shortened if another spike or the loop\'s own end is closer than that.';
   }
 
   function syncPatFlowLabels(cfg) {

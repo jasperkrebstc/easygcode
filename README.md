@@ -396,8 +396,9 @@ keep **fully independent settings** per project:
   bend stool's own output is unaffected. Optional **stick line width** and **stick layer
   height** (each 0 = same as the spiral) change ONLY the bead cross-section used to
   compute `E` on the stick's own single segment — its length, direction, and Z are still
-  governed entirely by the spiral's own line width/layer height, same idea as the coat
-  hanger's per-spike extrusion override. A **stick feed (mm/min, 0 = same as spiral)**
+  governed entirely by the spiral's own line width/layer height (unlike the coat hanger's
+  own spike line width override, which also reshapes the spike's own staple footprint —
+  see there). A **stick feed (mm/min, 0 = same as spiral)**
   lets the stick print at its own manual feedrate independent of the spiral's print feed.
   An optional **constant volumetric flow** toggle (same idea as the bend stool's own)
   takes a target flow (mm³/s) instead of a fixed feed and derives feed from each
@@ -829,40 +830,49 @@ than a true arc move (this app never emits `G2`/`G3`), same as every other curve
 tip and the way back in are untouched either way — only the way out changes shape, never
 its own feed rate, dwell, or anything else about the spike.
 
-An optional **way-in acceleration to wall feed (mm/s², 0 = off)** addresses a different
-problem with the way back in specifically: feedrate in is often much slower than the
-wall's own feed (to keep a climbing spike from drooping), and jumping straight from one
-to the other in a single `G1` — over whatever short stretch of wall happens to follow,
-often just one segment — can ask the firmware to accelerate harder right there than the
-motor can actually deliver, even though the same feed change is no problem out on the
-open wall. Set above 0, the segment right after a spike rejoins the wall is replaced by
-8 shorter ones, each a step further along standard constant-acceleration kinematics
-(`v² = v0² + 2·a·d`) from feedrate in up to the wall's own feed (whichever it currently
-resolves to — plain or volumetric) — reaching it exactly at the end of the computed ramp
-distance rather than snapping to it. Capped at whichever comes first: the full ramp
-distance, the next spike's own approach, or this revolution's own end — found by scanning
-past plain wall points to the next spike's own boundary rather than just looking at
-whichever point happens to be immediately next (a wall hanger's own detour is tessellated
-far more densely than a plain revolution, so "immediately next" there is often a fraction
-of a mm away regardless of how much further a low acceleration could legitimately reach —
-capping there instead of at the real next spike cut the ramp far shorter than intended).
-That same boundary is also never itself skipped, even when the ramp's own endpoint lands
-exactly on it — a spike's four boundary points come in two pairs that share the exact same
-position (arriving at the tip, and leaving it), and treating "at or before this point" as
-one open-ended skip could consume both members of the NEXT spike's own pair instead of
-stopping at the one actually being capped against, silently erasing that spike's own
-push-out corner and leaving a pointy spike instead of a flat tip. It never eats into
-another spike's geometry or carries over into the next layer. A live hint shows the
-resulting ramp distance in mm, and the color-coded 3D preview (blue = fast, red = slow)
-shows the actual result directly, since this is very much a "watch it and fine-tune the
-number" setting rather than one with an obviously correct value. Off by default (0),
-same as the arc motion above — both are opt-in experiments, not a change to the existing
-straight-line behavior unless asked for. Both
+An optional **acceleration to wall feed (mm/s², 0 = off)**, in the **Print settings**
+card (shared, not duplicated per feature, since it addresses the exact same underlying
+problem wherever it shows up) addresses two spots where a slow segment hands straight
+back to the wall's own faster feed in a single `G1`: a spike's own feedrate in, and —
+right where the wall hanger's one bridging loop's new geometry ends — its bridge
+feedrate. Both are often much slower than the wall's own feed (to keep a climbing spike
+from drooping, or because bridging over air needs it), and jumping straight from one to
+the other over whatever short stretch of wall happens to follow, often just one segment,
+can ask the firmware to accelerate harder right there than the motor can actually
+deliver, even though the same feed change is no problem out on the open wall. Set above
+0, the segment right after either transition is replaced by 8 shorter ones, each a step
+further along standard constant-acceleration kinematics (`v² = v0² + 2·a·d`) up to the
+wall's own feed (whichever it currently resolves to — plain or volumetric) — reaching it
+exactly at the end of the computed ramp distance rather than snapping to it. Capped at
+whichever comes first: the full ramp distance, the next spike's own approach, or this
+revolution's own end — found by scanning past plain wall points to the next spike's own
+boundary rather than just looking at whichever point happens to be immediately next (a
+wall hanger's own detour is tessellated far more densely than a plain revolution, so
+"immediately next" there is often a fraction of a mm away regardless of how much further
+a low acceleration could legitimately reach — capping there instead of at the real next
+spike cut the ramp far shorter than intended). That same boundary is also never itself
+skipped, even when the ramp's own endpoint lands exactly on it — a spike's four boundary
+points come in two pairs that share the exact same position (arriving at the tip, and
+leaving it), and treating "at or before this point" as one open-ended skip could consume
+both members of the NEXT spike's own pair instead of stopping at the one actually being
+capped against, silently erasing that spike's own push-out corner and leaving a pointy
+spike instead of a flat tip. The hanger-bridge ramp works the other way around — since
+there's no naturally-slow segment of its own to climb forward from once the bridge zone
+ends, it's caught and inserted right where the transition would otherwise happen, rather
+than after — but is capped and skip-protected the same way. Neither ramp ever eats into
+another spike's geometry, the plain wall beyond the hanger's own bridge zone, or carries
+over into the next layer. A live hint (naming whichever of spikes/hanger are actually
+enabled) shows the resulting ramp distance in mm, and the color-coded 3D preview (blue =
+fast, red = slow) shows the actual result directly, since this is very much a "watch it
+and fine-tune the number" setting rather than one with an obviously correct value. Off by
+default (0), same as the arc motion above — both are opt-in experiments, not a change to
+the existing straight-line behavior unless asked for. Both
   push-out arms use the SAME direction — the wall's tangent at the staple's own center,
   not each corner's own local tangent — so the two arms stay parallel (and the flat top
   a straight line the same distance out as the arms) even where the underlying curve
   bends sharply over that narrow a span, like inside a double-hanger keyhole's taper or
-  cap. Base width = line width (so the inner wall reads as continuous). Deterministic per
+  cap. Base width = the spike's own line width (wall's, unless overridden — see below),
+  so the inner wall reads as continuous. Deterministic per
   **seed** — change the seed to re-roll. Stays a clean shape even through the hanger and
   transition loops (their dense points are dropped inside the window so it never gets
   pinched narrow). An optional **length variation (± mm)** randomizes each one's length within
@@ -877,11 +887,15 @@ straight-line behavior unless asked for. Both
   (s)** inserts a `G4` pause right before heading back in — leave it at 0 for a plain
   back-and-forth with no
   pause (e.g. slow out, slow back in, no dwell at all). Optional **spike line width** and
-  **spike layer height** (each 0 = same as the wall) change ONLY the bead cross-section
-  used to compute `E` on the push-out/flat-tip/push-back-in moves — the spikes' actual
-  XYZ path is still built entirely from the wall's own line width/layer height, so this
-  over- or under-extrudes the same physical shape rather than resizing it. Useful for
-  printing the spikes with, say, a taller/thinner or flatter/wider bead than the wall
+  **spike layer height** (each 0 = same as the wall) override the bead cross-section used
+  to compute `E` on the push-out/flat-tip/push-back-in moves; the spike layer height still
+  only affects extrusion, since the spikes' own Z is always built from the wall's own
+  layer height. Spike line width now ALSO sets the staple's own base width — how much wall
+  it replaces, and how far apart its two push-out/push-in arms land — instead of that
+  always tracking the wall's own line width, so an overridden spike line width reshapes
+  the staple's own footprint to match rather than only changing how much material fills
+  it (0 falls back to the wall's own line width for both, unchanged from before). Useful
+  for printing the spikes with, say, a taller/thinner or flatter/wider bead than the wall
   without touching the wall's own line width or layer height.
 
 ### Wall hanger
