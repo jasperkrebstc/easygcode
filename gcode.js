@@ -2533,28 +2533,30 @@
       }
       return pts;
     }
-    // Manually paced acceleration from a spike's own (often much slower)
-    // "feedrate in" back up to the wall's normal feed, since a single G1
-    // jumping straight from one to the other over whatever short stretch
-    // of wall happens to follow can ask the firmware to accelerate harder
-    // than the motor can actually deliver right there — fine mid-wall,
-    // but this reconnection point is often a very short segment. Standard
+    // Manually paced acceleration from a slow segment (a spike's own
+    // "feedrate in", or the wall hanger's own bridge feed) back up to the
+    // wall's normal feed, since a single G1 jumping straight from one to
+    // the other over whatever short stretch of wall happens to follow can
+    // ask the firmware to accelerate harder than the motor can actually
+    // deliver right there — fine mid-wall, but both of these
+    // reconnection points are often very short segments. Standard
     // constant-acceleration kinematics (v^2 = v0^2 + 2*a*d): rampDistance
     // is how far it takes to reach the target feed at all, rampFeedAt is
     // the feed at any point along the way. Both work in mm/s internally
     // (G-code feeds are mm/min) since that's the natural unit for an
-    // acceleration in mm/s^2. 0 = off, same as every other "0 disables
-    // this" input in this app.
-    const spikeInAccel = type === 'spikes' ? Math.max(0, pat.spikeInAccel || 0) : 0;
+    // acceleration in mm/s^2. One shared setting (in Print settings, not
+    // duplicated per feature) since both are the exact same underlying
+    // problem. 0 = off, same as every other "0 disables this" input.
+    const accelToWallFeed = Math.max(0, cfg.accelToWallFeed || 0);
     function rampDistance(feedFrom, feedTo) {
-      if (spikeInAccel <= 0 || !(feedTo > feedFrom)) return 0;
+      if (accelToWallFeed <= 0 || !(feedTo > feedFrom)) return 0;
       const v0 = feedFrom / 60;
       const v1 = feedTo / 60;
-      return (v1 * v1 - v0 * v0) / (2 * spikeInAccel);
+      return (v1 * v1 - v0 * v0) / (2 * accelToWallFeed);
     }
     function rampFeedAt(feedFrom, feedTo, distMm) {
       const v0 = feedFrom / 60;
-      const v = Math.sqrt(Math.max(0, v0 * v0 + 2 * spikeInAccel * distMm));
+      const v = Math.sqrt(Math.max(0, v0 * v0 + 2 * accelToWallFeed * distMm));
       return Math.min(feedTo, v * 60);
     }
 
@@ -3293,7 +3295,14 @@
 
     // ---- Spike placement (blue-noise, seam-centered) ----
     const spikesMode = patternOn && type === 'spikes';
-    const hwU = cfg.lineWidth / 2 / perim;
+    // Half the width of wall a spike's own staple replaces — its base
+    // width, and how far apart the two push-out/push-in arms land — uses
+    // the SAME bead width the spike itself actually extrudes at
+    // (spikeLineWidth, already resolved to the wall's own lineWidth when
+    // the override is left at 0) rather than always the wall's, so an
+    // overridden spike line width reshapes the staple's own footprint to
+    // match instead of only changing how much material fills it.
+    const hwU = spikeLineWidth / 2 / perim;
     let byLoop = {};
     if (spikesMode) {
       const zMin = plBottom * lh;
@@ -3471,7 +3480,7 @@
         // tip. Only ever skipping the plain (unmarked) events keeps every
         // marked boundary for normal processing, however the u values
         // happen to line up.
-        if (isPushIn && spikeInAccel > 0) {
+        if (isPushIn && accelToWallFeed > 0) {
           const dTotal = rampDistance(feed, printFeedEff);
           const duTotal = perim > 1e-6 ? dTotal / perim : 0;
           let capIdx = i;
@@ -3542,7 +3551,10 @@
       let events = [];
       for (let i = 1; i < n1; i++) events.push({ f: cum[i] / total, u: pts[i].u });
       if (spikesMode) {
-        const hwF = cfg.lineWidth / 2 / total;
+        // Same reasoning as spikesLoop's own hwU: the staple's own base
+        // width tracks the spike's actual bead width, not always the
+        // wall's.
+        const hwF = spikeLineWidth / 2 / total;
         // Each spike's base-shape u is resolved to ITS OWN f on this loop
         // once, up front — every use below (the exclusion window, the
         // tangent lookup, the actual out/tip/in events) works from that f,
@@ -3608,6 +3620,7 @@
       let prevWeaveSpecial = false;
       let prevHot = false;
       let prevTipFan = false;
+      let prevBridgeNow = false;
       let prevPos = null;
       let prevF = 0;
       let i = 0;
@@ -3615,6 +3628,59 @@
         const endCut = i === events.length || events[i].f >= uEnd - 1e-12;
         const e = endCut ? { f: uEnd, u: uEnd } : events[i];
         const q = atF(e.f);
+        // Bridge feed applies to exactly the new geometry (the bezier
+        // approaches and the pocket arc between them) — not the segment
+        // just before or after it. A one-segment buffer there used to carry
+        // the slow feed one extra step into the plain wall on either side,
+        // which barely matters for the single hanger's long gap/pocket
+        // stretches but eats most or all of a double hanger's own (much
+        // shorter) plain-wall stretch between its two funnels, printing it
+        // slow and cold enough to risk poor layer adhesion for wall that's
+        // fully supported by the layer underneath. Computed up front
+        // (rather than alongside the other feed-zone flags below) so the
+        // ramp right after it ends, next, can see the transition before
+        // committing to this event's own normal feed.
+        const bridgeNow = bridge && q.isNew;
+        // Manually paced acceleration off the hanger's own bridge feed,
+        // right where its one bridging loop's new geometry ends and hands
+        // back to the wall — same underlying problem, and the same
+        // kinematics/cap/skip-ahead reasoning, as the spike ramp further
+        // below (see there). Handled one step earlier than that one,
+        // though: a spike's own "in" event already naturally lands at its
+        // own slow feed, giving the ramp a clean anchor to start climbing
+        // from right after; here, the wall's own faster feed would
+        // otherwise apply starting from THIS exact point (whichever event
+        // comes right after the bridge zone), with no slow segment of its
+        // own to ramp forward from — so the transition is caught here,
+        // before this event's own feed/position are committed to, rather
+        // than after.
+        if (prevBridgeNow && !bridgeNow && accelToWallFeed > 0) {
+          const dTotal = rampDistance(hBridgeFeed, printFeedEff);
+          const dfTotal = total > 1e-6 ? dTotal / total : 0;
+          let capIdx = i;
+          while (capIdx < events.length && events[capIdx].order === undefined) capIdx++;
+          const boundaryF = capIdx < events.length ? events[capIdx].f : uEnd;
+          const cap = Math.min(prevF + dfTotal, uEnd, boundaryF);
+          const actualDf = cap - prevF;
+          if (actualDf > 1e-9) {
+            const steps = 8;
+            for (let k = 1; k <= steps; k++) {
+              const fk = prevF + (actualDf * k) / steps;
+              const dk = ((actualDf * k) / steps) * total;
+              const qk = atF(fk);
+              const baseZk = Math.min(chZOffset + lh * (L + fk), cfg.totalHeight);
+              emitSeg({ x: qk.x + cx, y: qk.y + cy, z: floorZ(baseZk) }, rampFeedAt(hBridgeFeed, printFeedEff, dk), 1, null);
+            }
+            prevF = prevF + actualDf;
+            const qEnd = atF(prevF);
+            const baseZEnd = Math.min(chZOffset + lh * (L + prevF), cfg.totalHeight);
+            prevPos = { x: qEnd.x + cx, y: qEnd.y + cy, z: floorZ(baseZEnd) };
+            prevBridgeNow = false;
+            while (i < events.length && events[i].order === undefined && events[i].f <= prevF + 1e-9) i++;
+            continue; // re-derive endCut/e/q (and bridgeNow) fresh from the advanced i
+          }
+        }
+        prevBridgeNow = bridgeNow;
         let m = 0;
         if (!e.tip && patternOn && type === 'weave' && layerPatterned(L) && uInBand(e.u)) {
           m = pat.amplitude * Math.cos(Math.PI * (L + e.f) * pat.bumps);
@@ -3625,16 +3691,6 @@
         const lat = amp * aAng.cosA;
         const z = floorZ(baseZ + amp * aAng.sinA);
         const weaveSpecial = m !== 0;
-        // Bridge feed applies to exactly the new geometry (the bezier
-        // approaches and the pocket arc between them) — not the segment
-        // just before or after it. A one-segment buffer there used to carry
-        // the slow feed one extra step into the plain wall on either side,
-        // which barely matters for the single hanger's long gap/pocket
-        // stretches but eats most or all of a double hanger's own (much
-        // shorter) plain-wall stretch between its two funnels, printing it
-        // slow and cold enough to risk poor layer adhesion for wall that's
-        // fully supported by the layer underneath.
-        const bridgeNow = bridge && q.isNew;
         const overhangNow = hOverhangOn && (q.hot || prevHot);
         // Spike out/tip/in each get their own dedicated feed — no hysteresis
         // carrying one into further segments, unlike weave's smooth
@@ -3689,7 +3745,7 @@
         // spike's own paired boundary events share the exact same f, and
         // skipping both instead of leaving the second for normal
         // processing silently erases that spike's own push-out corner.
-        if (isPushIn && spikeInAccel > 0) {
+        if (isPushIn && accelToWallFeed > 0) {
           const dTotal = rampDistance(feed, printFeedEff);
           const dfTotal = total > 1e-6 ? dTotal / total : 0;
           let capIdx = i;
