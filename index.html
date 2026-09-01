@@ -153,7 +153,16 @@
           </div>
           <div class="field"><label>Print feed (mm/min)</label><input type="number" id="printFeed" value="1800" min="1" step="50" /></div>
           <div class="field"><label>Travel feed (mm/min)</label><input type="number" id="travelFeed" value="6000" min="1" step="100" /></div>
-          <div class="field"><label>Acceleration to wall feed (mm/s², 0 = off)</label><input type="number" id="accelToWallFeed" value="0" min="0" step="50" /></div>
+          <div class="field">
+            <label>Acceleration / deceleration limiting</label>
+            <select id="accelDecelMode">
+              <option value="accel">Acceleration limit enabled</option>
+              <option value="both">Acceleration and deceleration enabled</option>
+              <option value="off">Everything disabled</option>
+            </select>
+          </div>
+          <div class="field" id="accelToWallFeedField"><label>Acceleration to wall feed (mm/s², 0 = off)</label><input type="number" id="accelToWallFeed" value="0" min="0" step="50" /></div>
+          <div class="field" id="decelFromWallFeedField" hidden><label>Deceleration from wall feed (mm/s², 0 = off)</label><input type="number" id="decelFromWallFeed" value="0" min="0" step="50" /></div>
           <div class="field"><label>Chord tolerance (mm)</label><input type="number" id="tolerance" value="0.05" min="0.001" step="0.01" /></div>
           <div class="field">
             <label>Seam / pattern position</label>
