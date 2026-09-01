@@ -2533,31 +2533,39 @@
       }
       return pts;
     }
-    // Manually paced acceleration from a slow segment (a spike's own
-    // "feedrate in", or the wall hanger's own bridge feed) back up to the
-    // wall's normal feed, since a single G1 jumping straight from one to
-    // the other over whatever short stretch of wall happens to follow can
-    // ask the firmware to accelerate harder than the motor can actually
-    // deliver right there — fine mid-wall, but both of these
-    // reconnection points are often very short segments. Standard
-    // constant-acceleration kinematics (v^2 = v0^2 + 2*a*d): rampDistance
-    // is how far it takes to reach the target feed at all, rampFeedAt is
-    // the feed at any point along the way. Both work in mm/s internally
+    // Manually paced acceleration/deceleration around any feed change (a
+    // spike's own "feedrate in", the wall hanger's bridge/overhang feed,
+    // weave's own bump feed, or any other zone), since a single G1 jumping
+    // straight from one feed to another over whatever short stretch of
+    // wall happens to follow can ask the firmware to accelerate (or
+    // decelerate) harder than the motor can actually deliver right there —
+    // fine mid-wall, but these reconnection points are often very short
+    // segments. Standard constant-acceleration kinematics (v^2 = v0^2 +
+    // 2*a*d, same formula either direction since it only depends on the
+    // two speeds, not which is "from" and which is "to"): rampDistance is
+    // how far it takes to get from one feed to the other at all, rampFeedAt
+    // is the feed at any point along the way. Both work in mm/s internally
     // (G-code feeds are mm/min) since that's the natural unit for an
-    // acceleration in mm/s^2. One shared setting (in Print settings, not
-    // duplicated per feature) since both are the exact same underlying
-    // problem. 0 = off, same as every other "0 disables this" input.
-    const accelToWallFeed = Math.max(0, cfg.accelToWallFeed || 0);
-    function rampDistance(feedFrom, feedTo) {
-      if (accelToWallFeed <= 0 || !(feedTo > feedFrom)) return 0;
-      const v0 = feedFrom / 60;
-      const v1 = feedTo / 60;
-      return (v1 * v1 - v0 * v0) / (2 * accelToWallFeed);
+    // acceleration in mm/s^2. A dropdown (Print settings) picks which of
+    // the two directions are active; each direction still has its own
+    // "0 = off" input on top of that, same as every other such input.
+    const accelDecelMode = cfg.accelDecelMode === 'both' || cfg.accelDecelMode === 'off' ? cfg.accelDecelMode : 'accel';
+    const accelToWallFeed = accelDecelMode === 'off' ? 0 : Math.max(0, cfg.accelToWallFeed || 0);
+    const decelFromWallFeed = accelDecelMode === 'both' ? Math.max(0, cfg.decelFromWallFeed || 0) : 0;
+    function rampDistance(feedFrom, feedTo, rate) {
+      if (!(rate > 0) || feedFrom === feedTo) return 0;
+      const v0 = Math.min(feedFrom, feedTo) / 60;
+      const v1 = Math.max(feedFrom, feedTo) / 60;
+      return (v1 * v1 - v0 * v0) / (2 * rate);
     }
-    function rampFeedAt(feedFrom, feedTo, distMm) {
+    function rampFeedAt(feedFrom, feedTo, distMm, rate) {
       const v0 = feedFrom / 60;
-      const v = Math.sqrt(Math.max(0, v0 * v0 + 2 * accelToWallFeed * distMm));
-      return Math.min(feedTo, v * 60);
+      if (feedTo > feedFrom) {
+        const v = Math.sqrt(Math.max(0, v0 * v0 + 2 * rate * distMm));
+        return Math.min(feedTo, v * 60);
+      }
+      const v = Math.sqrt(Math.max(0, v0 * v0 - 2 * rate * distMm));
+      return Math.max(feedTo, v * 60);
     }
 
     // ---- Fan mode ----
@@ -3427,33 +3435,39 @@
         // (arriving at the first, i.e. the initial push out).
         const isPushOut = e.tip && !prevTipFan;
         const feed = e.tip ? (prevTipFan ? spikeFeedTip : spikeFeedOut) : prevTipFan ? spikeFeedIn : printFeedEff;
-        // Manually paced acceleration whenever THIS event's own feed calls
-        // for faster than the last one actually printed — not just a
+        // Manually paced acceleration OR deceleration whenever THIS event's
+        // own feed differs from the last one actually printed — not just a
         // spike's own way back in specifically, but any such transition a
         // config happens to produce (see polyLoop's own copy of this for
         // the full reasoning; spikesLoop never has a bridge/overhang/weave
-        // zone of its own, so a spike's "in" rejoining the wall is the only
-        // case that comes up here in practice, but the mechanism itself
-        // doesn't need to know that). Capped at whichever comes first: the
-        // full ramp distance, this loop's own end, or the next spike's own
-        // approach, so it can never eat into geometry that isn't plain
-        // wall. That cap has to be found by scanning past any plain wall
-        // events in between (order is only ever set on a spike's own four
-        // boundary events, never on an ordinary uSet point) rather than
-        // just looking at whichever event happens to be immediately next —
-        // otherwise a low acceleration reaching past several of those gets
-        // capped at the first one regardless of how much further the ramp
-        // could legitimately go. The skip-ahead below has the same
-        // reasoning in reverse: a spike's own "before"/tip-arrival pair (or
-        // tip-departure/"after" pair) share the exact same u, so if the
-        // ramp's own endpoint lands exactly on one, an unqualified "skip
-        // everything at or before this u" would consume BOTH — silently
-        // erasing that spike's own push-out corner and leaving a pointy
-        // spike instead of a flat tip. Only ever skipping the plain
-        // (unmarked) events keeps every marked boundary for normal
-        // processing, however the u values happen to line up.
-        if (accelToWallFeed > 0 && feed > prevFeed + 1e-9) {
-          const dTotal = rampDistance(prevFeed, feed);
+        // zone of its own, so a spike's own out/tip/in feeds and rejoining
+        // the wall are the only cases that come up here in practice, but
+        // the mechanism itself doesn't need to know that). Which rate
+        // applies depends on the direction: speeding up uses
+        // accelToWallFeed, slowing down uses decelFromWallFeed, and either
+        // is 0 (off) unless the Print-settings dropdown has enabled it.
+        // Capped at whichever comes first: the full ramp distance, this
+        // loop's own end, or the next spike's own approach, so it can
+        // never eat into geometry that isn't plain wall. That cap has to
+        // be found by scanning past any plain wall events in between
+        // (order is only ever set on a spike's own four boundary events,
+        // never on an ordinary uSet point) rather than just looking at
+        // whichever event happens to be immediately next — otherwise a low
+        // rate reaching past several of those gets capped at the first one
+        // regardless of how much further the ramp could legitimately go.
+        // The skip-ahead below has the same reasoning in reverse: a
+        // spike's own "before"/tip-arrival pair (or tip-departure/"after"
+        // pair) share the exact same u, so if the ramp's own endpoint
+        // lands exactly on one, an unqualified "skip everything at or
+        // before this u" would consume BOTH — silently erasing that
+        // spike's own push-out corner and leaving a pointy spike instead
+        // of a flat tip. Only ever skipping the plain (unmarked) events
+        // keeps every marked boundary for normal processing, however the u
+        // values happen to line up.
+        const feedDiff = feed - prevFeed;
+        const rampRate = feedDiff > 1e-9 ? accelToWallFeed : feedDiff < -1e-9 ? decelFromWallFeed : 0;
+        if (rampRate > 0) {
+          const dTotal = rampDistance(prevFeed, feed, rampRate);
           const duTotal = perim > 1e-6 ? dTotal / perim : 0;
           let capIdx = i;
           while (capIdx < events.length && events[capIdx].order === undefined) capIdx++;
@@ -3466,9 +3480,9 @@
             for (let k = 1; k <= steps; k++) {
               const uk = prevU + (actualDu * k) / steps;
               const dk = ((actualDu * k) / steps) * perim;
-              emitSeg(wallPoint(L, uk), rampFeedAt(rampFeedFrom, feed, dk), 1, null);
+              emitSeg(wallPoint(L, uk), rampFeedAt(rampFeedFrom, feed, dk, rampRate), 1, null);
             }
-            prevFeed = rampFeedAt(rampFeedFrom, feed, actualDu * perim);
+            prevFeed = rampFeedAt(rampFeedFrom, feed, actualDu * perim, rampRate);
             prevU = prevU + actualDu;
             prevPos = wallPoint(L, prevU);
             while (i < events.length && events[i].order === undefined && events[i].u <= prevU + 1e-9) i++;
@@ -3707,37 +3721,43 @@
         else if (e.tip) feed = spikeFeedTip;
         else if (prevTipFan) feed = spikeFeedIn;
         else if (weaveSpecial || prevWeaveSpecial) feed = bumpFeed;
-        // Manually paced acceleration whenever THIS event's own feed calls
-        // for faster than the last one actually printed -- not just a
+        // Manually paced acceleration OR deceleration whenever THIS event's
+        // own feed differs from the last one actually printed -- not just a
         // spike's own way back in, or the hanger's bridge/overhang feed
-        // ending, specifically, but any such transition a config happens to
-        // produce, since they're all the exact same underlying problem: a
-        // single G1 jumping straight from a slow feed to a faster one over
-        // whatever short stretch of wall happens to follow can ask the
-        // firmware to accelerate harder right there than the motor can
-        // actually deliver. Caught here, before this event's own feed/
-        // position are committed to, since some of these transitions
-        // (bridge/overhang ending) have no slow segment of their own to
-        // ramp forward from — the faster feed would otherwise apply
-        // starting from THIS exact point. Capped at whichever comes first:
-        // the full ramp distance, this loop's own end, or the next real
-        // zone boundary — found by scanning past plain wall events rather
-        // than just looking at whichever event happens to be immediately
-        // next (this loop's own events array carries one entry per DENSE
-        // underlying polyline vertex on a long hanger/tween detour, not the
-        // relatively sparse per-revolution samples spikesLoop works from,
-        // so "the very next event" is almost always just the neighboring
-        // vertex a fraction of a mm away). That same boundary is also never
-        // itself skipped, even when the ramp's own endpoint lands exactly
-        // on it — see isRampBoundary and spikesLoop's own copy of this for
-        // why. Re-evaluating from scratch after each inserted stretch
-        // (rather than computing the full ramp once) means a config with
-        // several back-to-back feed increases (e.g. overhang feed lower
-        // than bridge feed, both below the wall's) ramps up in the same
-        // stepped fashion a real accelerating move would, instead of one
+        // starting/ending, specifically, but any such transition a config
+        // happens to produce, since they're all the exact same underlying
+        // problem: a single G1 jumping straight from one feed to another
+        // over whatever short stretch of wall happens to follow can ask
+        // the firmware to accelerate (or decelerate) harder right there
+        // than the motor can actually deliver. Which rate applies depends
+        // on the direction: speeding up uses accelToWallFeed, slowing down
+        // uses decelFromWallFeed, and either is 0 (off) unless the
+        // Print-settings dropdown has enabled it. Caught here, before this
+        // event's own feed/position are committed to, since some of these
+        // transitions (bridge/overhang starting or ending) have no slow
+        // segment of their own to ramp from — the next feed would
+        // otherwise apply starting from THIS exact point. Capped at
+        // whichever comes first: the full ramp distance, this loop's own
+        // end, or the next real zone boundary — found by scanning past
+        // plain wall events rather than just looking at whichever event
+        // happens to be immediately next (this loop's own events array
+        // carries one entry per DENSE underlying polyline vertex on a long
+        // hanger/tween detour, not the relatively sparse per-revolution
+        // samples spikesLoop works from, so "the very next event" is
+        // almost always just the neighboring vertex a fraction of a mm
+        // away). That same boundary is also never itself skipped, even
+        // when the ramp's own endpoint lands exactly on it — see
+        // isRampBoundary and spikesLoop's own copy of this for why.
+        // Re-evaluating from scratch after each inserted stretch (rather
+        // than computing the full ramp once) means a config with several
+        // back-to-back feed changes (e.g. an overhang feed between the
+        // bridge feed and the wall's) ramps in the same stepped fashion a
+        // real accelerating/decelerating move would, instead of one
         // stretch silently overshooting into the next.
-        if (accelToWallFeed > 0 && feed > prevFeed + 1e-9) {
-          const dTotal = rampDistance(prevFeed, feed);
+        const feedDiff = feed - prevFeed;
+        const rampRate = feedDiff > 1e-9 ? accelToWallFeed : feedDiff < -1e-9 ? decelFromWallFeed : 0;
+        if (rampRate > 0) {
+          const dTotal = rampDistance(prevFeed, feed, rampRate);
           const dfTotal = total > 1e-6 ? dTotal / total : 0;
           let capIdx = i;
           while (capIdx < events.length && !isRampBoundary(capIdx)) capIdx++;
@@ -3752,9 +3772,9 @@
               const dk = ((actualDf * k) / steps) * total;
               const qk = atF(fk);
               const baseZk = Math.min(chZOffset + lh * (L + fk), cfg.totalHeight);
-              emitSeg({ x: qk.x + cx, y: qk.y + cy, z: floorZ(baseZk) }, rampFeedAt(rampFeedFrom, feed, dk), 1, null);
+              emitSeg({ x: qk.x + cx, y: qk.y + cy, z: floorZ(baseZk) }, rampFeedAt(rampFeedFrom, feed, dk, rampRate), 1, null);
             }
-            prevFeed = rampFeedAt(rampFeedFrom, feed, actualDf * total);
+            prevFeed = rampFeedAt(rampFeedFrom, feed, actualDf * total, rampRate);
             prevF = prevF + actualDf;
             const qEnd = atF(prevF);
             const baseZEnd = Math.min(chZOffset + lh * (L + prevF), cfg.totalHeight);

@@ -404,7 +404,9 @@
         rate: num('flowFeedRate'),
       },
       travelFeed: num('travelFeed'),
+      accelDecelMode: $('accelDecelMode').value === 'both' || $('accelDecelMode').value === 'off' ? $('accelDecelMode').value : 'accel',
       accelToWallFeed: Math.max(0, num('accelToWallFeed')),
+      decelFromWallFeed: Math.max(0, num('decelFromWallFeed')),
       tolerance: num('tolerance'),
       seamSide: $('seamSide').value,
       printDirection: $('printDirection').value === 'cw' ? 'cw' : 'ccw',
@@ -3066,7 +3068,11 @@
   function syncAccelToWallFeedHint(cfg) {
     const hint = $('accelToWallFeedHint');
     if (!hint) return;
-    if (!(cfg.accelToWallFeed > 0)) {
+    $('accelToWallFeedField').hidden = cfg.accelDecelMode === 'off';
+    $('decelFromWallFeedField').hidden = cfg.accelDecelMode !== 'both';
+    const accelOn = cfg.accelDecelMode !== 'off' && cfg.accelToWallFeed > 0;
+    const decelOn = cfg.accelDecelMode === 'both' && cfg.decelFromWallFeed > 0;
+    if (!accelOn && !decelOn) {
       hint.textContent = '';
       return;
     }
@@ -3074,48 +3080,51 @@
     if (cfg.flowFeed.enabled && isPos(cfg.flowFeed.rate) && isPos(cfg.lineWidth) && isPos(cfg.layerHeight)) {
       wallFeed = (cfg.flowFeed.rate * 60) / window.GcodeGen.beadArea(cfg.lineWidth, cfg.layerHeight);
     }
-    const rampDistStr = (v0) => {
-      if (!isPos(v0) || wallFeed <= v0) return null;
-      const v0mmps = v0 / 60;
-      const v1mmps = wallFeed / 60;
-      const dist = (v1mmps * v1mmps - v0mmps * v0mmps) / (2 * cfg.accelToWallFeed);
-      return dist.toFixed(1);
+    // Same kinematics for both directions -- accel climbs FROM a slow zone's
+    // feed UP to the wall's, decel eases FROM the wall's DOWN TO a slow
+    // zone's -- so one distance formula covers both, just fed feedFrom/
+    // feedTo the right way round for which one is being asked about.
+    const rampDist = (rate, feedFrom, feedTo) => {
+      if (!(rate > 0) || !isPos(feedFrom) || !isPos(feedTo) || feedFrom === feedTo) return null;
+      const v0 = Math.min(feedFrom, feedTo) / 60;
+      const v1 = Math.max(feedFrom, feedTo) / 60;
+      return ((v1 * v1 - v0 * v0) / (2 * rate)).toFixed(1);
     };
     const parts = [];
-    if (cfg.pattern.type === 'spikes' && cfg.pattern.enabled) {
-      const d = rampDistStr(cfg.pattern.spikeFeedIn);
-      parts.push(
-        d == null
-          ? 'spike feedrate in (' + cfg.pattern.spikeFeedIn + ' mm/min) is already at or above the wall feed — no effect there'
-          : 'ramps from spike feedrate in (' + cfg.pattern.spikeFeedIn + ' mm/min) over about ' + d + 'mm after each spike'
-      );
-    }
-    if (cfg.hanger.enabled) {
-      const d = rampDistStr(cfg.hanger.bridgeFeed);
-      parts.push(
-        d == null
-          ? 'hanger bridge feed (' + cfg.hanger.bridgeFeed + ' mm/min) is already at or above the wall feed — no effect there'
-          : 'ramps from the hanger\'s bridge feed (' + cfg.hanger.bridgeFeed + ' mm/min) over about ' + d +
-            'mm right after its one bridging loop'
-      );
-      if (isPos(cfg.hanger.overhangFeed)) {
-        const dO = rampDistStr(cfg.hanger.overhangFeed);
+    function addZone(label, zoneFeed) {
+      if (!isPos(zoneFeed)) return;
+      if (accelOn) {
+        const d = wallFeed > zoneFeed ? rampDist(cfg.accelToWallFeed, zoneFeed, wallFeed) : null;
         parts.push(
-          dO == null
-            ? 'hanger overhang feed (' + cfg.hanger.overhangFeed + ' mm/min) is already at or above the wall feed — no effect there'
-            : 'ramps from the hanger\'s overhang feed (' + cfg.hanger.overhangFeed + ' mm/min) over about ' + dO +
-              'mm right after each overhang stretch'
+          d == null
+            ? label + ' (' + zoneFeed + ' mm/min) is already at or above the wall feed — no ramp up there'
+            : 'ramps UP from ' + label + ' (' + zoneFeed + ' mm/min) over about ' + d + 'mm on the way out'
         );
       }
+      if (decelOn) {
+        const d = wallFeed > zoneFeed ? rampDist(cfg.decelFromWallFeed, zoneFeed, wallFeed) : null;
+        parts.push(
+          d == null
+            ? label + ' (' + zoneFeed + ' mm/min) is already at or above the wall feed — no ramp down there'
+            : 'ramps DOWN to ' + label + ' (' + zoneFeed + ' mm/min) over about ' + d + 'mm on the way in'
+        );
+      }
+    }
+    if (cfg.pattern.type === 'spikes' && cfg.pattern.enabled) {
+      addZone('spike feedrate in', cfg.pattern.spikeFeedIn);
+    }
+    if (cfg.hanger.enabled) {
+      addZone('the hanger\'s bridge feed', cfg.hanger.bridgeFeed);
+      addZone('the hanger\'s overhang feed', cfg.hanger.overhangFeed);
     }
     if (parts.length === 0) {
       hint.textContent = 'No effect yet — enable the pattern\'s spikes or the wall hanger for this to have anything to ramp.';
       return;
     }
     hint.textContent =
-      'Up to the wall\'s ' + wallFeed.toFixed(0) + ' mm/min: ' + parts.join('; ') +
+      'Up to/from the wall\'s ' + wallFeed.toFixed(0) + ' mm/min: ' + parts.join('; ') +
       ' — shortened if another spike, zone, or the loop\'s own end is closer than that. Applies to any' +
-      ' feed-rate increase, not just these, e.g. a slower bump feed handing back to the wall too.';
+      ' feed-rate change, not just these, e.g. a slower bump feed too.';
   }
 
   function syncPatFlowLabels(cfg) {
