@@ -3475,16 +3475,41 @@
           const cap = Math.min(prevU + duTotal, uEnd, boundaryU);
           const actualDu = cap - prevU;
           if (actualDu > 1e-9) {
+            // A ramp normally spans plain wall, so its own points just walk
+            // wallPoint like any other filler point -- except a decel (or,
+            // in principle, an accel) triggered by the flat pushed-out
+            // stretch's own feed differing from the push-out arm's can span
+            // BETWEEN a single spike's own two tip corners instead (both
+            // marked, sharing one amp/tan), which is still pushed out, not
+            // back on the wall. Using wallPoint there regardless used to
+            // dip every synthetic point back to the wall radius and out
+            // again, printing a spurious second little bump inside the
+            // first one.
+            const inTipSpan = e.tip && prevTipFan;
+            const rampPosAt = inTipSpan
+              ? (uk) => {
+                  const sp = sampler.at(uk);
+                  const ampT = e.amp != null ? e.amp : pat.amplitude;
+                  const baseZ = Math.min(chZOffset + lh * (L + uk), cfg.totalHeight);
+                  const a = angleAt(baseZ);
+                  const latT = ampT * a.cosA;
+                  return {
+                    x: sp.pos.x + dirSign * e.tan.y * latT + cx,
+                    y: sp.pos.y - dirSign * e.tan.x * latT + cy,
+                    z: floorZ(baseZ + ampT * a.sinA),
+                  };
+                }
+              : (uk) => wallPoint(L, uk);
             const steps = 8;
             const rampFeedFrom = prevFeed;
             for (let k = 1; k <= steps; k++) {
               const uk = prevU + (actualDu * k) / steps;
               const dk = ((actualDu * k) / steps) * perim;
-              emitSeg(wallPoint(L, uk), rampFeedAt(rampFeedFrom, feed, dk, rampRate), 1, null);
+              emitSeg(rampPosAt(uk), rampFeedAt(rampFeedFrom, feed, dk, rampRate), 1, null);
             }
             prevFeed = rampFeedAt(rampFeedFrom, feed, actualDu * perim, rampRate);
             prevU = prevU + actualDu;
-            prevPos = wallPoint(L, prevU);
+            prevPos = rampPosAt(prevU);
             while (i < events.length && events[i].order === undefined && events[i].u <= prevU + 1e-9) i++;
             continue; // re-derive e/isPushOut/feed/etc fresh from the advanced i
           }
@@ -3765,20 +3790,47 @@
           const cap = Math.min(prevF + dfTotal, uEnd, boundaryF);
           const actualDf = cap - prevF;
           if (actualDf > 1e-9) {
+            // Same reasoning as spikesLoop's own copy of this: a ramp
+            // normally spans plain wall (bridge/overhang/weave never move
+            // the toolpath sideways, only the feed), so its own points can
+            // just walk atF like any other filler point -- except a decel
+            // (or accel) triggered by the flat pushed-out stretch's own
+            // feed differing from the push-out arm's spans BETWEEN a
+            // single spike's own two tip corners instead (both marked,
+            // sharing one amp/tan), which is still pushed out, not back on
+            // the wall. Using the unoffset wall position there regardless
+            // used to dip every synthetic point back to the wall radius
+            // and out again, printing a spurious second little bump inside
+            // the first one.
+            const inTipSpan = e.tip && prevTipFan;
+            const rampPosAt = inTipSpan
+              ? (fk) => {
+                  const qk = atF(fk);
+                  const ampT = e.amp != null ? e.amp : pat.amplitude;
+                  const baseZk = Math.min(chZOffset + lh * (L + fk), cfg.totalHeight);
+                  const aAngk = angleAt(baseZk);
+                  const latT = ampT * aAngk.cosA;
+                  return {
+                    x: qk.x + dirSign * e.tan.y * latT + cx,
+                    y: qk.y - dirSign * e.tan.x * latT + cy,
+                    z: floorZ(baseZk + ampT * aAngk.sinA),
+                  };
+                }
+              : (fk) => {
+                  const qk = atF(fk);
+                  const baseZk = Math.min(chZOffset + lh * (L + fk), cfg.totalHeight);
+                  return { x: qk.x + cx, y: qk.y + cy, z: floorZ(baseZk) };
+                };
             const steps = 8;
             const rampFeedFrom = prevFeed;
             for (let k = 1; k <= steps; k++) {
               const fk = prevF + (actualDf * k) / steps;
               const dk = ((actualDf * k) / steps) * total;
-              const qk = atF(fk);
-              const baseZk = Math.min(chZOffset + lh * (L + fk), cfg.totalHeight);
-              emitSeg({ x: qk.x + cx, y: qk.y + cy, z: floorZ(baseZk) }, rampFeedAt(rampFeedFrom, feed, dk, rampRate), 1, null);
+              emitSeg(rampPosAt(fk), rampFeedAt(rampFeedFrom, feed, dk, rampRate), 1, null);
             }
             prevFeed = rampFeedAt(rampFeedFrom, feed, actualDf * total, rampRate);
             prevF = prevF + actualDf;
-            const qEnd = atF(prevF);
-            const baseZEnd = Math.min(chZOffset + lh * (L + prevF), cfg.totalHeight);
-            prevPos = { x: qEnd.x + cx, y: qEnd.y + cy, z: floorZ(baseZEnd) };
+            prevPos = rampPosAt(prevF);
             while (i < events.length && !isRampBoundary(i) && events[i].f <= prevF + 1e-9) i++;
             continue; // re-derive endCut/e/q/feed/etc fresh from the advanced i
           }
