@@ -830,64 +830,66 @@ than a true arc move (this app never emits `G2`/`G3`), same as every other curve
 tip and the way back in are untouched either way — only the way out changes shape, never
 its own feed rate, dwell, or anything else about the spike.
 
-An **acceleration / deceleration limiting** dropdown, in the **Print settings** card,
-picks between three states — **acceleration limit enabled** (the default), **acceleration
-and deceleration enabled**, or **everything disabled** — and gates two separate mm/s²
-inputs underneath it: **acceleration to wall feed** (shown whenever the dropdown isn't
-"disabled") and **deceleration from wall feed** (shown only under "acceleration and
-deceleration enabled"). Each still has its own "0 = off" on top of that, same as every
-other such input, and disabling the dropdown ignores both values without needing to
-zero them out by hand. Klipper has its own accel/decel limits too, but they're not
-something this app can see or verify from the outside, so this runs the same idea
-manually and explicitly instead.
+An optional **acceleration to wall feed (mm/s², 0 = off)**, in the **Print settings** card
+(shared, not duplicated per feature, since it's the exact same underlying problem
+wherever it shows up), addresses ANY spot where a slower feed hands straight to a faster
+one in a single `G1` — a spike's own feedrate in, the wall hanger's bridge feed once its
+one bridging loop's new geometry ends, its overhang feed once a steep transition-loop
+stretch ends, a weave bump's own feed handing back to the wall, or any other feed change
+a config happens to produce, present or future, since the mechanism itself doesn't
+special-case any of them. These are often much slower than the wall's own feed on purpose
+(to keep a climbing spike from drooping, because bridging over air needs it, because a
+steep overhang needs it, or because a bump needs a controlled dwell), and jumping straight
+from one to the other over whatever short stretch of wall happens to follow, often just
+one segment, can ask the firmware to accelerate harder right there than the motor can
+actually deliver, even though the same feed change is no problem out on the open wall.
+Klipper has its own acceleration limits too, but they're not something this app can see or
+verify from the outside, so this runs the same idea manually and explicitly instead. (A
+matching deceleration — easing INTO a slow zone instead of back out of one — was tried and
+dropped again: unlike this one, it can't always find a clean, purely reactive trigger point
+the way this does, since a spike's own push-out arm and its rejoining "in" corner are
+geometrically coincident points with no distance of their own to ease into, and doing it
+properly needs real forward lookahead instead — not worth it for now.)
 
-Acceleration addresses spots where a slower feed hands straight to a faster one in a
-single `G1` — a spike's own feedrate in, the wall hanger's bridge feed once its one
-bridging loop's new geometry ends, its overhang feed once a steep transition-loop stretch
-ends, a weave bump's own feed handing back to the wall, or any other feed change a config
-happens to produce, present or future, since the mechanism itself doesn't special-case any
-of them. Deceleration is built the exact same way, just reversed: it addresses the
-opposite spots, where a faster feed is about to hand to a slower one, easing the feed down
-over the plain wall (or dense hanger-detour polyline) leading INTO the slow zone instead of
-ramping up out of it — a spike's own push-out arm and its rejoining "in" corner are
-geometrically coincident points (a plain 90° turn in place, zero XY distance to spread a
-deceleration over), so a decel ramp shows up wherever there IS leading distance into a slow
-zone: the flat run between a spike's own out/tip feeds if they differ, and — more usefully
-— the plain wall leading into the hanger's own bridge/overhang zones. Both directions exist
-because a single G1 jumping straight from one feed to another over whatever short stretch
-of wall happens to follow, often just one segment, can ask the firmware to accelerate (or
-decelerate) harder right there than the motor can actually deliver, even though the same
-feed change is no problem out on the open wall. Wherever either applies, the segment right
-at the transition is replaced by 8 shorter ones, each a step further along standard
-constant-acceleration kinematics (`v² = v0² ± 2·a·d`, same formula either direction since
-it only depends on the two speeds) toward whatever the next feed target is (whichever it
-currently resolves to — plain or volumetric) — reaching it exactly at the end of the
-computed ramp distance rather than snapping to it. Capped at whichever comes first: the
-full ramp distance, this revolution's own end, or the next real zone boundary (a spike's
-own approach, the next overhang/bridge/bump stretch starting) — found by scanning past
-plain wall points rather than just looking at whichever point happens to be immediately
-next (a wall hanger's own detour is tessellated far more densely than a plain revolution,
-so "immediately next" there is often a fraction of a mm away regardless of how much further
-a low rate could legitimately reach — capping there instead of at the real next boundary
-would cut the ramp far shorter than intended). That same boundary is also never itself
-skipped, even when the ramp's own endpoint lands exactly on it — a spike's four boundary
-points come in two pairs that share the exact same position (arriving at the tip, and
-leaving it), and treating "at or before this point" as one open-ended skip could consume
-both members of the NEXT spike's own pair instead of stopping at the one actually being
-capped against, silently erasing that spike's own push-out corner and leaving a pointy
-spike instead of a flat tip. Re-evaluated fresh after each inserted stretch rather than
-computed once for the whole distance, so a config with several back-to-back feed changes
-(say, an overhang feed between the bridge feed and the wall's) ramps in the same stepped
-fashion a real accelerating/decelerating move would, capping at each zone's own feed on
-the way past it rather than one stretch overshooting straight through. Never eats into
-another zone's geometry, the plain wall beyond it, or carries over into the next layer. A
-live hint (naming whichever of spikes/hanger are actually enabled, per direction that's
-active) shows the resulting ramp distance in mm for each, and the color-coded 3D preview
-(blue = fast, red = slow) shows the actual result directly, since this is very much a
-"watch it and fine-tune the number" setting rather than one with an obviously correct
-value. Off by default (dropdown starts on "acceleration limit enabled", but both mm/s²
-inputs themselves start at 0), same as the arc motion above — all opt-in experiments, not
-a change to the existing straight-line behavior unless asked for. Both
+Set above 0, the segment right after such a transition is replaced by 8 shorter ones, each
+a step further along standard constant-acceleration kinematics (`v² = v0² + 2·a·d`) up to
+whatever the next feed target is (whichever it currently resolves to — plain or
+volumetric) — reaching it exactly at the end of the computed ramp distance rather than
+snapping to it. Capped at whichever comes first: the full ramp distance, this revolution's
+own end, or the next real zone boundary (a spike's own approach, the next overhang/bridge/
+bump stretch starting) — found by scanning past plain wall points rather than just looking
+at whichever point happens to be immediately next (a wall hanger's own detour is
+tessellated far more densely than a plain revolution, so "immediately next" there is often
+a fraction of a mm away regardless of how much further a low acceleration could
+legitimately reach — capping there instead of at the real next boundary would cut the ramp
+far shorter than intended). A ramp reaching a REVOLUTION's own end (rather than a real
+boundary) doesn't just stop there either — that end is the exact same point as the very
+next revolution's own start (one continuous spiral, not a real interruption), so the ramp
+picks back up seamlessly on the far side instead of restarting from scratch; without this,
+a spike placed close to the seam on any one layer cut that layer's own ramp short for no
+visible reason (no nearby spike, just this generator's own per-revolution bookkeeping),
+even on an otherwise wide-open stretch of wall. A REAL zone boundary, on the other hand, is
+never itself skipped, even when the ramp's own endpoint lands exactly on it — a spike's
+four boundary points come in two pairs that share the exact same position (arriving at the
+tip, and leaving it), and treating "at or before this point" as one open-ended skip could
+consume both members of the NEXT spike's own pair instead of stopping at the one actually
+being capped against, silently erasing that spike's own push-out corner and leaving a
+pointy spike instead of a flat tip. A ramp can also land BETWEEN a single spike's own two
+tip corners rather than out on the plain wall (when the push-out arm's own feed differs
+from the flat tip run's) — still pushed out, not back on the wall, so its own synthetic
+points use the tip's own offset position rather than the wall's; using the wall's
+regardless used to snap every such point back to the wall radius and out again, printing a
+spurious second little bump inside the real one. Re-evaluated fresh after each inserted
+stretch rather than computed once for the whole distance, so a config with several
+back-to-back feed increases (say, an overhang feed lower than the bridge feed right before
+it) ramps up in the same stepped fashion a real accelerating move would, instead of one
+stretch overshooting straight through. Never eats into another zone's geometry or the
+plain wall beyond it. A live hint (naming whichever of spikes/hanger are actually enabled)
+shows the resulting ramp distance in mm, and the color-coded 3D preview (blue = fast, red =
+slow) shows the actual result directly, since this is very much a "watch it and fine-tune
+the number" setting rather than one with an obviously correct value. Off by default (0),
+same as the arc motion above — both are opt-in experiments, not a change to the existing
+straight-line behavior unless asked for. Both
   push-out arms use the SAME direction — the wall's tangent at the staple's own center,
   not each corner's own local tangent — so the two arms stay parallel (and the flat top
   a straight line the same distance out as the arms) even where the underlying curve
