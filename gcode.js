@@ -3414,9 +3414,67 @@
       events.push({ u: uEnd, tip: false });
       let prevTipFan = false;
       let prevPos = null;
+      let prevFeed = printFeedEff;
       let i = 0;
       while (i < events.length) {
         const e = events[i];
+        // The initial 90° push OUT, the flat pushed-out stretch itself, and
+        // the move back IN each get their own dedicated feed — no hysteresis
+        // carrying one into further segments, unlike the shared emit()
+        // helper's symmetric bump zone for weave. Which of the three a tip
+        // segment is comes down to whether the PREVIOUS event was also a tip
+        // (arriving at the second tip corner, i.e. the flat stretch) or not
+        // (arriving at the first, i.e. the initial push out).
+        const isPushOut = e.tip && !prevTipFan;
+        const feed = e.tip ? (prevTipFan ? spikeFeedTip : spikeFeedOut) : prevTipFan ? spikeFeedIn : printFeedEff;
+        // Manually paced acceleration whenever THIS event's own feed calls
+        // for faster than the last one actually printed — not just a
+        // spike's own way back in specifically, but any such transition a
+        // config happens to produce (see polyLoop's own copy of this for
+        // the full reasoning; spikesLoop never has a bridge/overhang/weave
+        // zone of its own, so a spike's "in" rejoining the wall is the only
+        // case that comes up here in practice, but the mechanism itself
+        // doesn't need to know that). Capped at whichever comes first: the
+        // full ramp distance, this loop's own end, or the next spike's own
+        // approach, so it can never eat into geometry that isn't plain
+        // wall. That cap has to be found by scanning past any plain wall
+        // events in between (order is only ever set on a spike's own four
+        // boundary events, never on an ordinary uSet point) rather than
+        // just looking at whichever event happens to be immediately next —
+        // otherwise a low acceleration reaching past several of those gets
+        // capped at the first one regardless of how much further the ramp
+        // could legitimately go. The skip-ahead below has the same
+        // reasoning in reverse: a spike's own "before"/tip-arrival pair (or
+        // tip-departure/"after" pair) share the exact same u, so if the
+        // ramp's own endpoint lands exactly on one, an unqualified "skip
+        // everything at or before this u" would consume BOTH — silently
+        // erasing that spike's own push-out corner and leaving a pointy
+        // spike instead of a flat tip. Only ever skipping the plain
+        // (unmarked) events keeps every marked boundary for normal
+        // processing, however the u values happen to line up.
+        if (accelToWallFeed > 0 && feed > prevFeed + 1e-9) {
+          const dTotal = rampDistance(prevFeed, feed);
+          const duTotal = perim > 1e-6 ? dTotal / perim : 0;
+          let capIdx = i;
+          while (capIdx < events.length && events[capIdx].order === undefined) capIdx++;
+          const boundaryU = capIdx < events.length ? events[capIdx].u : uEnd;
+          const cap = Math.min(prevU + duTotal, uEnd, boundaryU);
+          const actualDu = cap - prevU;
+          if (actualDu > 1e-9) {
+            const steps = 8;
+            const rampFeedFrom = prevFeed;
+            for (let k = 1; k <= steps; k++) {
+              const uk = prevU + (actualDu * k) / steps;
+              const dk = ((actualDu * k) / steps) * perim;
+              emitSeg(wallPoint(L, uk), rampFeedAt(rampFeedFrom, feed, dk), 1, null);
+            }
+            prevFeed = rampFeedAt(rampFeedFrom, feed, actualDu * perim);
+            prevU = prevU + actualDu;
+            prevPos = wallPoint(L, prevU);
+            while (i < events.length && events[i].order === undefined && events[i].u <= prevU + 1e-9) i++;
+            continue; // re-derive e/isPushOut/feed/etc fresh from the advanced i
+          }
+        }
         let cur;
         if (e.tip) {
           const sp = sampler.at(e.u);
@@ -3433,20 +3491,10 @@
           cur = wallPoint(L, e.u);
         }
         const ramp = isStart ? Math.max(0, Math.min(1, (prevU + e.u) / 2)) : 1;
-        // The initial 90° push OUT, the flat pushed-out stretch itself, and
-        // the move back IN each get their own dedicated feed — no hysteresis
-        // carrying one into further segments, unlike the shared emit()
-        // helper's symmetric bump zone for weave. Which of the three a tip
-        // segment is comes down to whether the PREVIOUS event was also a tip
-        // (arriving at the second tip corner, i.e. the flat stretch) or not
-        // (arriving at the first, i.e. the initial push out). Fan stays on
-        // through the whole excursion (out, along, dwell, AND back in) — it
-        // only turns off once fully back at the wall — so it needs its own,
-        // separately-tracked hysteresis.
-        const isPushOut = e.tip && !prevTipFan;
-        const isPushIn = !e.tip && prevTipFan;
+        // Fan stays on through the whole excursion (out, along, dwell, AND
+        // back in) — it only turns off once fully back at the wall — so it
+        // needs its own, separately-tracked hysteresis.
         syncFan(e.tip || prevTipFan);
-        const feed = e.tip ? (prevTipFan ? spikeFeedTip : spikeFeedOut) : prevTipFan ? spikeFeedIn : printFeedEff;
         const segArea = e.tip || prevTipFan ? spikeArea : null;
         if (isPushOut && spikeOutArc && prevPos) {
           const arcPts = arcOutPoints(prevPos, cur, 8);
@@ -3458,48 +3506,8 @@
         prevTipFan = !!e.tip;
         prevU = e.u;
         prevPos = cur;
+        prevFeed = feed;
         i++;
-        // Manually paced acceleration back up to the wall's own feed,
-        // right after rejoining it (isPushIn is the segment that just
-        // landed AT spikeFeedIn) — capped at whichever comes first: the
-        // full ramp distance, this loop's own end, or the next spike's
-        // own approach, so it can never eat into geometry that isn't
-        // plain wall. That cap has to be found by scanning past any
-        // plain wall events in between (order is only ever set on a
-        // spike's own four boundary events, never on an ordinary uSet
-        // point) rather than just looking at whichever event happens to
-        // be immediately next — otherwise a low acceleration reaching
-        // past several of those gets capped at the first one regardless
-        // of how much further the ramp could legitimately go. The
-        // skip-ahead below has the same reasoning in reverse: a spike's
-        // own "before"/tip-arrival pair (or tip-departure/"after" pair)
-        // share the exact same u, so if the ramp's own endpoint lands
-        // exactly on one, an unqualified "skip everything at or before
-        // this u" would consume BOTH — silently erasing that spike's own
-        // push-out corner and leaving a pointy spike instead of a flat
-        // tip. Only ever skipping the plain (unmarked) events keeps every
-        // marked boundary for normal processing, however the u values
-        // happen to line up.
-        if (isPushIn && accelToWallFeed > 0) {
-          const dTotal = rampDistance(feed, printFeedEff);
-          const duTotal = perim > 1e-6 ? dTotal / perim : 0;
-          let capIdx = i;
-          while (capIdx < events.length && events[capIdx].order === undefined) capIdx++;
-          const boundaryU = capIdx < events.length ? events[capIdx].u : uEnd;
-          const cap = Math.min(prevU + duTotal, uEnd, boundaryU);
-          const actualDu = cap - prevU;
-          if (actualDu > 1e-9) {
-            const steps = 8;
-            for (let k = 1; k <= steps; k++) {
-              const uk = prevU + (actualDu * k) / steps;
-              const dk = ((actualDu * k) / steps) * perim;
-              emitSeg(wallPoint(L, uk), rampFeedAt(feed, printFeedEff, dk), 1, null);
-            }
-            prevU = prevU + actualDu;
-            prevPos = wallPoint(L, prevU);
-            while (i < events.length && events[i].order === undefined && events[i].u <= prevU + 1e-9) i++;
-          }
-        }
       }
     }
 
@@ -3615,14 +3623,56 @@
           hot: !!(a.hot || b.hot),
         };
       }
+      // Same isNew/hot lookup as atF, but by its own binary search rather
+      // than the shared rolling cursor above -- needed for the ramp's own
+      // boundary scan below, which peeks AHEAD of whatever position the
+      // main loop has actually reached so far; sharing atF's cursor for
+      // that would drag it past the current position, corrupting every
+      // later atF(f) call for an f the scan had already peeked beyond.
+      function attrsAtF(f) {
+        const target = Math.max(0, Math.min(1, f)) * total;
+        let lo = 1;
+        let hi = n1 - 1;
+        while (lo < hi) {
+          const mid = (lo + hi) >> 1;
+          if (cum[mid] < target) lo = mid + 1;
+          else hi = mid;
+        }
+        const a = pts[lo - 1];
+        const b = pts[lo];
+        return { isNew: !!(a.isNew || b.isNew), hot: !!(a.hot || b.hot) };
+      }
+      // Whether skipping past event idx during a feed-up ramp (below) risks
+      // silently overwriting real zone geometry or feed with a generic ramp
+      // point -- true for any of a spike's own four boundary events (never
+      // skip, same reasoning as spikesLoop) and for the start of any other
+      // slow/special zone this loop can enter (bridge, overhang, weave
+      // bump). Every check here is purely positional (event data, or
+      // attrsAtF's own side-effect-free lookup), so it can look ahead of
+      // the loop's own current position without depending on its
+      // hysteresis state (prevHot's one-step trailing extension is folded
+      // in explicitly instead, by also checking the point just before idx).
+      function isRampBoundary(idx) {
+        const ev = events[idx];
+        if (ev.tip || ev.order !== undefined) return true;
+        if (bridge && attrsAtF(ev.f).isNew) return true;
+        if (hOverhangOn) {
+          if (attrsAtF(ev.f).hot) return true;
+          if (idx > 0 && attrsAtF(events[idx - 1].f).hot) return true;
+        }
+        if (patternOn && type === 'weave' && layerPatterned(L) && uInBand(ev.f)) {
+          if (pat.amplitude * Math.cos(Math.PI * (L + ev.f) * pat.bumps) !== 0) return true;
+        }
+        return false;
+      }
 
       prevBump = false;
       let prevWeaveSpecial = false;
       let prevHot = false;
       let prevTipFan = false;
-      let prevBridgeNow = false;
       let prevPos = null;
       let prevF = 0;
+      let prevFeed = printFeedEff;
       let i = 0;
       while (i <= events.length) {
         const endCut = i === events.length || events[i].f >= uEnd - 1e-12;
@@ -3636,60 +3686,12 @@
         // stretches but eats most or all of a double hanger's own (much
         // shorter) plain-wall stretch between its two funnels, printing it
         // slow and cold enough to risk poor layer adhesion for wall that's
-        // fully supported by the layer underneath. Computed up front
-        // (rather than alongside the other feed-zone flags below) so the
-        // ramp right after it ends, next, can see the transition before
-        // committing to this event's own normal feed.
+        // fully supported by the layer underneath.
         const bridgeNow = bridge && q.isNew;
-        // Manually paced acceleration off the hanger's own bridge feed,
-        // right where its one bridging loop's new geometry ends and hands
-        // back to the wall — same underlying problem, and the same
-        // kinematics/cap/skip-ahead reasoning, as the spike ramp further
-        // below (see there). Handled one step earlier than that one,
-        // though: a spike's own "in" event already naturally lands at its
-        // own slow feed, giving the ramp a clean anchor to start climbing
-        // from right after; here, the wall's own faster feed would
-        // otherwise apply starting from THIS exact point (whichever event
-        // comes right after the bridge zone), with no slow segment of its
-        // own to ramp forward from — so the transition is caught here,
-        // before this event's own feed/position are committed to, rather
-        // than after.
-        if (prevBridgeNow && !bridgeNow && accelToWallFeed > 0) {
-          const dTotal = rampDistance(hBridgeFeed, printFeedEff);
-          const dfTotal = total > 1e-6 ? dTotal / total : 0;
-          let capIdx = i;
-          while (capIdx < events.length && events[capIdx].order === undefined) capIdx++;
-          const boundaryF = capIdx < events.length ? events[capIdx].f : uEnd;
-          const cap = Math.min(prevF + dfTotal, uEnd, boundaryF);
-          const actualDf = cap - prevF;
-          if (actualDf > 1e-9) {
-            const steps = 8;
-            for (let k = 1; k <= steps; k++) {
-              const fk = prevF + (actualDf * k) / steps;
-              const dk = ((actualDf * k) / steps) * total;
-              const qk = atF(fk);
-              const baseZk = Math.min(chZOffset + lh * (L + fk), cfg.totalHeight);
-              emitSeg({ x: qk.x + cx, y: qk.y + cy, z: floorZ(baseZk) }, rampFeedAt(hBridgeFeed, printFeedEff, dk), 1, null);
-            }
-            prevF = prevF + actualDf;
-            const qEnd = atF(prevF);
-            const baseZEnd = Math.min(chZOffset + lh * (L + prevF), cfg.totalHeight);
-            prevPos = { x: qEnd.x + cx, y: qEnd.y + cy, z: floorZ(baseZEnd) };
-            prevBridgeNow = false;
-            while (i < events.length && events[i].order === undefined && events[i].f <= prevF + 1e-9) i++;
-            continue; // re-derive endCut/e/q (and bridgeNow) fresh from the advanced i
-          }
-        }
-        prevBridgeNow = bridgeNow;
         let m = 0;
         if (!e.tip && patternOn && type === 'weave' && layerPatterned(L) && uInBand(e.u)) {
           m = pat.amplitude * Math.cos(Math.PI * (L + e.f) * pat.bumps);
         }
-        const amp = e.tip ? (e.amp != null ? e.amp : pat.amplitude) : m;
-        const baseZ = Math.min(chZOffset + lh * (L + e.f), cfg.totalHeight);
-        const aAng = angleAt(baseZ);
-        const lat = amp * aAng.cosA;
-        const z = floorZ(baseZ + amp * aAng.sinA);
         const weaveSpecial = m !== 0;
         const overhangNow = hOverhangOn && (q.hot || prevHot);
         // Spike out/tip/in each get their own dedicated feed — no hysteresis
@@ -3698,7 +3700,6 @@
         // segment is comes down to whether the previous event was also a tip
         // (the flat stretch) or not (the initial push out) — see spikesLoop.
         const isPushOut = e.tip && !prevTipFan;
-        const isPushIn = !e.tip && prevTipFan;
         let feed = printFeedEff;
         if (bridgeNow) feed = hBridgeFeed;
         else if (overhangNow) feed = hOverhangFeed;
@@ -3706,6 +3707,67 @@
         else if (e.tip) feed = spikeFeedTip;
         else if (prevTipFan) feed = spikeFeedIn;
         else if (weaveSpecial || prevWeaveSpecial) feed = bumpFeed;
+        // Manually paced acceleration whenever THIS event's own feed calls
+        // for faster than the last one actually printed -- not just a
+        // spike's own way back in, or the hanger's bridge/overhang feed
+        // ending, specifically, but any such transition a config happens to
+        // produce, since they're all the exact same underlying problem: a
+        // single G1 jumping straight from a slow feed to a faster one over
+        // whatever short stretch of wall happens to follow can ask the
+        // firmware to accelerate harder right there than the motor can
+        // actually deliver. Caught here, before this event's own feed/
+        // position are committed to, since some of these transitions
+        // (bridge/overhang ending) have no slow segment of their own to
+        // ramp forward from — the faster feed would otherwise apply
+        // starting from THIS exact point. Capped at whichever comes first:
+        // the full ramp distance, this loop's own end, or the next real
+        // zone boundary — found by scanning past plain wall events rather
+        // than just looking at whichever event happens to be immediately
+        // next (this loop's own events array carries one entry per DENSE
+        // underlying polyline vertex on a long hanger/tween detour, not the
+        // relatively sparse per-revolution samples spikesLoop works from,
+        // so "the very next event" is almost always just the neighboring
+        // vertex a fraction of a mm away). That same boundary is also never
+        // itself skipped, even when the ramp's own endpoint lands exactly
+        // on it — see isRampBoundary and spikesLoop's own copy of this for
+        // why. Re-evaluating from scratch after each inserted stretch
+        // (rather than computing the full ramp once) means a config with
+        // several back-to-back feed increases (e.g. overhang feed lower
+        // than bridge feed, both below the wall's) ramps up in the same
+        // stepped fashion a real accelerating move would, instead of one
+        // stretch silently overshooting into the next.
+        if (accelToWallFeed > 0 && feed > prevFeed + 1e-9) {
+          const dTotal = rampDistance(prevFeed, feed);
+          const dfTotal = total > 1e-6 ? dTotal / total : 0;
+          let capIdx = i;
+          while (capIdx < events.length && !isRampBoundary(capIdx)) capIdx++;
+          const boundaryF = capIdx < events.length ? events[capIdx].f : uEnd;
+          const cap = Math.min(prevF + dfTotal, uEnd, boundaryF);
+          const actualDf = cap - prevF;
+          if (actualDf > 1e-9) {
+            const steps = 8;
+            const rampFeedFrom = prevFeed;
+            for (let k = 1; k <= steps; k++) {
+              const fk = prevF + (actualDf * k) / steps;
+              const dk = ((actualDf * k) / steps) * total;
+              const qk = atF(fk);
+              const baseZk = Math.min(chZOffset + lh * (L + fk), cfg.totalHeight);
+              emitSeg({ x: qk.x + cx, y: qk.y + cy, z: floorZ(baseZk) }, rampFeedAt(rampFeedFrom, feed, dk), 1, null);
+            }
+            prevFeed = rampFeedAt(rampFeedFrom, feed, actualDf * total);
+            prevF = prevF + actualDf;
+            const qEnd = atF(prevF);
+            const baseZEnd = Math.min(chZOffset + lh * (L + prevF), cfg.totalHeight);
+            prevPos = { x: qEnd.x + cx, y: qEnd.y + cy, z: floorZ(baseZEnd) };
+            while (i < events.length && !isRampBoundary(i) && events[i].f <= prevF + 1e-9) i++;
+            continue; // re-derive endCut/e/q/feed/etc fresh from the advanced i
+          }
+        }
+        const amp = e.tip ? (e.amp != null ? e.amp : pat.amplitude) : m;
+        const baseZ = Math.min(chZOffset + lh * (L + e.f), cfg.totalHeight);
+        const aAng = angleAt(baseZ);
+        const lat = amp * aAng.cosA;
+        const z = floorZ(baseZ + amp * aAng.sinA);
         // Fan (bumps-only mode) covers every slow/unsupported zone here —
         // bridge, overhang, weave bumps — plus the spike tip, but the tip's
         // OWN hysteresis stays symmetric (on through the move back in too)
@@ -3726,49 +3788,9 @@
         prevTipFan = !!e.tip;
         prevPos = cur;
         prevF = e.f;
+        prevFeed = feed;
         i++;
         if (endCut) break;
-        // Same manually-paced acceleration back up to the wall's own feed
-        // as spikesLoop — see there for why, and for why the cap has to
-        // be found by scanning past plain (unmarked) events rather than
-        // just looking at whichever is immediately next: this loop's own
-        // events array carries one entry per DENSE underlying polyline
-        // vertex (hundreds, on a long hanger/tween detour), not the
-        // relatively sparse per-revolution samples spikesLoop works from,
-        // so "the very next event" is almost always just the neighboring
-        // vertex a fraction of a mm away — capping a slow ramp there no
-        // matter how much further it could legitimately reach. Distance
-        // here is a fraction of THIS loop's own (possibly
-        // hanger-lengthened) total length, not the base shape's
-        // perimeter. The skip-ahead has the same "never skip a marked
-        // boundary" reasoning as spikesLoop, for the same reason: a
-        // spike's own paired boundary events share the exact same f, and
-        // skipping both instead of leaving the second for normal
-        // processing silently erases that spike's own push-out corner.
-        if (isPushIn && accelToWallFeed > 0) {
-          const dTotal = rampDistance(feed, printFeedEff);
-          const dfTotal = total > 1e-6 ? dTotal / total : 0;
-          let capIdx = i;
-          while (capIdx < events.length && events[capIdx].order === undefined) capIdx++;
-          const boundaryF = capIdx < events.length ? events[capIdx].f : uEnd;
-          const cap = Math.min(prevF + dfTotal, uEnd, boundaryF);
-          const actualDf = cap - prevF;
-          if (actualDf > 1e-9) {
-            const steps = 8;
-            for (let k = 1; k <= steps; k++) {
-              const fk = prevF + (actualDf * k) / steps;
-              const dk = ((actualDf * k) / steps) * total;
-              const qk = atF(fk);
-              const baseZk = Math.min(chZOffset + lh * (L + fk), cfg.totalHeight);
-              emitSeg({ x: qk.x + cx, y: qk.y + cy, z: floorZ(baseZk) }, rampFeedAt(feed, printFeedEff, dk), 1, null);
-            }
-            prevF = prevF + actualDf;
-            const qEnd = atF(prevF);
-            const baseZEnd = Math.min(chZOffset + lh * (L + prevF), cfg.totalHeight);
-            prevPos = { x: qEnd.x + cx, y: qEnd.y + cy, z: floorZ(baseZEnd) };
-            while (i < events.length && events[i].order === undefined && events[i].f <= prevF + 1e-9) i++;
-          }
-        }
       }
     }
 
