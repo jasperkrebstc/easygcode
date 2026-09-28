@@ -1268,6 +1268,363 @@
     return { gcode: lines.join('\n') + '\n', warnings, stats, path };
   }
 
+  // ---- Thread connector: a nut-like vase-mode tube that screws onto a
+  // standard ISO metric bolt / threaded rod ----
+  // Same trick as the lampshade's throat: no thread is modelled at all. The
+  // helix's pitch (the layer height) IS the thread pitch, and a vase-mode
+  // bead is a stadium w x h whose inner edge is a semicircle of radius h/2 —
+  // so with h = P, those round inner edges line up one per revolution into
+  // the connector's own internal thread.
+  //
+  // ISO 261 coarse pitches: the pitch every plain "M8" bolt, rod or tapped
+  // hole uses unless it's explicitly marked fine.
+  const THREAD_SIZES = {
+    m2: { d: 2, pitch: 0.4 },
+    'm2.5': { d: 2.5, pitch: 0.45 },
+    m3: { d: 3, pitch: 0.5 },
+    m4: { d: 4, pitch: 0.7 },
+    m5: { d: 5, pitch: 0.8 },
+    m6: { d: 6, pitch: 1.0 },
+    m8: { d: 8, pitch: 1.25 },
+    m10: { d: 10, pitch: 1.5 },
+    m12: { d: 12, pitch: 1.75 },
+    m14: { d: 14, pitch: 2.0 },
+    m16: { d: 16, pitch: 2.0 },
+    m18: { d: 18, pitch: 2.5 },
+    m20: { d: 20, pitch: 2.5 },
+    m22: { d: 22, pitch: 2.5 },
+    m24: { d: 24, pitch: 3.0 },
+    m27: { d: 27, pitch: 3.0 },
+    m30: { d: 30, pitch: 3.5 },
+    m33: { d: 33, pitch: 3.5 },
+    m36: { d: 36, pitch: 4.0 },
+    m39: { d: 39, pitch: 4.0 },
+    m42: { d: 42, pitch: 4.5 },
+    m45: { d: 45, pitch: 4.5 },
+    m48: { d: 48, pitch: 5.0 },
+    m52: { d: 52, pitch: 5.0 },
+    m56: { d: 56, pitch: 5.5 },
+    m60: { d: 60, pitch: 5.5 },
+    m64: { d: 64, pitch: 6.0 },
+  };
+  // Default line width when none is given: a bead about 2.4x as wide as it
+  // is tall lays down well, and the layer height here is fixed (the pitch).
+  const THREAD_LW_PER_PITCH = 2.4;
+  // Zero-clearance fit on an ISO 68-1 external thread (basic 60 deg profile,
+  // fundamental triangle height H = sqrt(3)/2 P). A circle of radius P/2 —
+  // the bead's round inner edge — nestled in the bolt's groove touches both
+  // flanks when its centre sits P (= radius / sin 30 deg) out from the
+  // groove's sharp V apex, and that apex is 7H/8 below the major diameter.
+  // So the edge's innermost point lands at D/2 - 7H/8 + P/2, an inner
+  // diameter of D - (7*sqrt(3)/8 - 1)*P = D - 0.5155 P (M8: 7.356 mm). It
+  // meets the flanks right at the bolt's crest corners and clears its root,
+  // so it's a pure fit with nothing to cut; the fit tolerance moves it.
+  const THREAD_FIT_K = (7 * Math.sqrt(3)) / 8 - 1;
+
+  // Per-side clearance (mm, negative = the bolt has to press into the
+  // plastic) between a bead's round inner edge — centred in a bolt groove,
+  // where it settles once screwed home — and the bolt's basic ISO profile:
+  // distance from the edge circle's centre to the profile, minus its radius.
+  function threadFlankClearance(d, pitch, innerD) {
+    const hf = (Math.sqrt(3) / 2) * pitch;
+    const rMaj = d / 2;
+    const rMin = rMaj - (5 / 8) * hf;
+    const rho = pitch / 2;
+    const c = { r: innerD / 2 + rho, z: pitch / 2 };
+    // Past the bolt's root the circle's own centre is inside the bolt; the
+    // distance to the nearest surface would read as clearance again there.
+    if (c.r <= rMin) return c.r - rMin - rho;
+    // One groove between crests at z = 0 and z = P: crest flats P/8 wide at
+    // the major diameter, root flat P/4 wide at the basic minor diameter.
+    const prof = [
+      { r: rMaj, z: -pitch / 16 },
+      { r: rMaj, z: pitch / 16 },
+      { r: rMin, z: (3 * pitch) / 8 },
+      { r: rMin, z: (5 * pitch) / 8 },
+      { r: rMaj, z: pitch - pitch / 16 },
+      { r: rMaj, z: pitch + pitch / 16 },
+    ];
+    let m = Infinity;
+    for (let i = 1; i < prof.length; i++) {
+      const a = prof[i - 1];
+      const b = prof[i];
+      const dr = b.r - a.r;
+      const dz = b.z - a.z;
+      const t = Math.max(0, Math.min(1, ((c.r - a.r) * dr + (c.z - a.z) * dz) / (dr * dr + dz * dz)));
+      m = Math.min(m, Math.hypot(c.r - (a.r + t * dr), c.z - (a.z + t * dz)));
+    }
+    return m - rho;
+  }
+
+  // Everything the thread connector's geometry derives from its inputs, in
+  // one place so the generator and the app's live hint/preview can never
+  // disagree. Diameters throughout (the fit tolerance is on the diameter,
+  // same as the lampshade's): inner edge = zero-clearance fit + tolerance,
+  // nozzle path = inner edge + one line width (half on each side), outer
+  // surface = inner edge + two.
+  function threadSpec(th) {
+    const t = th || {};
+    const id = Object.prototype.hasOwnProperty.call(THREAD_SIZES, t.size) ? t.size : 'm8';
+    const s = THREAD_SIZES[id];
+    const pitch = s.pitch;
+    const lwAuto = THREAD_LW_PER_PITCH * pitch;
+    const lwSet = t.lineWidth > 0 ? t.lineWidth : lwAuto;
+    // beadArea() already treats a bead narrower than it is tall as square
+    // (it can't come out any thinner than that), so the wall is positioned
+    // from that same effective width.
+    const lw = Math.max(lwSet, pitch);
+    const tol = Number.isFinite(t.fitTolerance) ? t.fitTolerance : 0;
+    const innerD0 = s.d - THREAD_FIT_K * pitch;
+    const innerD = innerD0 + tol;
+    return {
+      id: id,
+      label: 'M' + s.d + 'x' + pitch,
+      d: s.d,
+      pitch: pitch,
+      lwAuto: lwAuto,
+      lwIsAuto: !(t.lineWidth > 0),
+      lwClamped: lwSet < pitch,
+      lw: lw,
+      tol: tol,
+      innerD0: innerD0,
+      innerD: innerD,
+      spiralD: innerD + lw,
+      outerD: innerD + 2 * lw,
+      flankClearance: threadFlankClearance(s.d, pitch, innerD),
+    };
+  }
+
+  function generateThread(cfg) {
+    const warnings = [];
+    const lines = [];
+    const path = [];
+    let totalVolume = 0;
+    let pathLength = 0;
+    let moveCount = 0;
+
+    const cx = cfg.centerX;
+    const cy = cfg.centerY;
+    const th = cfg.thread || {};
+
+    function bail(msg) {
+      return {
+        gcode: '; ERROR: ' + msg,
+        warnings: [msg],
+        stats: { volume: 0, pathLength: 0, moves: 0, loops: 0, timeMin: 0, materialVolume: 0, actualTimeMin: 0 },
+        path: [],
+      };
+    }
+
+    const spec = threadSpec(th);
+    const lh = spec.pitch;
+    const lw = spec.lw;
+    const H = th.height;
+    if (!(H > lh)) return bail('Height must be more than one thread pitch (' + lh + ' mm).');
+    if (!(spec.innerD > 0)) return bail('Fit tolerance leaves no inner diameter — make it less negative.');
+    if (!(th.flowRate > 0)) return bail('Enter a valid helix flow (mm³/s).');
+    if (spec.lwClamped) {
+      warnings.push('Line width is less than the thread pitch (layer height) — bead width clamped to the pitch.');
+    }
+    if (spec.innerD >= spec.d) {
+      warnings.push(
+        'Inner edge ⌀' + spec.innerD.toFixed(2) + ' is at or outside the bolt\'s ⌀' + spec.d +
+          ' major diameter — the thread won\'t engage; lower the fit tolerance.'
+      );
+    }
+    const rc = spec.spiralD / 2;
+    const area = beadArea(lw, lh);
+    const feed = (th.flowRate * 60) / area;
+
+    // ---- Printer / extrusion mode (same as the lampshade) ----
+    const printer = cfg.printer || {};
+    const mode = printer.mode === 'filament' ? 'filament' : 'pellet';
+    const mult = printer.multiplier > 0 ? printer.multiplier : 1;
+    const fil = printer.filament || {};
+    const pel = printer.pellet || {};
+    const filDia = fil.diameter > 0 ? fil.diameter : 1.75;
+    const eFactor = mult / (mode === 'filament' ? Math.PI * (filDia / 2) * (filDia / 2) : 1);
+    const includeStartEnd = !!printer.includeStartEnd;
+    // The start G-code parks the fan off for the ramp-up revolution; the
+    // generator turns it back on after it (gated on start/end for the same
+    // reason every other project gates it — no M106 S0 to undo otherwise).
+    const fanPct = mode === 'filament' ? fil.fan || 0 : pel.fan || 0;
+    const fanPWM = Math.round(Math.max(0, Math.min(100, fanPct)) * 2.55);
+    const tol = cfg.tolerance > 0 ? cfg.tolerance : 0.01;
+
+    const brim = cfg.brim || {};
+    const brimOn = !!brim.enabled && brim.linesOuter > 0;
+    // 0 = same as the helix, for both.
+    const bw = brim.lineWidth > 0 ? brim.lineWidth : lw;
+    const bh = brim.layerHeight > 0 ? brim.layerHeight : lh;
+    if (brimOn && !(brim.flowRate > 0)) return bail('Enter a valid brim flow (mm³/s).');
+    const bArea = beadArea(bw, bh);
+    const brimFeed = brimOn ? (brim.flowRate * 60) / bArea : 0;
+
+    const turns = H / lh;
+    const revSec = ((Math.PI * spec.spiralD) / feed) * 60;
+    lines.push('; EasyGCode — thread connector (vase-mode internal thread) generator');
+    lines.push('; ' + new Date().toISOString());
+    lines.push(
+      '; thread=' + spec.label + ' (ISO coarse) height=' + H + ' fit=zero-clearance on the 60 deg flanks' +
+        ' tolerance=' + (spec.tol >= 0 ? '+' : '') + spec.tol + 'mm'
+    );
+    lines.push(
+      '; inner edge dia=' + spec.innerD.toFixed(3) + ' (zero-clearance ' + spec.innerD0.toFixed(3) +
+        ') nozzle path dia=' + spec.spiralD.toFixed(3) + ' outer dia=' + spec.outerD.toFixed(3) +
+        ' flank clearance=' + spec.flankClearance.toFixed(3) + 'mm/side'
+    );
+    lines.push(
+      '; layerHeight=' + lh + ' (= thread pitch) lineWidth=' + lw.toFixed(3) +
+        (spec.lwIsAuto ? ' (auto ' + THREAD_LW_PER_PITCH + ' x pitch)' : '') +
+        ' right-hand helix (counter-clockwise as it rises)'
+    );
+    lines.push(
+      '; helix flow ' + th.flowRate + ' mm3/s -> feed ' + feed.toFixed(0) + ' mm/min (bead area ' +
+        area.toFixed(3) + ' mm2), ~' + revSec.toFixed(1) + ' s per revolution'
+    );
+    if (brimOn) {
+      lines.push(
+        '; brim: ' + brim.linesOuter + ' outer ring(s) ' + bw.toFixed(2) + ' x ' + bh.toFixed(2) + ' mm, flow ' +
+          brim.flowRate + ' mm3/s -> feed ' + brimFeed.toFixed(0) + ' mm/min'
+      );
+    }
+    lines.push(
+      '; printer=' + mode + ' multiplier=' + mult +
+        (mode === 'filament' ? ' filamentDiameter=' + filDia + ' (E in mm of filament)' : ' (E in mm^3, volumetric)')
+    );
+    if (includeStartEnd) {
+      (mode === 'filament' ? marlinStart(fil) : klipperStart(pel)).forEach((l) => lines.push(l));
+    }
+    lines.push('G90 ; absolute positioning');
+    lines.push('M83 ; relative extrusion');
+
+    let prev = null;
+    let lastFeed = null;
+    let firstExtrude = true;
+    let maxZEver = 0;
+    function travelAbs(cur) {
+      lines.push('G0 X' + f3(cur.x) + ' Y' + f3(cur.y) + ' Z' + f3(cur.z) + ' F' + Math.round(cfg.travelFeed));
+      lastFeed = cfg.travelFeed;
+      path.push({ x: cur.x, y: cur.y, z: cur.z, travel: true, feed: cfg.travelFeed });
+      prev = cur;
+      moveCount++;
+    }
+    function hopTravel(dest, clearMargin) {
+      const clearZ = Math.max(prev.z, dest.z, clearMargin);
+      if (clearZ > prev.z + 1e-6) travelAbs({ x: prev.x, y: prev.y, z: clearZ });
+      travelAbs({ x: dest.x, y: dest.y, z: clearZ });
+      if (dest.z < clearZ - 1e-6) travelAbs(dest);
+    }
+    function emitSeg(cur, f, ramp, a) {
+      const segLen = dist3(prev, cur);
+      if (segLen < 1e-7) {
+        prev = cur;
+        return;
+      }
+      const dVol = a * segLen * ramp;
+      totalVolume += dVol;
+      pathLength += segLen;
+      let line = 'G1 X' + f3(cur.x) + ' Y' + f3(cur.y) + ' Z' + f3(cur.z) + ' E' + f5(dVol * eFactor);
+      if (f !== lastFeed || firstExtrude) {
+        line += ' F' + Math.round(f);
+        lastFeed = f;
+      }
+      lines.push(line);
+      path.push({ x: cur.x, y: cur.y, z: cur.z, travel: false, feed: f });
+      firstExtrude = false;
+      moveCount++;
+      prev = cur;
+      if (cur.z > maxZEver) maxZEver = cur.z;
+    }
+    // Seam at the back (+Y). The angle always INCREASES with Z — counter-
+    // clockwise seen from above while rising, a right-hand helix — because
+    // ISO metric threads are right-hand; the other way round would print a
+    // left-hand thread that won't go on at all.
+    const SEAM = Math.PI / 2;
+    // Chord tolerance matters more here than anywhere else: a polygon's flats
+    // sit inside the true circle, which is a fit error in the same hundredths
+    // the tolerance is tuned in.
+    const stepsFor = (r) => {
+      let dth = 2 * Math.acos(Math.max(-1, 1 - tol / Math.max(r, 1e-6)));
+      if (!isFinite(dth) || dth <= 0) dth = 0.2;
+      return Math.max(24, Math.ceil((2 * Math.PI) / dth));
+    };
+    const ptAt = (r, a, z) => ({ x: cx + r * Math.cos(a), y: cy + r * Math.sin(a), z: z });
+
+    // ---- Brim (outer rings, outermost first, working inward) ----
+    // The innermost ring is centred half the helix's line width plus half
+    // the brim's own outside the helix path, so its inner edge just meets
+    // the wall's outer edge.
+    if (brimOn) {
+      lines.push('; --- brim: ' + brim.linesOuter + ' outer ring(s) ---');
+      for (let k = brim.linesOuter; k >= 1; k--) {
+        const rr = rc + lw / 2 + bw / 2 + (k - 1) * bw;
+        const steps = stepsFor(rr);
+        travelAbs(ptAt(rr, SEAM, bh));
+        for (let s = 1; s <= steps; s++) {
+          emitSeg(ptAt(rr, SEAM + (2 * Math.PI * s) / steps, bh), brimFeed, 1, bArea);
+        }
+      }
+    }
+
+    // ---- The helix ----
+    const start = ptAt(rc, SEAM, 0);
+    if (prev === null) travelAbs(start);
+    else hopTravel(start, 2 * bh);
+
+    const steps = stepsFor(rc);
+    lines.push('; --- helix: ' + turns.toFixed(2) + ' revolutions to z=' + H + ' ---');
+    // First revolution: starts on the bed at Z0 and rises to one pitch while
+    // extrusion ramps 0 -> 100% (midpoint-averaged per segment) — the bead
+    // grows exactly as the gap under the nozzle does, so the helix starts
+    // flush with the bed instead of with a step.
+    for (let s = 1; s <= steps; s++) {
+      const u = s / steps;
+      emitSeg(ptAt(rc, SEAM + 2 * Math.PI * u, lh * u), feed, (u + (s - 1) / steps) / 2, area);
+    }
+    if (includeStartEnd && fanPWM > 0) {
+      lines.push('M106 S' + fanPWM + ' ; part cooling fan on after ramp loop');
+    }
+    // The rest at exactly one pitch per revolution up to the full height
+    // (any fractional last turn is just part of the same continuous helix).
+    const rest = turns - 1;
+    const restSteps = Math.max(1, Math.ceil(rest * steps));
+    for (let s = 1; s <= restSteps; s++) {
+      const n = 1 + (rest * s) / restSteps;
+      emitSeg(ptAt(rc, SEAM + 2 * Math.PI * n, lh * n), feed, 1, area);
+    }
+    // Closing revolution: flat at the full height while extrusion ramps back
+    // to zero — the gap to the turn below shrinks from one pitch to nothing
+    // around it — for a level top.
+    const aEnd = SEAM + 2 * Math.PI * turns;
+    lines.push('; --- closing revolution: flat, extrusion ramped to zero ---');
+    for (let s = 1; s <= steps; s++) {
+      const u = s / steps;
+      emitSeg(ptAt(rc, aEnd + 2 * Math.PI * u, H), feed, Math.max(0, 1 - (u + (s - 1) / steps) / 2), area);
+    }
+
+    if (includeStartEnd) {
+      const endLift = maxZEver + Math.max(0, printer.endLift != null ? printer.endLift : 50);
+      (mode === 'filament' ? marlinEnd(endLift) : klipperEnd(endLift)).forEach((l) => lines.push(l));
+    }
+
+    let timeMin = 0;
+    for (let i = 1; i < path.length; i++) {
+      const d = dist3(path[i - 1], path[i]);
+      if (path[i].feed > 0) timeMin += d / path[i].feed;
+    }
+    const stats = {
+      volume: totalVolume,
+      pathLength: pathLength,
+      moves: moveCount,
+      loops: turns + 1,
+      timeMin: timeMin,
+      materialVolume: totalVolume,
+      actualTimeMin: timeMin,
+    };
+    return { gcode: lines.join('\n') + '\n', warnings, stats, path, spec };
+  }
+
   // ---- Container: a circle-only vase-mode base with a separate screw-on
   // lid, printed as its own G-code ----
   // A focused, self-contained pair of generators rather than another branch
@@ -1858,6 +2215,7 @@
   function generate(cfg) {
     if (cfg.project === 'spoon') return generateSpoon(cfg);
     if (cfg.project === 'lamp') return generateLamp(cfg);
+    if (cfg.project === 'thread') return generateThread(cfg);
     if (cfg.project === 'container') {
       return { base: generateContainer(cfg), lid: generateContainerLid(cfg) };
     }
@@ -4835,6 +5193,8 @@
     BS_ROTATION_DEG,
     SPOON_ROTATION_DEG,
     LAMP_SOCKETS,
+    THREAD_SIZES,
+    threadSpec,
     discBedFit,
     domeHeightRange,
   };

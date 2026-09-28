@@ -28,6 +28,7 @@
       <button type="button" id="tabSpoon" class="tab">Spoon</button>
       <button type="button" id="tabLamp" class="tab">Lampshade</button>
       <button type="button" id="tabContainer" class="tab">Container</button>
+      <button type="button" id="tabThread" class="tab">Thread</button>
     </nav>
     <input type="hidden" id="activeProject" value="cordhanger" />
 
@@ -1381,6 +1382,118 @@
           <div class="field"><label>Bed center X (mm)</label><input type="number" id="cnl_centerX" value="125" step="1" /></div>
           <div class="field"><label>Bed center Y (mm)</label><input type="number" id="cnl_centerY" value="125" step="1" /></div>
         </div>
+      </section>
+
+      <section class="card" data-project="thread" hidden>
+        <h2>
+          Printer &amp; material
+          <label class="toggle"><input type="checkbox" id="th_startEndEnabled" checked /> start/end G-code</label>
+        </h2>
+        <div class="grid">
+          <div class="field">
+            <label>Printer</label>
+            <select id="th_printerMode">
+              <option value="pellet">Pellet (Klipper)</option>
+              <option value="filament">Filament (Marlin)</option>
+            </select>
+          </div>
+          <div class="field"><label>Extrusion multiplier</label><input type="number" id="th_extrusionMultiplier" value="1.0" min="0.01" step="0.01" /></div>
+          <div class="field"><label>End lift above print (mm)</label><input type="number" id="th_endLift" value="50" min="0" step="5" /></div>
+        </div>
+        <div class="printer-params-th grid" data-mode="pellet">
+          <div class="field"><label>Zone up temp (°C)</label><input type="number" id="th_pelUpTemp" value="210" min="0" step="5" /></div>
+          <div class="field"><label>Zone mid temp (°C)</label><input type="number" id="th_pelMidTemp" value="210" min="0" step="5" /></div>
+          <div class="field"><label>Zone down temp (°C)</label><input type="number" id="th_pelDownTemp" value="210" min="0" step="5" /></div>
+          <div class="field"><label>Bed temp (°C)</label><input type="number" id="th_pelBedTemp" value="50" min="0" step="5" /></div>
+          <div class="field"><label>Pressure advance</label><input type="number" id="th_pelPA" value="0.3" min="0" step="0.05" /></div>
+          <div class="field"><label>Purge quantity</label><input type="number" id="th_pelPurge" value="5000" min="0" step="100" /></div>
+          <div class="field"><label>Fan (%)</label><input type="number" id="th_pelFan" value="0" min="0" max="100" step="5" /></div>
+        </div>
+        <div class="printer-params-th grid" data-mode="filament" hidden>
+          <div class="field"><label>Filament diameter (mm)</label><input type="number" id="th_filDiameter" value="1.75" min="0.1" step="0.05" /></div>
+          <div class="field"><label>Nozzle temp (°C)</label><input type="number" id="th_filNozzleTemp" value="205" min="0" step="5" /></div>
+          <div class="field"><label>Bed temp (°C)</label><input type="number" id="th_filBedTemp" value="60" min="0" step="5" /></div>
+          <div class="field"><label>Fan (%)</label><input type="number" id="th_filFan" value="100" min="0" max="100" step="5" /></div>
+        </div>
+        <p class="hint" id="th_printerHint"></p>
+        <p class="hint">The fan stays off for the first (ramp-up) revolution of the helix and turns on at
+          this % after it — 0 keeps it off.</p>
+      </section>
+
+      <section class="card" data-project="thread" hidden>
+        <h2>Thread connector</h2>
+        <div class="grid">
+          <div class="field">
+            <label>Thread (ISO metric, coarse)</label>
+            <select id="th_size">
+              <option value="m2">M2 × 0.4</option>
+              <option value="m2.5">M2.5 × 0.45</option>
+              <option value="m3">M3 × 0.5</option>
+              <option value="m4">M4 × 0.7</option>
+              <option value="m5">M5 × 0.8</option>
+              <option value="m6">M6 × 1.0</option>
+              <option value="m8" selected>M8 × 1.25</option>
+              <option value="m10">M10 × 1.5</option>
+              <option value="m12">M12 × 1.75</option>
+              <option value="m14">M14 × 2.0</option>
+              <option value="m16">M16 × 2.0</option>
+              <option value="m18">M18 × 2.5</option>
+              <option value="m20">M20 × 2.5</option>
+              <option value="m22">M22 × 2.5</option>
+              <option value="m24">M24 × 3.0</option>
+              <option value="m27">M27 × 3.0</option>
+              <option value="m30">M30 × 3.5</option>
+              <option value="m33">M33 × 3.5</option>
+              <option value="m36">M36 × 4.0</option>
+              <option value="m39">M39 × 4.0</option>
+              <option value="m42">M42 × 4.5</option>
+              <option value="m45">M45 × 4.5</option>
+              <option value="m48">M48 × 5.0</option>
+              <option value="m52">M52 × 5.0</option>
+              <option value="m56">M56 × 5.5</option>
+              <option value="m60">M60 × 5.5</option>
+              <option value="m64">M64 × 6.0</option>
+            </select>
+          </div>
+          <div class="field"><label>Height (mm)</label><input type="number" id="th_height" value="20" min="1" step="1" /></div>
+          <div class="field"><label>Fit tolerance (mm on ⌀, − = tighter)</label><input type="number" id="th_fitTolerance" value="0" step="0.05" /></div>
+        </div>
+        <p class="hint" id="th_hint"></p>
+        <canvas id="th_preview" width="600" height="450"></canvas>
+        <p class="hint">Cross-section through one wall (axis off to the left): gray = the bolt's thread,
+          blue = the printed beads (red when they'd have to press into it), green dashed = inner edge,
+          white dashed = nozzle path. At tolerance 0 the beads' round edges just touch the bolt's flanks.</p>
+      </section>
+
+      <section class="card" data-project="thread" hidden>
+        <h2>Print settings</h2>
+        <div class="grid">
+          <div class="field"><label>Line width (mm, 0 = auto 2.4 × pitch)</label><input type="number" id="th_lineWidth" value="0" min="0" step="0.1" /></div>
+          <div class="field"><label>Helix flow (mm³/s)</label><input type="number" id="th_flowRate" value="20" min="0.1" step="0.5" /></div>
+          <div class="field"><label>Travel feed (mm/min)</label><input type="number" id="th_travelFeed" value="6000" min="1" step="100" /></div>
+          <div class="field"><label>Chord tolerance (mm)</label><input type="number" id="th_tolerance" value="0.01" min="0.001" step="0.005" /></div>
+          <div class="field"><label>Bed center X (mm)</label><input type="number" id="th_centerX" value="125" step="1" /></div>
+          <div class="field"><label>Bed center Y (mm)</label><input type="number" id="th_centerY" value="125" step="1" /></div>
+        </div>
+        <p class="hint" id="th_printHint"></p>
+        <p class="hint">Layer height isn't set here — it <em>is</em> the thread pitch, so every revolution of
+          the helix lays down one thread turn. The first revolution starts at Z0 and ramps flow up from
+          zero; the last runs flat and ramps it back down for a level top. The helix runs
+          counter-clockwise as it rises: a right-hand thread, like every standard ISO bolt.</p>
+      </section>
+
+      <section class="card" data-project="thread" hidden>
+        <h2>
+          Brim
+          <label class="toggle"><input type="checkbox" id="th_brimEnabled" /> enable</label>
+        </h2>
+        <div id="th_brimFields" class="grid" hidden>
+          <div class="field"><label>Outer lines</label><input type="number" id="th_brimLinesOuter" value="4" min="1" step="1" /></div>
+          <div class="field"><label>Brim line width (mm, 0 = same as helix)</label><input type="number" id="th_brimLineWidth" value="0" min="0" step="0.1" /></div>
+          <div class="field"><label>Brim layer height (mm, 0 = same as helix)</label><input type="number" id="th_brimLayerHeight" value="0" min="0" step="0.05" /></div>
+          <div class="field"><label>Brim flow (mm³/s)</label><input type="number" id="th_brimFlowRate" value="20" min="0.1" step="0.5" /></div>
+        </div>
+        <p class="hint" id="th_brimHint"></p>
       </section>
 
       <section class="card">
