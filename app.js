@@ -22,7 +22,8 @@
 
   function activeProject() {
     const v = $('activeProject').value;
-    return v === 'bendstool' || v === 'vessel' || v === 'spoon' || v === 'lamp' || v === 'container'
+    return v === 'bendstool' || v === 'vessel' || v === 'spoon' || v === 'lamp' || v === 'container' ||
+      v === 'thread'
       ? v
       : 'cordhanger';
   }
@@ -339,6 +340,34 @@
           layerHeight: num('ls_brimLayerHeight'),
           feed: num('ls_brimFeed'),
           multiplier: num('ls_brimMultiplier'),
+        },
+      };
+    }
+
+    if (activeProject() === 'thread') {
+      const size = $('th_size').value;
+      return {
+        project: 'thread',
+        printer: readPrinter('th_'),
+        travelFeed: num('th_travelFeed'),
+        tolerance: num('th_tolerance'),
+        centerX: num('th_centerX'),
+        centerY: num('th_centerY'),
+        thread: {
+          size: Object.prototype.hasOwnProperty.call(window.GcodeGen.THREAD_SIZES, size) ? size : 'm8',
+          height: num('th_height'),
+          fitTolerance: num('th_fitTolerance'),
+          // 0 = auto (2.4 x pitch), resolved by GcodeGen.threadSpec.
+          lineWidth: num('th_lineWidth'),
+          flowRate: num('th_flowRate'),
+        },
+        brim: {
+          enabled: $('th_brimEnabled').checked,
+          linesOuter: Math.max(0, Math.round(num('th_brimLinesOuter'))),
+          // Both 0 = same as the helix.
+          lineWidth: num('th_brimLineWidth'),
+          layerHeight: num('th_brimLayerHeight'),
+          flowRate: num('th_brimFlowRate'),
         },
       };
     }
@@ -689,6 +718,37 @@
       return validatePrinter(cfg) || validateBrim(cfg.brim);
     }
 
+    if (cfg.project === 'thread') {
+      const th = cfg.thread;
+      const tchecks = {
+        'height': th.height,
+        'helix flow': th.flowRate,
+        'travel feed': cfg.travelFeed,
+        'chord tolerance': cfg.tolerance,
+      };
+      for (const name in tchecks) {
+        if (!isPos(tchecks[name])) return 'Enter a valid ' + name + ' (must be greater than 0).';
+      }
+      if (!Number.isFinite(cfg.centerX) || !Number.isFinite(cfg.centerY))
+        return 'Enter valid bed center X/Y.';
+      if (!Number.isFinite(th.lineWidth) || th.lineWidth < 0) return 'Line width must be 0 (auto) or more.';
+      if (!Number.isFinite(th.fitTolerance)) return 'Enter a valid fit tolerance.';
+      const spec = window.GcodeGen.threadSpec(th);
+      if (!(th.height > spec.pitch))
+        return 'Height must be more than one thread pitch (' + spec.pitch + ' mm).';
+      if (!(spec.innerD > 0)) return 'Fit tolerance leaves no inner diameter — make it less negative.';
+      if (cfg.brim.enabled) {
+        const b = cfg.brim;
+        if (!(b.linesOuter >= 1)) return 'Brim needs at least 1 outer line.';
+        if (!Number.isFinite(b.lineWidth) || b.lineWidth < 0)
+          return 'Brim line width must be 0 (same as helix) or more.';
+        if (!Number.isFinite(b.layerHeight) || b.layerHeight < 0)
+          return 'Brim layer height must be 0 (same as helix) or more.';
+        if (!isPos(b.flowRate)) return 'Enter a valid brim flow (mm³/s).';
+      }
+      return validatePrinter(cfg);
+    }
+
     if (cfg.project === 'container') {
       const cn = cfg.container;
       const lid = cfg.lid;
@@ -827,6 +887,7 @@
       ['ls_printerMode', 'printer-params-ls', 'ls_printerHint'],
       ['cn_printerMode', 'printer-params-cn', 'cn_printerHint'],
       ['cnl_printerMode', 'printer-params-cnl', 'cnl_printerHint'],
+      ['th_printerMode', 'printer-params-th', 'th_printerHint'],
     ].forEach(([selId, cls, hintId]) => {
       const sel = $(selId);
       if (!sel) return;
@@ -869,6 +930,7 @@
     $('tabSpoon').classList.toggle('active', p === 'spoon');
     $('tabLamp').classList.toggle('active', p === 'lamp');
     $('tabContainer').classList.toggle('active', p === 'container');
+    $('tabThread').classList.toggle('active', p === 'thread');
   }
 
   // The container tab holds base AND lid settings/output on one page,
@@ -1433,6 +1495,128 @@
     }
   }
 
+  // Thread connector: live dimensions/feeds from GcodeGen.threadSpec (the
+  // same function the generator uses, so the two can never disagree), plus
+  // a zoomed cross-section through one wall — the bolt's basic ISO profile
+  // against the printed beads — which is the thing worth seeing when
+  // dialling in the fit tolerance.
+  function drawPreviewThread(cfg) {
+    const canvas = $('th_preview');
+    const ctx = canvas.getContext('2d');
+    const W = canvas.width;
+    const H = canvas.height;
+    ctx.clearRect(0, 0, W, H);
+    const sf = W / 600;
+
+    const th = cfg.thread || {};
+    const brim = cfg.brim || {};
+    const spec = window.GcodeGen.threadSpec(th);
+    const P = spec.pitch;
+    const sign = (v) => (v >= 0 ? '+' : '−') + Math.abs(v).toFixed(2);
+    const turns = isPos(th.height) ? th.height / P : 0;
+    $('th_hint').textContent =
+      spec.label.replace('x', ' × ') + ' bolt · inner edge ⌀' + spec.innerD.toFixed(2) + ' mm (zero-clearance ⌀' +
+      spec.innerD0.toFixed(2) + ', tolerance ' + sign(spec.tol) + ') · nozzle path ⌀' + spec.spiralD.toFixed(2) +
+      ' · outer ⌀' + spec.outerD.toFixed(2) + ' · flank clearance ' + sign(spec.flankClearance) + ' mm per side' +
+      (turns > 1 ? ' · ' + turns.toFixed(1) + ' turns + a flat closing one' : '') +
+      (spec.innerD >= spec.d ? ' · the inner edge is outside the bolt\'s ⌀' + spec.d + ' — it won\'t grip' : '');
+
+    const area = window.GcodeGen.beadArea(spec.lw, P);
+    const feed = isPos(th.flowRate) ? (th.flowRate * 60) / area : 0;
+    $('th_printHint').textContent =
+      'Line width ' + spec.lw.toFixed(2) + ' mm' +
+      (spec.lwIsAuto ? ' (auto: 2.4 × the ' + P + ' mm pitch)' : spec.lwClamped ? ' (clamped up to the pitch)' : '') +
+      ' · layer height ' + P + ' mm (= pitch)' +
+      (feed > 0
+        ? ' · ' + th.flowRate + ' mm³/s over a ' + area.toFixed(2) + ' mm² bead → ' + feed.toFixed(0) +
+          ' mm/min · ~' + (((Math.PI * spec.spiralD) / feed) * 60).toFixed(1) + ' s per revolution'
+        : '');
+
+    if (brim.enabled) {
+      const bw = brim.lineWidth > 0 ? brim.lineWidth : spec.lw;
+      const bh = brim.layerHeight > 0 ? brim.layerHeight : P;
+      const bArea = window.GcodeGen.beadArea(bw, bh);
+      $('th_brimHint').textContent =
+        'Outer rings only, printed outermost first · ' + bw.toFixed(2) + ' × ' + bh.toFixed(2) + ' mm rings · ' +
+        'the innermost is centred ' + (spec.lw / 2 + bw / 2).toFixed(2) + ' mm outside the helix path (half the ' +
+        'helix line width + half the brim\'s), so it just meets the wall' +
+        (isPos(brim.flowRate) ? ' · ' + brim.flowRate + ' mm³/s → ' + ((brim.flowRate * 60) / bArea).toFixed(0) + ' mm/min' : '') +
+        '.';
+    } else {
+      $('th_brimHint').textContent = '';
+    }
+
+    // Cross-section: r runs left→right (axis off to the left), z bottom→top.
+    // The bolt's crests sit at z = kP and the beads are centred in its
+    // grooves at (k + ½)P — where the round edges settle once screwed home.
+    const hf = (Math.sqrt(3) / 2) * P;
+    const rMaj = spec.d / 2;
+    const rMin = rMaj - (5 / 8) * hf;
+    const rIn = spec.innerD / 2;
+    const rc = spec.spiralD / 2;
+    const rOut = spec.outerD / 2;
+    const rL = Math.max(0, Math.min(rMin, rIn) - 0.6 * P);
+    const rR = rOut + 0.6 * P;
+    const pad = 12 * sf;
+    const scale = (W - 2 * pad) / (rR - rL);
+    const zTop = (H - 2 * pad) / scale;
+    const X = (r) => pad + (r - rL) * scale;
+    const Y = (z) => H - pad - z * scale;
+    const kMax = Math.ceil(zTop / P) + 1;
+
+    // Bolt: basic profile (crest flat P/8 at the major diameter, root flat
+    // P/4 at the basic minor), filled back to the left edge as its core.
+    ctx.beginPath();
+    ctx.moveTo(X(rL), Y(-P));
+    for (let k = -1; k <= kMax; k++) {
+      const z0 = k * P;
+      ctx.lineTo(X(rMaj), Y(z0 - P / 16));
+      ctx.lineTo(X(rMaj), Y(z0 + P / 16));
+      ctx.lineTo(X(rMin), Y(z0 + (3 * P) / 8));
+      ctx.lineTo(X(rMin), Y(z0 + (5 * P) / 8));
+    }
+    ctx.lineTo(X(rL), Y((kMax + 1) * P));
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(154,163,178,0.35)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(154,163,178,0.9)';
+    ctx.lineWidth = 1.5 * sf;
+    ctx.stroke();
+
+    // Beads: stadiums lw x P, round ends of radius P/2.
+    const tight = spec.flankClearance < -0.005;
+    const rr = P / 2;
+    const x0 = rc - spec.lw / 2 + rr; // inner semicircle centre
+    const x1 = rc + spec.lw / 2 - rr; // outer semicircle centre
+    for (let k = -1; k <= kMax; k++) {
+      const zc = (k + 0.5) * P;
+      ctx.beginPath();
+      ctx.moveTo(X(x0), Y(zc + rr));
+      ctx.lineTo(X(x1), Y(zc + rr));
+      ctx.arc(X(x1), Y(zc), rr * scale, -Math.PI / 2, Math.PI / 2, false);
+      ctx.lineTo(X(x0), Y(zc - rr));
+      ctx.arc(X(x0), Y(zc), rr * scale, Math.PI / 2, (3 * Math.PI) / 2, false);
+      ctx.closePath();
+      ctx.fillStyle = tight ? 'rgba(255,107,107,0.22)' : 'rgba(79,157,255,0.22)';
+      ctx.fill();
+      ctx.strokeStyle = tight ? '#ff6b6b' : '#4f9dff';
+      ctx.lineWidth = 2 * sf;
+      ctx.stroke();
+    }
+
+    // Inner edge (green) and nozzle path (white), dashed.
+    ctx.setLineDash([5 * sf, 4 * sf]);
+    ctx.lineWidth = 1.2 * sf;
+    [[rIn, '#2bd9a0'], [rc, 'rgba(255,255,255,0.6)']].forEach(([r, col]) => {
+      ctx.strokeStyle = col;
+      ctx.beginPath();
+      ctx.moveTo(X(r), 0);
+      ctx.lineTo(X(r), H);
+      ctx.stroke();
+    });
+    ctx.setLineDash([]);
+  }
+
   // Spoon: single flat spiral + stick path, same Geo.spoonPath the generator
   // itself uses, so the preview always matches the actual G-code exactly.
   function drawPreviewSpoon(cfg) {
@@ -1518,6 +1702,10 @@
     }
     if (cfg.project === 'lamp') {
       drawPreviewLamp(cfg);
+      return;
+    }
+    if (cfg.project === 'thread') {
+      drawPreviewThread(cfg);
       return;
     }
     if (cfg.project === 'container') {
@@ -3372,6 +3560,8 @@
         ? 'lampshade'
         : p === 'container'
         ? 'container_' + cnActivePart
+        : p === 'thread'
+        ? 'thread_' + $('th_size').value.replace('.', '_')
         : 'vase_' + $('shape').value;
     return stem + '_' + Date.now() + '.gcode';
   }
@@ -3541,7 +3731,7 @@
   function fitCanvases() {
     [
       'preview', 'previewBS', 've_preview', 've_profile', 've_topCurveCanvas', 've_botCurveCanvas',
-      'sp_preview', 'ls_preview', 'preview3d', 'cn_profile',
+      'sp_preview', 'ls_preview', 'th_preview', 'preview3d', 'cn_profile',
     ].forEach((id) => {
       const c = $(id);
       const dpr = Math.min(window.devicePixelRatio || 1, 2.5);
@@ -3550,7 +3740,7 @@
       // layout size and grow without bound (belt-and-braces vs missing CSS).
       const px = Math.min(1600, Math.round(w * dpr));
       // Backing store must match the CSS aspect ratio or the drawing skews.
-      const ratio = { ve_profile: 0.6, ls_preview: 0.75, cn_profile: 0.6 }[id] || 1;
+      const ratio = { ve_profile: 0.6, ls_preview: 0.75, th_preview: 0.75, cn_profile: 0.6 }[id] || 1;
       const py = Math.round(px * ratio);
       if (px > 0 && (c.width !== px || c.height !== py)) {
         c.width = px;
@@ -3601,6 +3791,7 @@
     $('ls_flowFeedFields').hidden = !$('ls_flowFeedEnabled').checked;
     showLampSocketParams($('ls_socket').value);
     showLampShapeParams($('ls_shape').value);
+    $('th_brimFields').hidden = !$('th_brimEnabled').checked;
     showProfMidCount(num('ve_profMidCount'));
     showVesselBottomStyle($('ve_seamStyle').value);
     showVesselTopShape($('ve_topShape').value);
@@ -3730,6 +3921,32 @@
     });
     $('ls_brimFields').hidden = !$('ls_brimEnabled').checked;
     $('ls_flowFeedFields').hidden = !$('ls_flowFeedEnabled').checked;
+  }
+
+  // Same again for the thread connector — only the printer/material card and
+  // the plain travel/bed-centre numbers carry over. Layer height (the pitch)
+  // and line width (auto from the pitch) are thread settings here, and the
+  // chord tolerance deliberately starts finer than the coat hanger's: a
+  // polygon's flats sit inside the true circle, a fit error in the same
+  // hundredths the fit tolerance is tuned in.
+  const SEED_MAP_TH = {
+    travelFeed: 'th_travelFeed', centerX: 'th_centerX', centerY: 'th_centerY',
+    printerMode: 'th_printerMode', extrusionMultiplier: 'th_extrusionMultiplier',
+    startEndEnabled: 'th_startEndEnabled', endLift: 'th_endLift',
+    filDiameter: 'th_filDiameter', filNozzleTemp: 'th_filNozzleTemp',
+    filBedTemp: 'th_filBedTemp', filFan: 'th_filFan',
+    pelUpTemp: 'th_pelUpTemp', pelMidTemp: 'th_pelMidTemp', pelDownTemp: 'th_pelDownTemp',
+    pelBedTemp: 'th_pelBedTemp', pelPA: 'th_pelPA', pelPurge: 'th_pelPurge', pelFan: 'th_pelFan',
+  };
+
+  function seedThread() {
+    Object.keys(SEED_MAP_TH).forEach((src) => {
+      const a = $(src);
+      const b = $(SEED_MAP_TH[src]);
+      if (!a || !b) return;
+      if (a.type === 'checkbox') b.checked = a.checked;
+      else b.value = a.value;
+    });
   }
 
   // Double-buffered save: the previous good state is kept under a backup key,
@@ -3939,6 +4156,11 @@
     updateShapeUI();
   });
 
+  $('th_brimEnabled').addEventListener('change', () => {
+    $('th_brimFields').hidden = !$('th_brimEnabled').checked;
+    updateShapeUI();
+  });
+
   $('ve_brimEnabled').addEventListener('change', () => {
     $('ve_brimFields').hidden = !$('ve_brimEnabled').checked;
     updateShapeUI();
@@ -3957,6 +4179,7 @@
   $('tabSpoon').addEventListener('click', () => switchProject('spoon'));
   $('tabLamp').addEventListener('click', () => switchProject('lamp'));
   $('tabContainer').addEventListener('click', () => switchProject('container'));
+  $('tabThread').addEventListener('click', () => switchProject('thread'));
 
   $('regenBtn').addEventListener('click', regenerate);
   $('copyBtn').addEventListener('click', copy);
@@ -4022,6 +4245,7 @@
   if (restored && !('ve_layerHeight' in restored)) seedVessel();
   if (restored && !('sp_layerHeight' in restored)) seedSpoon();
   if (restored && !('ls_lineWidth' in restored)) seedLamp();
+  if (restored && !('th_height' in restored)) seedThread();
   showProject(activeProject());
   fitCanvases();
   updateShapeUI();

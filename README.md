@@ -537,6 +537,43 @@ keep **fully independent settings** per project:
   config, ignoring any stale value that might otherwise linger on the lid's side — not just a
   UI convenience, a hard guarantee they can never drift apart.
 
+- **Thread** — a nut-like connector that screws onto a standard **ISO metric bolt or
+  threaded rod** (M2–M64, coarse pitch, picked from a dropdown), printed as one plain
+  vase-mode tube. Same trick as the lampshade's throat: no thread is modelled — the
+  **layer height is the thread pitch** (M8 → 1.25 mm), and a vase-mode bead is a stadium
+  `w × h` whose inner edge is a semicircle of radius `h/2`, so those round inner edges line
+  up, one per revolution, into the connector's own internal thread. **Line width** defaults
+  to **2.4 × the pitch** (M8 → 3.0 mm; 0 = auto) and can be overridden. **Where the inner
+  edge sits** is the one real design decision, and it's geometric rather than a table
+  lookup: a circle of radius `P/2` nestled in the bolt's 60° groove touches both flanks when
+  its centre is `P` (= radius / sin 30°) out from the groove's sharp V apex, and that apex is
+  `7H/8` below the major diameter (`H = √3/2·P`, the ISO 68-1 fundamental triangle). So the
+  **zero-clearance inner edge ⌀ = D − (7√3/8 − 1)·P = D − 0.5155·P** (M8 → 7.356 mm) — it
+  meets the flanks right at the bolt's crest corners and clears its root, a pure fit with
+  nothing to cut (verified by brute-force distance to the basic profile, not just the
+  algebra). Everything else follows in diameters: **nozzle path ⌀ = inner edge + one line
+  width** (half on each side), outer ⌀ = inner edge + two, and a signed **fit tolerance**
+  (mm on the diameter, − = tighter — same convention as the lampshade) moves the inner edge
+  from the zero-clearance position, so an overridden line width or a tolerance change never
+  disturbs the other. The live hint shows all three diameters plus the resulting **flank
+  clearance per side** (negative = the bolt has to press into the plastic), and a zoomed
+  **cross-section** draws the bolt's basic profile against the actual beads (turning red
+  once they'd interfere). Chord tolerance defaults finer than elsewhere (0.01 mm), since a
+  polygon's flats sit inside the true circle — a fit error in the same hundredths the
+  tolerance is tuned in. The helix always rises **counter-clockwise: a right-hand thread**,
+  like every standard ISO bolt (the other way round would print a left-hand thread that
+  won't go on at all). The first revolution starts at **Z0** and ramps extrusion from zero
+  to full while it rises one pitch; the rest climbs at exactly one pitch per revolution to
+  the **height** (a fractional last turn is just part of the same helix); a flat **closing
+  revolution** ramps extrusion back to zero for a level top. Feeds are **volumetric only**:
+  a helix flow (mm³/s) becomes `flow × 60 / beadArea(w, P)` mm/min, shown live with the time
+  per revolution (worth watching on small threads, where a short revolution means little
+  cooling time). An optional **outer brim** (lines, line width and layer height — each
+  0 = same as the helix — and its own flow) prints outermost first; its innermost ring is
+  centred half the helix's line width plus half the brim's outside the helix path, so it
+  just meets the wall. The printer card's **fan %** turns on after the first revolution
+  (0 = off), as on every other project.
+
 The coat hanger is a dead-simple, phone-first tool to generate **vase-mode G-code** for
 **Klipper pellet 3D printing** (or the Bambu P1P in filament mode). Pick a cross-section
 shape, set layer height / line width / total height, optionally add a brim, and get a
@@ -1083,6 +1120,13 @@ tolerance, bed center X/Y, overhang compensation mode/strength/max multiplier, a
 constant-volumetric-flow targets for throat and shade plus their ramp height, and an
 outer-only brim — **no layer height**, which is
 the socket's thread pitch.
+
+The **Thread** tab: printer & material (identical fields to above, fan % included),
+thread size (ISO metric coarse, M2–M64), height, fit tolerance (± mm on the diameter),
+line width (0 = auto 2.4 × pitch), helix flow (mm³/s), travel feed, chord tolerance, bed
+center X/Y, and an outer-only brim (lines, line width and layer height — 0 = same as the
+helix — and brim flow) — **no layer height or print feed**: the layer height is the
+thread pitch, and feeds are derived from the two flows.
 
 The **3D preview** orbits with a drag (Z-up), pinch/wheel zooms, two fingers pan, and a
 double-tap resets. The toolpath is colored by feedrate — blue = fastest, red = slowest —

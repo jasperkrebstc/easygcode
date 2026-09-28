@@ -75,6 +75,14 @@ header .sub {
   max-width: 640px;
   margin: 8px auto 0;
   padding: 0 12px;
+  /* More tabs than a phone is wide: scroll the row sideways on its own
+     rather than widening (and side-scrolling) the whole page. */
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.tabs::-webkit-scrollbar {
+  display: none;
 }
 
 .tab {
@@ -180,6 +188,7 @@ canvas#ve_preview,
 canvas#ve_profile,
 canvas#sp_preview,
 canvas#ls_preview,
+canvas#th_preview,
 canvas#preview3d,
 canvas#ve_topCurveCanvas,
 canvas#ve_botCurveCanvas,
@@ -208,7 +217,8 @@ canvas#cn_profile {
 }
 
 /* Side elevation of the shade profile — wider than tall for most shades. */
-canvas#ls_preview {
+canvas#ls_preview,
+canvas#th_preview {
   aspect-ratio: 4 / 3;
 }
 
