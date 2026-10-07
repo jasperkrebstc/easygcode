@@ -1655,8 +1655,12 @@
     const B = bumpsIn % 2 === 1 ? bumpsIn : bumpsIn + 1;
     const tol = s.tolerance > 0 ? s.tolerance : 0.05;
 
+    // Full-spacing band: total width, centred on the attractor, held at the
+    // full max spacing; the falloffs start at its edges.
+    const halfBand = Math.max(0, s.fullBand || 0) / 2;
     function spacingMult(r) {
-      const d = r - R2;
+      let d = r - R2;
+      d = d < 0 ? Math.min(0, d + halfBand) : Math.max(0, d - halfBand);
       let t;
       if (d < 0) t = fIn > 0 ? 1 + d / fIn : 0;
       else t = fOut > 0 ? 1 - d / fOut : d === 0 ? 1 : 0;
@@ -1872,7 +1876,8 @@
         ' layers=' + layers
     );
     lines.push(
-      '; attractor r=' + spec.attractorRadius + ' maxSpacing=' + spec.maxSpacingPct.toFixed(0) + '% falloff in=' +
+      '; attractor r=' + spec.attractorRadius + ' maxSpacing=' + spec.maxSpacingPct.toFixed(0) + '% fullBand=' +
+        (sd.fullBand || 0) + 'mm falloff in=' +
         (sd.falloffIn || 0) + ' out=' + (sd.falloffOut || 0) + 'mm (smoothstep) -> widest turn spacing ' +
         spec.maxPitch.toFixed(3) + 'mm, ' + spec.openTurns + ' open turn(s)'
     );
