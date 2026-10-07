@@ -23,7 +23,7 @@
   function activeProject() {
     const v = $('activeProject').value;
     return v === 'bendstool' || v === 'vessel' || v === 'spoon' || v === 'lamp' || v === 'container' ||
-      v === 'thread'
+      v === 'thread' || v === 'sdisc'
       ? v
       : 'cordhanger';
   }
@@ -340,6 +340,33 @@
           layerHeight: num('ls_brimLayerHeight'),
           feed: num('ls_brimFeed'),
           multiplier: num('ls_brimMultiplier'),
+        },
+      };
+    }
+
+    if (activeProject() === 'sdisc') {
+      return {
+        project: 'sdisc',
+        printer: readPrinter('sd_'),
+        layerHeight: num('sd_layerHeight'),
+        lineWidth: num('sd_lineWidth'),
+        printFeed: num('sd_printFeed'),
+        travelFeed: num('sd_travelFeed'),
+        tolerance: num('sd_tolerance'),
+        centerX: num('sd_centerX'),
+        centerY: num('sd_centerY'),
+        sdisc: {
+          outerRadius: num('sd_outerRadius'),
+          attractorRadius: num('sd_attractorRadius'),
+          maxSpacingPct: num('sd_maxSpacingPct'),
+          falloffIn: num('sd_falloffIn'),
+          falloffOut: num('sd_falloffOut'),
+          bumps: Math.round(num('sd_bumps')),
+          layers: Math.round(num('sd_layers')),
+          flowFeed: {
+            enabled: $('sd_flowFeedEnabled').checked,
+            rate: num('sd_flowFeedRate'),
+          },
         },
       };
     }
@@ -718,6 +745,33 @@
       return validatePrinter(cfg) || validateBrim(cfg.brim);
     }
 
+    if (cfg.project === 'sdisc') {
+      const sd = cfg.sdisc;
+      const dchecks = {
+        'layer height': cfg.layerHeight,
+        'line width': cfg.lineWidth,
+        'print feed': cfg.printFeed,
+        'travel feed': cfg.travelFeed,
+        'chord tolerance': cfg.tolerance,
+        'outer radius': sd.outerRadius,
+      };
+      for (const name in dchecks) {
+        if (!isPos(dchecks[name])) return 'Enter a valid ' + name + ' (must be greater than 0).';
+      }
+      if (!Number.isFinite(cfg.centerX) || !Number.isFinite(cfg.centerY))
+        return 'Enter valid bed center X/Y.';
+      if (!Number.isFinite(sd.attractorRadius) || sd.attractorRadius < 0) return 'Attractor radius must be 0 or more.';
+      if (!Number.isFinite(sd.maxSpacingPct) || sd.maxSpacingPct < 100)
+        return 'Max spacing must be at least 100% (100% = no spreading).';
+      if (!Number.isFinite(sd.falloffIn) || sd.falloffIn < 0 || !Number.isFinite(sd.falloffOut) || sd.falloffOut < 0)
+        return 'Falloff distances must be 0 or more.';
+      if (!(sd.bumps >= 1)) return 'Bumps per turn must be at least 1.';
+      if (!(sd.layers >= 1)) return 'Layers must be at least 1.';
+      if (sd.outerRadius / cfg.lineWidth > 4000) return 'Outer radius is far too large for this line width.';
+      if (sd.flowFeed.enabled && !isPos(sd.flowFeed.rate)) return 'Enter a valid target volumetric flow (mm³/s).';
+      return validatePrinter(cfg);
+    }
+
     if (cfg.project === 'thread') {
       const th = cfg.thread;
       const tchecks = {
@@ -888,6 +942,7 @@
       ['cn_printerMode', 'printer-params-cn', 'cn_printerHint'],
       ['cnl_printerMode', 'printer-params-cnl', 'cnl_printerHint'],
       ['th_printerMode', 'printer-params-th', 'th_printerHint'],
+      ['sd_printerMode', 'printer-params-sd', 'sd_printerHint'],
     ].forEach(([selId, cls, hintId]) => {
       const sel = $(selId);
       if (!sel) return;
@@ -931,6 +986,7 @@
     $('tabLamp').classList.toggle('active', p === 'lamp');
     $('tabContainer').classList.toggle('active', p === 'container');
     $('tabThread').classList.toggle('active', p === 'thread');
+    $('tabSdisc').classList.toggle('active', p === 'sdisc');
   }
 
   // The container tab holds base AND lid settings/output on one page,
@@ -1495,6 +1551,75 @@
     }
   }
 
+  // Spiral disc: the exact path the generator prints (same spiralDiscSpec),
+  // stroked at the TRUE bead width — so the solid zones read as solid and
+  // the holes/touch points between wiggling turns show up as they'll print.
+  function drawPreviewSdisc(cfg) {
+    const canvas = $('sd_preview');
+    const ctx = canvas.getContext('2d');
+    const W = canvas.width;
+    const H = canvas.height;
+    ctx.clearRect(0, 0, W, H);
+    const sf = W / 600;
+    const sd = cfg.sdisc || {};
+    if (!isPos(cfg.lineWidth) || !isPos(sd.outerRadius) || sd.outerRadius / cfg.lineWidth > 4000) {
+      $('sd_hint').textContent = 'Enter a valid line width and outer radius.';
+      $('sd_feedHint').textContent = '';
+      return;
+    }
+    const spec = window.GcodeGen.spiralDiscSpec(Object.assign({}, sd, { lineWidth: cfg.lineWidth, tolerance: cfg.tolerance }));
+    const lw = cfg.lineWidth;
+    $('sd_hint').textContent =
+      spec.turns + ' turns → outer radius ' + spec.rEnd.toFixed(2) + ' mm (snapped from ' + sd.outerRadius + ')' +
+      ' · widest turn spacing ' + spec.maxPitch.toFixed(2) + ' mm (' + ((spec.maxPitch / lw) * 100).toFixed(0) +
+      '% of the line width) · ' + spec.openTurns + ' open turn' + (spec.openTurns === 1 ? '' : 's') +
+      ' · ' + spec.bumps + ' bumps per turn' + (spec.bumpsAdjusted ? ' (rounded up to odd)' : '') +
+      (spec.openTurns > 0
+        ? ' · wiggle up to ±' + spec.maxAmp.toFixed(2) + ' mm' +
+          (spec.meetOverlap > 0.02 || spec.meetGap > 0.02
+            ? ' · peaks meet dips within ' + spec.meetOverlap.toFixed(2) + ' mm of extra squish (falloff too short to close every gap exactly)'
+            : ' · peaks meet dips at exactly one line width')
+        : '') +
+      ' · ' + (sd.layers > 1 ? sd.layers + ' identical layers, ' + (sd.layers * cfg.layerHeight).toFixed(2) + ' mm thick' : '1 layer');
+
+    const area = window.GcodeGen.beadArea(lw, cfg.layerHeight);
+    const ff = sd.flowFeed || {};
+    $('sd_feedHint').textContent =
+      ff.enabled && isPos(ff.rate)
+        ? ff.rate + ' mm³/s over a ' + area.toFixed(2) + ' mm² bead → ' + ((ff.rate * 60) / area).toFixed(0) + ' mm/min.'
+        : isPos(cfg.printFeed) && isPos(cfg.layerHeight)
+        ? 'At a constant ' + cfg.printFeed + ' mm/min: ' + ((cfg.printFeed * area) / 60).toFixed(2) + ' mm³/s.'
+        : '';
+
+    const R = Math.max(spec.rEnd, sd.attractorRadius || 0) + lw;
+    const scale = (Math.min(W, H) / 2 - 10 * sf) / R;
+    const cxp = W / 2;
+    const cyp = H / 2;
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+    ctx.strokeStyle = 'rgba(79,157,255,0.85)';
+    ctx.lineWidth = Math.max(1 * sf, lw * scale);
+    ctx.beginPath();
+    spec.pts.forEach((p, i) => {
+      const x = cxp + p.x * scale;
+      const y = cyp - p.y * scale;
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+    // Attractor circle (green) and the requested outer radius (white), dashed.
+    ctx.setLineDash([5 * sf, 4 * sf]);
+    ctx.lineWidth = 1.2 * sf;
+    [[sd.attractorRadius, '#2bd9a0'], [sd.outerRadius, 'rgba(255,255,255,0.5)']].forEach(([r, col]) => {
+      if (!(r > 0)) return;
+      ctx.strokeStyle = col;
+      ctx.beginPath();
+      ctx.arc(cxp, cyp, r * scale, 0, 2 * Math.PI);
+      ctx.stroke();
+    });
+    ctx.setLineDash([]);
+  }
+
   // Thread connector: live dimensions/feeds from GcodeGen.threadSpec (the
   // same function the generator uses, so the two can never disagree), plus
   // a zoomed cross-section through one wall — the bolt's basic ISO profile
@@ -1706,6 +1831,10 @@
     }
     if (cfg.project === 'thread') {
       drawPreviewThread(cfg);
+      return;
+    }
+    if (cfg.project === 'sdisc') {
+      drawPreviewSdisc(cfg);
       return;
     }
     if (cfg.project === 'container') {
@@ -3562,6 +3691,8 @@
         ? 'container_' + cnActivePart
         : p === 'thread'
         ? 'thread_' + $('th_size').value.replace('.', '_')
+        : p === 'sdisc'
+        ? 'spiral_disc'
         : 'vase_' + $('shape').value;
     return stem + '_' + Date.now() + '.gcode';
   }
@@ -3731,7 +3862,7 @@
   function fitCanvases() {
     [
       'preview', 'previewBS', 've_preview', 've_profile', 've_topCurveCanvas', 've_botCurveCanvas',
-      'sp_preview', 'ls_preview', 'th_preview', 'preview3d', 'cn_profile',
+      'sp_preview', 'ls_preview', 'th_preview', 'sd_preview', 'preview3d', 'cn_profile',
     ].forEach((id) => {
       const c = $(id);
       const dpr = Math.min(window.devicePixelRatio || 1, 2.5);
@@ -3792,6 +3923,7 @@
     showLampSocketParams($('ls_socket').value);
     showLampShapeParams($('ls_shape').value);
     $('th_brimFields').hidden = !$('th_brimEnabled').checked;
+    $('sd_flowFeedFields').hidden = !$('sd_flowFeedEnabled').checked;
     showProfMidCount(num('ve_profMidCount'));
     showVesselBottomStyle($('ve_seamStyle').value);
     showVesselTopShape($('ve_topShape').value);
@@ -3943,6 +4075,30 @@
     Object.keys(SEED_MAP_TH).forEach((src) => {
       const a = $(src);
       const b = $(SEED_MAP_TH[src]);
+      if (!a || !b) return;
+      if (a.type === 'checkbox') b.checked = a.checked;
+      else b.value = a.value;
+    });
+  }
+
+  // Spiral disc: same idea — the printer/material card and the plain print
+  // settings carry over from the coat hanger; the spiral's own settings
+  // start from their defaults.
+  const SEED_MAP_SD = {
+    layerHeight: 'sd_layerHeight', lineWidth: 'sd_lineWidth', printFeed: 'sd_printFeed',
+    travelFeed: 'sd_travelFeed', centerX: 'sd_centerX', centerY: 'sd_centerY',
+    printerMode: 'sd_printerMode', extrusionMultiplier: 'sd_extrusionMultiplier',
+    startEndEnabled: 'sd_startEndEnabled', endLift: 'sd_endLift',
+    filDiameter: 'sd_filDiameter', filNozzleTemp: 'sd_filNozzleTemp',
+    filBedTemp: 'sd_filBedTemp', filFan: 'sd_filFan',
+    pelUpTemp: 'sd_pelUpTemp', pelMidTemp: 'sd_pelMidTemp', pelDownTemp: 'sd_pelDownTemp',
+    pelBedTemp: 'sd_pelBedTemp', pelPA: 'sd_pelPA', pelPurge: 'sd_pelPurge', pelFan: 'sd_pelFan',
+  };
+
+  function seedSdisc() {
+    Object.keys(SEED_MAP_SD).forEach((src) => {
+      const a = $(src);
+      const b = $(SEED_MAP_SD[src]);
       if (!a || !b) return;
       if (a.type === 'checkbox') b.checked = a.checked;
       else b.value = a.value;
@@ -4156,6 +4312,11 @@
     updateShapeUI();
   });
 
+  $('sd_flowFeedEnabled').addEventListener('change', () => {
+    $('sd_flowFeedFields').hidden = !$('sd_flowFeedEnabled').checked;
+    updateShapeUI();
+  });
+
   $('th_brimEnabled').addEventListener('change', () => {
     $('th_brimFields').hidden = !$('th_brimEnabled').checked;
     updateShapeUI();
@@ -4180,6 +4341,7 @@
   $('tabLamp').addEventListener('click', () => switchProject('lamp'));
   $('tabContainer').addEventListener('click', () => switchProject('container'));
   $('tabThread').addEventListener('click', () => switchProject('thread'));
+  $('tabSdisc').addEventListener('click', () => switchProject('sdisc'));
 
   $('regenBtn').addEventListener('click', regenerate);
   $('copyBtn').addEventListener('click', copy);
@@ -4246,6 +4408,7 @@
   if (restored && !('sp_layerHeight' in restored)) seedSpoon();
   if (restored && !('ls_lineWidth' in restored)) seedLamp();
   if (restored && !('th_height' in restored)) seedThread();
+  if (restored && !('sd_outerRadius' in restored)) seedSdisc();
   showProject(activeProject());
   fitCanvases();
   updateShapeUI();

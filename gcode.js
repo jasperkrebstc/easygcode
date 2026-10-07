@@ -1625,6 +1625,354 @@
     return { gcode: lines.join('\n') + '\n', warnings, stats, path, spec };
   }
 
+  // ---- Spiral disc: a flat centre-out spiral whose turns spread apart
+  // around an "attractor" circle and wiggle to stay connected ----
+  // Away from the attractor the turns sit exactly one line width apart (a
+  // solid disc). Approaching it, the SPACING grows — never the bead itself —
+  // up to maxSpacingPct at the attractor radius, and eases back down on the
+  // other side. To keep the spread-apart turns joined, each one wiggles
+  // radially, A*sin(B*theta/2): with an odd bump count B (each outward and
+  // each inward bump counted), one revolution advances the wave by B*pi, so
+  // the next turn starts on the opposite phase and a peak always faces a dip
+  // there. A is sized so that peak and dip close the extra gap exactly,
+  // leaving the two centrelines one line width apart — the beads just touch
+  // at those points and leave a hole between each pair.
+  //
+  // Falloff: smoothstep (3t^2 - 2t^3) of the distance to the attractor,
+  // reaching zero `falloffIn` mm inside it and `falloffOut` mm outside it —
+  // so it eases in and out rather than kinking, and a falloff as wide as the
+  // attractor radius starts the spread right at the centre.
+  function spiralDiscSpec(sd) {
+    const s = sd || {};
+    const lw = s.lineWidth > 0 ? s.lineWidth : 1;
+    const rTarget = Math.max(0, s.outerRadius || 0);
+    const R2 = s.attractorRadius || 0;
+    const M = Math.max(1, (s.maxSpacingPct > 0 ? s.maxSpacingPct : 100) / 100);
+    const fIn = Math.max(0, s.falloffIn || 0);
+    const fOut = Math.max(0, s.falloffOut || 0);
+    const bumpsIn = Math.max(1, Math.round(s.bumps || 1));
+    // Even counts would put peaks on peaks — the turns would never touch.
+    const B = bumpsIn % 2 === 1 ? bumpsIn : bumpsIn + 1;
+    const tol = s.tolerance > 0 ? s.tolerance : 0.05;
+
+    function spacingMult(r) {
+      const d = r - R2;
+      let t;
+      if (d < 0) t = fIn > 0 ? 1 + d / fIn : 0;
+      else t = fOut > 0 ? 1 - d / fOut : d === 0 ? 1 : 0;
+      t = Math.max(0, Math.min(1, t));
+      return 1 + (M - 1) * t * t * (3 - 2 * t);
+    }
+
+    // Integrate r(theta) with RK4: each revolution adds one local spacing,
+    // dr/dtheta = lw * m(r) / 2pi. Stored per step for interpolation below.
+    const SUB = 720;
+    const h = (2 * Math.PI) / SUB;
+    const drdt = (r) => (lw * spacingMult(r)) / (2 * Math.PI);
+    const rs = [0];
+    const turnR = [0];
+    const MAX_TURNS = 5000;
+    let n = 0;
+    while (n < MAX_TURNS) {
+      for (let i = 0; i < SUB; i++) {
+        const r = rs[rs.length - 1];
+        const k1 = drdt(r);
+        const k2 = drdt(r + (h / 2) * k1);
+        const k3 = drdt(r + (h / 2) * k2);
+        const k4 = drdt(r + h * k3);
+        rs.push(r + (h / 6) * (k1 + 2 * k2 + 2 * k3 + k4));
+      }
+      n++;
+      turnR.push(rs[rs.length - 1]);
+      if (turnR[n] >= rTarget) break;
+    }
+    // Snap: the whole number of turns ending closest to the requested radius.
+    let turns = n;
+    if (n > 1 && Math.abs(turnR[n - 1] - rTarget) <= Math.abs(turnR[n] - rTarget)) turns = n - 1;
+    turns = Math.max(1, turns);
+    const thEnd = 2 * Math.PI * turns;
+    const rAt = (th) => {
+      const x = Math.max(0, Math.min(turns * SUB, th / h));
+      const i = Math.min(turns * SUB - 1, Math.floor(x));
+      return rs[i] + (rs[i + 1] - rs[i]) * (x - i);
+    };
+
+    const rEnd = turnR[turns];
+    let dth = 2 * Math.acos(Math.max(-1, 1 - tol / Math.max(rEnd, lw)));
+    if (!isFinite(dth) || dth <= 0) dth = 0.2;
+    const stepsPerTurn = Math.max(32, Math.ceil((2 * Math.PI) / dth), B * 16);
+    const total = turns * stepsPerTurn;
+
+    // Wiggle amplitudes, solved per angle. At a given angle the turns form a
+    // chain, and where turn k's peak faces turn k+1's dip the gap between
+    // them has to close exactly: A_k + A_(k+1) = g_k (the centreline gap
+    // beyond one line width). That can't hold exactly AND return to zero
+    // wiggle on both solid sides (it's an alternating chain), so it's solved
+    // in the least-squares sense — every gap closes as nearly as possible,
+    // the error spread evenly instead of piling up at one end — with turns
+    // whose both neighbouring gaps are closed held at zero. Tridiagonal, so
+    // a Thomas solve per angle; a hair of damping keeps it well-posed.
+    const amps = new Float64Array(total + 1);
+    for (let j = 0; j < stepsPerTurn; j++) {
+      const idx = [];
+      for (let i = j; i <= total; i += stepsPerTurn) idx.push(i);
+      const K = idx.length;
+      if (K < 2) continue;
+      const g = [];
+      for (let k = 0; k < K - 1; k++) {
+        g.push(Math.max(0, rAt((idx[k + 1] / total) * thEnd) - rAt((idx[k] / total) * thEnd) - lw));
+      }
+      const eps = lw * 1e-4;
+      const free = [];
+      for (let k = 0; k < K; k++) {
+        if ((k > 0 && g[k - 1] > eps) || (k < K - 1 && g[k] > eps)) free.push(k);
+      }
+      if (!free.length) continue;
+      const pos = new Map(free.map((k, n2) => [k, n2]));
+      const m = free.length;
+      const dg = new Float64Array(m);
+      const off = new Float64Array(m); // coupling to the next free unknown
+      const rhs = new Float64Array(m);
+      for (let n2 = 0; n2 < m; n2++) {
+        const k = free[n2];
+        dg[n2] = 1e-6;
+        if (k > 0) {
+          dg[n2] += 1;
+          rhs[n2] += g[k - 1];
+        }
+        if (k < K - 1) {
+          dg[n2] += 1;
+          rhs[n2] += g[k];
+          if (pos.has(k + 1)) off[n2] = 1;
+        }
+      }
+      // Thomas algorithm on the symmetric tridiagonal (dg, off).
+      const cp = new Float64Array(m);
+      const dp = new Float64Array(m);
+      cp[0] = off[0] / dg[0];
+      dp[0] = rhs[0] / dg[0];
+      for (let n2 = 1; n2 < m; n2++) {
+        const den = dg[n2] - off[n2 - 1] * cp[n2 - 1];
+        cp[n2] = off[n2] / den;
+        dp[n2] = (rhs[n2] - off[n2 - 1] * dp[n2 - 1]) / den;
+      }
+      const sol = new Float64Array(m);
+      sol[m - 1] = dp[m - 1];
+      for (let n2 = m - 2; n2 >= 0; n2--) sol[n2] = dp[n2] - cp[n2] * sol[n2 + 1];
+      for (let n2 = 0; n2 < m; n2++) amps[idx[free[n2]]] = Math.max(0, sol[n2]);
+    }
+
+    const pts = [];
+    let maxAmp = 0;
+    for (let i = 0; i <= total; i++) {
+      const th = (i / total) * thEnd;
+      const a = amps[i];
+      if (a > maxAmp) maxAmp = a;
+      const rr = Math.max(0, rAt(th) + a * Math.sin((B * th) / 2));
+      pts.push({ x: rr * Math.cos(th), y: rr * Math.sin(th) });
+    }
+    // How well the wiggles actually meet: at each angle, the closest
+    // centreline distance from a wiggling turn to the next one, vs one line
+    // width. Very short falloffs (only 2-3 open turns) can't close every gap
+    // exactly; the solve then errs toward overlap (a little extra squish),
+    // and this reports by how much.
+    let meetOverlap = 0;
+    let meetGap = 0;
+    for (let k = 0; k < turns - 1; k++) {
+      let mn = Infinity;
+      let mx = -Infinity;
+      for (let j = 0; j < stepsPerTurn; j++) {
+        const i = k * stepsPerTurn + j;
+        const d = Math.hypot(pts[i + stepsPerTurn].x, pts[i + stepsPerTurn].y) - Math.hypot(pts[i].x, pts[i].y);
+        if (d < mn) mn = d;
+        if (d > mx) mx = d;
+      }
+      if (mx > lw * 1.02) {
+        meetOverlap = Math.max(meetOverlap, lw - mn);
+        meetGap = Math.max(meetGap, mn - lw);
+      }
+    }
+    let maxPitch = 0;
+    let openTurns = 0;
+    for (let k = 1; k <= turns; k++) {
+      const p = turnR[k] - turnR[k - 1];
+      if (p > maxPitch) maxPitch = p;
+      if (p > lw * 1.02) openTurns++;
+    }
+    return {
+      lineWidth: lw,
+      bumps: B,
+      bumpsAdjusted: B !== bumpsIn,
+      turns: turns,
+      rEnd: rEnd,
+      rTarget: rTarget,
+      attractorRadius: R2,
+      maxSpacingPct: M * 100,
+      maxPitch: maxPitch,
+      openTurns: openTurns,
+      maxAmp: maxAmp,
+      meetOverlap: Math.max(0, meetOverlap),
+      meetGap: Math.max(0, meetGap),
+      hitTurnLimit: n >= MAX_TURNS && turnR[n] < rTarget,
+      pts: pts,
+    };
+  }
+
+  function generateSpiralDisc(cfg) {
+    const warnings = [];
+    const lines = [];
+    const path = [];
+    let totalVolume = 0;
+    let pathLength = 0;
+    let moveCount = 0;
+
+    const cx = cfg.centerX;
+    const cy = cfg.centerY;
+    const lh = cfg.layerHeight;
+    const lw = cfg.lineWidth;
+    const sd = cfg.sdisc || {};
+    function bail(msg) {
+      return {
+        gcode: '; ERROR: ' + msg,
+        warnings: [msg],
+        stats: { volume: 0, pathLength: 0, moves: 0, loops: 0, timeMin: 0, materialVolume: 0, actualTimeMin: 0 },
+        path: [],
+      };
+    }
+    if (!(lw > 0) || !(lh > 0)) return bail('Enter a valid line width and layer height.');
+    if (!(sd.outerRadius > 0)) return bail('Enter a valid outer radius.');
+    if (lw < lh) warnings.push('Line width is less than layer height — bead width clamped to layer height.');
+    const layers = Math.max(1, Math.round(sd.layers || 1));
+
+    const spec = spiralDiscSpec(Object.assign({}, sd, { lineWidth: lw, tolerance: cfg.tolerance }));
+    if (spec.hitTurnLimit) warnings.push('Stopped at 5000 turns — the outer radius is far too large for this line width.');
+    if (spec.bumpsAdjusted) {
+      warnings.push('Bumps per turn must be odd so a peak always faces the next turn\'s dip — using ' + spec.bumps + '.');
+    }
+    const area = beadArea(lw, lh);
+    const flowCfg = sd.flowFeed || {};
+    const flowOn = !!flowCfg.enabled && flowCfg.rate > 0;
+    const feed = flowOn ? (flowCfg.rate * 60) / area : cfg.printFeed;
+
+    const printer = cfg.printer || {};
+    const mode = printer.mode === 'filament' ? 'filament' : 'pellet';
+    const mult = printer.multiplier > 0 ? printer.multiplier : 1;
+    const fil = printer.filament || {};
+    const pel = printer.pellet || {};
+    const filDia = fil.diameter > 0 ? fil.diameter : 1.75;
+    const eFactor = mult / (mode === 'filament' ? Math.PI * (filDia / 2) * (filDia / 2) : 1);
+    const includeStartEnd = !!printer.includeStartEnd;
+    const fanPct = mode === 'filament' ? fil.fan || 0 : pel.fan || 0;
+    const fanPWM = Math.round(Math.max(0, Math.min(100, fanPct)) * 2.55);
+
+    lines.push('; EasyGCode — spiral disc (attractor spacing + wiggles) generator');
+    lines.push('; ' + new Date().toISOString());
+    lines.push(
+      '; outerRadius=' + sd.outerRadius + ' -> ' + spec.turns + ' turns ending at r=' + spec.rEnd.toFixed(3) +
+        ' layers=' + layers
+    );
+    lines.push(
+      '; attractor r=' + spec.attractorRadius + ' maxSpacing=' + spec.maxSpacingPct.toFixed(0) + '% falloff in=' +
+        (sd.falloffIn || 0) + ' out=' + (sd.falloffOut || 0) + 'mm (smoothstep) -> widest turn spacing ' +
+        spec.maxPitch.toFixed(3) + 'mm, ' + spec.openTurns + ' open turn(s)'
+    );
+    lines.push(
+      '; wiggles: ' + spec.bumps + ' bumps per turn (odd, so a peak faces the next turn\'s dip), max amplitude ' +
+        spec.maxAmp.toFixed(3) + 'mm, peaks meet dips within -' + spec.meetOverlap.toFixed(3) + '/+' +
+        spec.meetGap.toFixed(3) + 'mm of one line width'
+    );
+    lines.push(
+      '; layerHeight=' + lh + ' lineWidth=' + lw + ' ' +
+        (flowOn
+          ? 'volumetric flow ' + flowCfg.rate + ' mm3/s -> feed ' + feed.toFixed(0) + ' mm/min'
+          : 'feed ' + feed + ' mm/min -> flow ' + ((feed * area) / 60).toFixed(2) + ' mm3/s') +
+        ' (bead area ' + area.toFixed(3) + ' mm2)'
+    );
+    lines.push(
+      '; printer=' + mode + ' multiplier=' + mult +
+        (mode === 'filament' ? ' filamentDiameter=' + filDia + ' (E in mm of filament)' : ' (E in mm^3, volumetric)')
+    );
+    if (includeStartEnd) {
+      (mode === 'filament' ? marlinStart(fil) : klipperStart(pel)).forEach((l) => lines.push(l));
+    }
+    lines.push('G90 ; absolute positioning');
+    lines.push('M83 ; relative extrusion');
+
+    let prev = null;
+    let lastFeed = null;
+    let firstExtrude = true;
+    let maxZEver = 0;
+    function travelAbs(cur) {
+      lines.push('G0 X' + f3(cur.x) + ' Y' + f3(cur.y) + ' Z' + f3(cur.z) + ' F' + Math.round(cfg.travelFeed));
+      lastFeed = cfg.travelFeed;
+      path.push({ x: cur.x, y: cur.y, z: cur.z, travel: true, feed: cfg.travelFeed });
+      prev = cur;
+      moveCount++;
+    }
+    function emitSeg(cur) {
+      const segLen = dist3(prev, cur);
+      if (segLen < 1e-7) {
+        prev = cur;
+        return;
+      }
+      const dVol = area * segLen;
+      totalVolume += dVol;
+      pathLength += segLen;
+      let line = 'G1 X' + f3(cur.x) + ' Y' + f3(cur.y) + ' Z' + f3(cur.z) + ' E' + f5(dVol * eFactor);
+      if (feed !== lastFeed || firstExtrude) {
+        line += ' F' + Math.round(feed);
+        lastFeed = feed;
+      }
+      lines.push(line);
+      path.push({ x: cur.x, y: cur.y, z: cur.z, travel: false, feed: feed });
+      firstExtrude = false;
+      moveCount++;
+      prev = cur;
+      if (cur.z > maxZEver) maxZEver = cur.z;
+    }
+
+    const pts = spec.pts;
+    for (let L = 0; L < layers; L++) {
+      const z = (L + 1) * lh;
+      const start = { x: pts[0].x + cx, y: pts[0].y + cy, z: z };
+      lines.push('; --- layer ' + (L + 1) + ' of ' + layers + ' (centre -> outside) ---');
+      if (prev === null) {
+        travelAbs(start);
+      } else {
+        // Every layer prints the same way, centre outward: lift a layer
+        // clear of the one just printed, back to the centre, then down.
+        const clearZ = z + lh;
+        travelAbs({ x: prev.x, y: prev.y, z: clearZ });
+        travelAbs({ x: start.x, y: start.y, z: clearZ });
+        travelAbs(start);
+      }
+      for (let i = 1; i < pts.length; i++) emitSeg({ x: pts[i].x + cx, y: pts[i].y + cy, z: z });
+      if (L === 0 && includeStartEnd && fanPWM > 0) {
+        lines.push('M106 S' + fanPWM + ' ; part cooling fan on after first layer');
+      }
+    }
+
+    if (includeStartEnd) {
+      const endLift = maxZEver + Math.max(0, printer.endLift != null ? printer.endLift : 50);
+      (mode === 'filament' ? marlinEnd(endLift) : klipperEnd(endLift)).forEach((l) => lines.push(l));
+    }
+    let timeMin = 0;
+    for (let i = 1; i < path.length; i++) {
+      const d = dist3(path[i - 1], path[i]);
+      if (path[i].feed > 0) timeMin += d / path[i].feed;
+    }
+    const stats = {
+      volume: totalVolume,
+      pathLength: pathLength,
+      moves: moveCount,
+      loops: spec.turns * layers,
+      timeMin: timeMin,
+      materialVolume: totalVolume,
+      actualTimeMin: timeMin,
+    };
+    return { gcode: lines.join('\n') + '\n', warnings, stats, path, spec };
+  }
+
   // ---- Container: a circle-only vase-mode base with a separate screw-on
   // lid, printed as its own G-code ----
   // A focused, self-contained pair of generators rather than another branch
@@ -2216,6 +2564,7 @@
     if (cfg.project === 'spoon') return generateSpoon(cfg);
     if (cfg.project === 'lamp') return generateLamp(cfg);
     if (cfg.project === 'thread') return generateThread(cfg);
+    if (cfg.project === 'sdisc') return generateSpiralDisc(cfg);
     if (cfg.project === 'container') {
       return { base: generateContainer(cfg), lid: generateContainerLid(cfg) };
     }
@@ -5195,6 +5544,7 @@
     LAMP_SOCKETS,
     THREAD_SIZES,
     threadSpec,
+    spiralDiscSpec,
     discBedFit,
     domeHeightRange,
   };

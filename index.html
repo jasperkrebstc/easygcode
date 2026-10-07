@@ -29,6 +29,7 @@
       <button type="button" id="tabLamp" class="tab">Lampshade</button>
       <button type="button" id="tabContainer" class="tab">Container</button>
       <button type="button" id="tabThread" class="tab">Thread</button>
+      <button type="button" id="tabSdisc" class="tab">Spiral disc</button>
     </nav>
     <input type="hidden" id="activeProject" value="cordhanger" />
 
@@ -1494,6 +1495,84 @@
           <div class="field"><label>Brim flow (mm³/s)</label><input type="number" id="th_brimFlowRate" value="20" min="0.1" step="0.5" /></div>
         </div>
         <p class="hint" id="th_brimHint"></p>
+      </section>
+
+      <section class="card" data-project="sdisc" hidden>
+        <h2>
+          Printer &amp; material
+          <label class="toggle"><input type="checkbox" id="sd_startEndEnabled" checked /> start/end G-code</label>
+        </h2>
+        <div class="grid">
+          <div class="field">
+            <label>Printer</label>
+            <select id="sd_printerMode">
+              <option value="pellet">Pellet (Klipper)</option>
+              <option value="filament">Filament (Marlin)</option>
+            </select>
+          </div>
+          <div class="field"><label>Extrusion multiplier</label><input type="number" id="sd_extrusionMultiplier" value="1.0" min="0.01" step="0.01" /></div>
+          <div class="field"><label>End lift above print (mm)</label><input type="number" id="sd_endLift" value="50" min="0" step="5" /></div>
+        </div>
+        <div class="printer-params-sd grid" data-mode="pellet">
+          <div class="field"><label>Zone up temp (°C)</label><input type="number" id="sd_pelUpTemp" value="210" min="0" step="5" /></div>
+          <div class="field"><label>Zone mid temp (°C)</label><input type="number" id="sd_pelMidTemp" value="210" min="0" step="5" /></div>
+          <div class="field"><label>Zone down temp (°C)</label><input type="number" id="sd_pelDownTemp" value="210" min="0" step="5" /></div>
+          <div class="field"><label>Bed temp (°C)</label><input type="number" id="sd_pelBedTemp" value="50" min="0" step="5" /></div>
+          <div class="field"><label>Pressure advance</label><input type="number" id="sd_pelPA" value="0.3" min="0" step="0.05" /></div>
+          <div class="field"><label>Purge quantity</label><input type="number" id="sd_pelPurge" value="5000" min="0" step="100" /></div>
+          <div class="field"><label>Fan (%)</label><input type="number" id="sd_pelFan" value="0" min="0" max="100" step="5" /></div>
+        </div>
+        <div class="printer-params-sd grid" data-mode="filament" hidden>
+          <div class="field"><label>Filament diameter (mm)</label><input type="number" id="sd_filDiameter" value="1.75" min="0.1" step="0.05" /></div>
+          <div class="field"><label>Nozzle temp (°C)</label><input type="number" id="sd_filNozzleTemp" value="205" min="0" step="5" /></div>
+          <div class="field"><label>Bed temp (°C)</label><input type="number" id="sd_filBedTemp" value="60" min="0" step="5" /></div>
+          <div class="field"><label>Fan (%)</label><input type="number" id="sd_filFan" value="100" min="0" max="100" step="5" /></div>
+        </div>
+        <p class="hint" id="sd_printerHint"></p>
+        <p class="hint">The fan stays off for the first layer and turns on at this % after it — 0 keeps it off.</p>
+      </section>
+
+      <section class="card" data-project="sdisc" hidden>
+        <h2>Spiral disc</h2>
+        <div class="grid">
+          <div class="field"><label>Outer radius (mm)</label><input type="number" id="sd_outerRadius" value="60" min="0.1" step="1" /></div>
+          <div class="field"><label>Attractor radius (mm)</label><input type="number" id="sd_attractorRadius" value="35" min="0" step="1" /></div>
+          <div class="field"><label>Max spacing (% of line width)</label><input type="number" id="sd_maxSpacingPct" value="200" min="100" step="10" /></div>
+          <div class="field"><label>Falloff inside (mm)</label><input type="number" id="sd_falloffIn" value="15" min="0" step="1" /></div>
+          <div class="field"><label>Falloff outside (mm)</label><input type="number" id="sd_falloffOut" value="15" min="0" step="1" /></div>
+          <div class="field"><label>Bumps per turn (odd)</label><input type="number" id="sd_bumps" value="21" min="1" step="2" /></div>
+          <div class="field"><label>Layers (identical)</label><input type="number" id="sd_layers" value="1" min="1" step="1" /></div>
+        </div>
+        <p class="hint" id="sd_hint"></p>
+        <canvas id="sd_preview" width="600" height="600"></canvas>
+        <p class="hint">Top view at true bead width: turns sit one line width apart (solid) except around the
+          green attractor circle, where the spacing grows to the max and eases back over the inside/outside
+          falloff distances (a smooth S-curve). There the turns wiggle — an odd bump count per turn, so each
+          peak faces the next turn's dip and the beads touch only at those points, leaving holes between.
+          Falloff inside = the attractor radius starts the spread right at the centre; small values make it a
+          short burst of a few turns.</p>
+      </section>
+
+      <section class="card" data-project="sdisc" hidden>
+        <h2>Print settings</h2>
+        <div class="grid">
+          <div class="field"><label>Layer height (mm)</label><input type="number" id="sd_layerHeight" value="0.6" min="0.05" step="0.05" /></div>
+          <div class="field"><label>Line width (mm)</label><input type="number" id="sd_lineWidth" value="2.0" min="0.1" step="0.1" /></div>
+          <div class="field"><label>Print feed (mm/min)</label><input type="number" id="sd_printFeed" value="1200" min="1" step="50" /></div>
+          <div class="field"><label>Travel feed (mm/min)</label><input type="number" id="sd_travelFeed" value="6000" min="1" step="100" /></div>
+          <div class="field"><label>Chord tolerance (mm)</label><input type="number" id="sd_tolerance" value="0.05" min="0.001" step="0.01" /></div>
+          <div class="field"><label>Bed center X (mm)</label><input type="number" id="sd_centerX" value="125" step="1" /></div>
+          <div class="field"><label>Bed center Y (mm)</label><input type="number" id="sd_centerY" value="125" step="1" /></div>
+        </div>
+        <div class="field">
+          <label class="toggle"><input type="checkbox" id="sd_flowFeedEnabled" /> constant volumetric flow (instead of constant feed rate)</label>
+        </div>
+        <div id="sd_flowFeedFields" class="grid" hidden>
+          <div class="field"><label>Target flow (mm³/s)</label><input type="number" id="sd_flowFeedRate" value="20" min="0.1" step="0.5" /></div>
+        </div>
+        <p class="hint" id="sd_feedHint"></p>
+        <p class="hint">Every layer prints centre → outside along the identical path; between layers the nozzle
+          lifts a layer clear and travels back to the centre.</p>
       </section>
 
       <section class="card">

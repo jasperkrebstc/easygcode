@@ -574,6 +574,35 @@ keep **fully independent settings** per project:
   just meets the wall. The printer card's **fan %** turns on after the first revolution
   (0 = off), as on every other project.
 
+- **Spiral disc** — a flat disc printed as one centre-out Archimedean spiral (one or
+  more identical layers), solid where the turns sit one line width apart, with a band of
+  **holes and connection points** around a second **attractor circle**. The **outer radius**
+  is given as a radius, not a turn count: the spiral is integrated turn by turn and the whole
+  number of turns ending closest to it is used (so it snaps to the nearest achievable radius
+  even where the spacing varies). Near the attractor the **spacing** between turns grows —
+  never the extruded bead — to a **max spacing %** of the line width at the attractor radius
+  (200% = a turn every two line widths, a one-line-width gap), easing back along a smoothstep
+  S-curve that reaches 100% a **falloff inside** distance in and a **falloff outside**
+  distance out (inside = the attractor radius starts the spread right at the centre; a few mm
+  gives a short burst of 2–3 turns). The radius follows `dr/dθ = lw·m(r)/2π`, integrated with
+  RK4. To keep the spread turns joined, each one **wiggles** radially, `A·sin(B·θ/2)`, with an
+  **odd bump count B** per turn (outward and inward bumps each counted): one revolution
+  advances the wave by `B·π`, so the next turn starts on the opposite phase and every peak
+  faces a dip — an even count would put peaks on peaks and the turns would never meet, so it's
+  rounded up to odd with a warning. The amplitudes are solved **per angle across the chain of
+  turns** so that wherever a peak meets the next turn's dip their centrelines are exactly one
+  line width apart (the beads just touch): `A_k + A_(k+1) = gap_k` for every neighbouring pair,
+  in the least-squares sense with fully solid turns held at zero wiggle — that chain can't close
+  every gap exactly *and* return to zero on both solid sides, and a simple "half of each gap"
+  rule was off by up to 0.3 mm. Normally every meeting point lands within ~0.005 mm; with a
+  very short falloff (only 2–3 open turns) the residual errs toward overlap (a little extra
+  squish, never a gap), and the hint reports by how much. The bump count is fixed per turn so
+  peaks line up exactly, which means bumps get physically longer further out. Identical layers
+  stack straight up (meeting points over meeting points); between layers the nozzle lifts one
+  layer clear and travels back to the centre. Print feed or an optional constant volumetric
+  flow, fan % after the first layer. The live preview draws the exact printed path at true
+  bead width, with the attractor and requested radius dashed.
+
 The coat hanger is a dead-simple, phone-first tool to generate **vase-mode G-code** for
 **Klipper pellet 3D printing** (or the Bambu P1P in filament mode). Pick a cross-section
 shape, set layer height / line width / total height, optionally add a brim, and get a
@@ -1127,6 +1156,11 @@ line width (0 = auto 2.4 × pitch), helix flow (mm³/s), travel feed, chord tole
 center X/Y, and an outer-only brim (lines, line width and layer height — 0 = same as the
 helix — and brim flow) — **no layer height or print feed**: the layer height is the
 thread pitch, and feeds are derived from the two flows.
+
+The **Spiral disc** tab: printer & material (identical fields to above), outer radius,
+attractor radius, max spacing %, falloff inside/outside (mm), bumps per turn (odd), layers,
+layer height, line width, print feed, travel feed, chord tolerance, bed center X/Y, and an
+optional constant volumetric flow.
 
 The **3D preview** orbits with a drag (Z-up), pinch/wheel zooms, two fingers pan, and a
 double-tap resets. The toolpath is colored by feedrate — blue = fastest, red = slowest —
