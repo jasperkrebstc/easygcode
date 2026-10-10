@@ -1538,6 +1538,7 @@
           <div class="field"><label>Outer radius (mm)</label><input type="number" id="sd_outerRadius" value="60" min="0.1" step="1" /></div>
           <div class="field"><label>Attractor radius (mm)</label><input type="number" id="sd_attractorRadius" value="35" min="0" step="1" /></div>
           <div class="field"><label>Max spacing (% of line width)</label><input type="number" id="sd_maxSpacingPct" value="200" min="100" step="10" /></div>
+          <div class="field"><label>Full-spacing band (mm, total, centred on the attractor)</label><input type="number" id="sd_fullBand" value="0" min="0" step="1" /></div>
           <div class="field"><label>Falloff inside (mm)</label><input type="number" id="sd_falloffIn" value="15" min="0" step="1" /></div>
           <div class="field"><label>Falloff outside (mm)</label><input type="number" id="sd_falloffOut" value="15" min="0" step="1" /></div>
           <div class="field"><label>Bumps per turn (odd)</label><input type="number" id="sd_bumps" value="21" min="1" step="2" /></div>
@@ -1549,8 +1550,9 @@
           green attractor circle, where the spacing grows to the max and eases back over the inside/outside
           falloff distances (a smooth S-curve). There the turns wiggle — an odd bump count per turn, so each
           peak faces the next turn's dip and the beads touch only at those points, leaving holes between.
-          Falloff inside = the attractor radius starts the spread right at the centre; small values make it a
-          short burst of a few turns.</p>
+          The full-spacing band holds the max spacing over that total width centred on the attractor (10 with
+          the attractor at 30 = full spacing from 25 to 35); the falloffs start at its edges. Falloff inside
+          reaching the centre starts the spread right there; small values make it a short burst.</p>
       </section>
 
       <section class="card" data-project="sdisc" hidden>

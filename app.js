@@ -359,6 +359,7 @@
           outerRadius: num('sd_outerRadius'),
           attractorRadius: num('sd_attractorRadius'),
           maxSpacingPct: num('sd_maxSpacingPct'),
+          fullBand: num('sd_fullBand'),
           falloffIn: num('sd_falloffIn'),
           falloffOut: num('sd_falloffOut'),
           bumps: Math.round(num('sd_bumps')),
@@ -763,6 +764,7 @@
       if (!Number.isFinite(sd.attractorRadius) || sd.attractorRadius < 0) return 'Attractor radius must be 0 or more.';
       if (!Number.isFinite(sd.maxSpacingPct) || sd.maxSpacingPct < 100)
         return 'Max spacing must be at least 100% (100% = no spreading).';
+      if (!Number.isFinite(sd.fullBand) || sd.fullBand < 0) return 'Full-spacing band must be 0 or more.';
       if (!Number.isFinite(sd.falloffIn) || sd.falloffIn < 0 || !Number.isFinite(sd.falloffOut) || sd.falloffOut < 0)
         return 'Falloff distances must be 0 or more.';
       if (!(sd.bumps >= 1)) return 'Bumps per turn must be at least 1.';

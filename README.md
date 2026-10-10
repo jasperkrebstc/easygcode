@@ -584,7 +584,9 @@ keep **fully independent settings** per project:
   (200% = a turn every two line widths, a one-line-width gap), easing back along a smoothstep
   S-curve that reaches 100% a **falloff inside** distance in and a **falloff outside**
   distance out (inside = the attractor radius starts the spread right at the centre; a few mm
-  gives a short burst of 2–3 turns). The radius follows `dr/dθ = lw·m(r)/2π`, integrated with
+  gives a short burst of 2–3 turns). An optional **full-spacing band** (total width, centred on
+  the attractor) holds the full max spacing across it — 10 mm with the attractor at 30 = full
+  spacing from 25 to 35 — and the two falloffs then start at its edges instead. The radius follows `dr/dθ = lw·m(r)/2π`, integrated with
   RK4. To keep the spread turns joined, each one **wiggles** radially, `A·sin(B·θ/2)`, with an
   **odd bump count B** per turn (outward and inward bumps each counted): one revolution
   advances the wave by `B·π`, so the next turn starts on the opposite phase and every peak
@@ -1158,7 +1160,7 @@ helix — and brim flow) — **no layer height or print feed**: the layer height
 thread pitch, and feeds are derived from the two flows.
 
 The **Spiral disc** tab: printer & material (identical fields to above), outer radius,
-attractor radius, max spacing %, falloff inside/outside (mm), bumps per turn (odd), layers,
+attractor radius, max spacing %, full-spacing band (mm), falloff inside/outside (mm), bumps per turn (odd), layers,
 layer height, line width, print feed, travel feed, chord tolerance, bed center X/Y, and an
 optional constant volumetric flow.
 
